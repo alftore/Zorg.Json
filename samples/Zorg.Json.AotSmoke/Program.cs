@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using Zorg.Json;
 using Zorg.Json.Emission;
 using Zorg.Json.Llm;
+using Zorg.Json.Import;
 
 // Runs the public API in a Native AOT binary. Any wrong result makes the exit code non-zero.
 int failures = 0;
@@ -68,6 +69,28 @@ Check("relocated schema", strict.Schema["properties"]?["items"]?.ToJsonString().
 Check("linter", !answer.CheckCompatibility(LlmProfiles.OpenAIStrict).IsCompatible);
 Check("model output", answer.ParseModelOutput(strict, """{ "name": "a", "items": null, "nick": null }""").IsSuccess);
 Check("element dictionary", strict.Schema.ToJsonElementDictionary()["type"].ValueKind == JsonValueKind.String);
+JsonValueSchema imported = Z.FromJsonSchema("""
+    {
+      "$defs": { "node": { "type": "object", "properties": { "next": { "$ref": "#/$defs/node" }, "at": { "format": "date-time" } } } },
+      "$ref": "#/$defs/node"
+    }
+    """);
+Check("imported valid", imported.SafeParse("""{ "next": { "at": "2026-11-03T12:00:00Z" } }""").IsSuccess);
+Check("imported invalid", !imported.SafeParse("""{ "next": { "next": 1 } }""").IsSuccess);
+Check("imported emission", imported.ToJsonSchema()["$ref"]?.GetValue<string>() == "#/$defs/node");
+
+Schema<Point> bound = Z.FromJsonSchema("""{ "type": "object", "required": ["x"] }""").Bind(SmokeJson.Default.Point);
+Check("bound value", bound.SafeParse("""{ "x": 3 }""").Value.X == 3);
+
+try
+{
+    Z.FromJsonSchema("""{ "$ref": "#" }""");
+    Check("ref cycle", false);
+}
+catch (JsonSchemaImportException exception)
+{
+    Check("ref cycle", exception.Code == JsonSchemaImportCodes.RefCycle);
+}
 
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
@@ -94,6 +117,9 @@ internal enum Kind
 
 internal sealed record Person(string Name, int Age, IReadOnlyList<string> Tags, Kind Kind);
 
+internal sealed record Point(int X);
+
 [JsonSerializable(typeof(Person))]
+[JsonSerializable(typeof(Point))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, Converters = [typeof(JsonStringEnumConverter<Kind>)])]
 internal sealed partial class SmokeJson : JsonSerializerContext;

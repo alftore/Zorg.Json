@@ -19,10 +19,10 @@
     "number": {
       "example": 1,
       "type": "number",
-      "format": "double",
       "minimum": 0,
       "maximum": 5,
-      "exclusiveMinimum": true
+      "exclusiveMinimum": true,
+      "format": "double"
     },
     "constant": {
       "type": "string",

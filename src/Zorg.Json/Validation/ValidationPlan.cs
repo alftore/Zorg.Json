@@ -41,19 +41,21 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _if;
     private readonly ValidationPlan? _then;
     private readonly ValidationPlan? _else;
-    private readonly ValidationPlan? _target;
+    private readonly Dictionary<SchemaNode, ValidationPlan> _plans;
     private readonly ImmutableArray<(string Name, SchemaNode Node)> _defaults;
+    private ValidationPlan? _target;
 
     private ValidationPlan(SchemaNode node, Dictionary<SchemaNode, ValidationPlan> plans)
     {
         plans.Add(node, this);
+        _plans = plans;
 
         ValidationPlan? Single(SchemaNode? child) => child is null ? null : Get(child, plans);
         ImmutableArray<ValidationPlan> List(ImmutableArray<SchemaNode> children) => [.. children.Select(child => Get(child, plans))];
 
         _node = node;
         _pattern = node.Pattern is null ? null : PatternCompiler.Compile(node.Pattern);
-        _format = StringFormats.Find(node.Format);
+        _format = node.Behavior.FormatIsAnnotation ? null : StringFormats.Find(node.Format);
         _minimum = Number(node.Minimum);
         _maximum = Number(node.Maximum);
         _exclusiveMinimum = Number(node.ExclusiveMinimum);
@@ -79,7 +81,6 @@ internal sealed class ValidationPlan
         _if = Single(node.If);
         _then = Single(node.Then);
         _else = Single(node.Else);
-        _target = node.Behavior.Target is { } target ? Get(target(), plans) : null;
         _defaults = [.. node.Properties
             .Where(property => property.Schema.Behavior.FillDefault && property.Schema.Default is not null)
             .Select(property => (property.Name, property.Schema))];
@@ -662,9 +663,9 @@ internal sealed class ValidationPlan
     {
         JsonElement value = input;
 
-        if (_target is not null)
+        if (_node.Behavior.Target is not null)
         {
-            value = _target.Run(value, context);
+            value = Target().Run(value, context);
         }
 
         foreach (ValidationPlan plan in _allOf)
@@ -706,6 +707,20 @@ internal sealed class ValidationPlan
         }
 
         return value;
+    }
+
+    /// <summary>Built on first use: a long chain of references built up front could exhaust the stack.</summary>
+    private ValidationPlan Target()
+    {
+        if (_target is { } plan)
+        {
+            return plan;
+        }
+
+        lock (_plans)
+        {
+            return _target ??= Get(_node.Behavior.Target!(), _plans);
+        }
     }
 
     private JsonElement RunAnyOf(JsonElement value, ValidationContext context)

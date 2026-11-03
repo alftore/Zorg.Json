@@ -23,9 +23,9 @@
         1
       ],
       "type": "number",
-      "format": "double",
       "maximum": 5,
-      "exclusiveMinimum": 0
+      "exclusiveMinimum": 0,
+      "format": "double"
     },
     "constant": {
       "type": "string",

@@ -42,6 +42,8 @@ public sealed record SchemaBehavior
     /// <summary>What <see cref="SchemaNode.Ref"/> points at. Evaluated on first use, so that schemas can be recursive.</summary>
     public Func<SchemaNode>? Target { get; init; }
 
+    internal bool FormatIsAnnotation { get; init; }
+
     internal Func<string, bool>? NumberCheck { get; init; }
 
     internal string? NumberType { get; init; }

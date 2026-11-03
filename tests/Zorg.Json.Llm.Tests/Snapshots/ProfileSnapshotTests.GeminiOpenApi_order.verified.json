@@ -38,9 +38,9 @@
     },
     "quantity": {
       "type": "INTEGER",
-      "format": "int64",
       "minimum": 1,
-      "maximum": 99
+      "maximum": 99,
+      "format": "int64"
     },
     "price": {
       "description": "Must also satisfy: exclusiveMinimum 0; multipleOf 0.01.",
