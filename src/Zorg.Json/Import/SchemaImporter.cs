@@ -1,0 +1,1045 @@
+using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.Linq;
+using System.Text.Json;
+using Zorg.Json.Model;
+using Zorg.Json.Validation;
+
+namespace Zorg.Json.Import;
+
+/// <summary>
+/// Turns a JSON Schema document into a <see cref="SchemaNode"/> tree. References stay shared: a node with a
+/// <c>$ref</c> holds a closure over its target, which is filled in once the whole document has been read.
+/// </summary>
+internal sealed class SchemaImporter
+{
+    /// <summary>
+    /// A keyword the source dialect ignores but 2020-12 honours can't be re-emitted under its own name, because it would
+    /// start to apply. It's kept under this prefix, so nothing is lost and verdicts don't change.
+    /// </summary>
+    private const string InertPrefix = "x-inert-";
+
+    private static readonly FrozenSet<string> Only202012 = new[]
+    {
+        "$defs", "$anchor", "$dynamicRef", "$dynamicAnchor", "prefixItems", "minContains", "maxContains", "dependentRequired",
+        "dependentSchemas", "unevaluatedItems", "unevaluatedProperties", "deprecated", "contentSchema",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    private static readonly FrozenSet<string> SinceDraft07 = new[]
+    {
+        "$comment", "readOnly", "writeOnly", "if", "then", "else", "contentEncoding", "contentMediaType",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    private static readonly FrozenSet<string> UntilDraft07 = new[]
+    {
+        "definitions", "additionalItems", "dependencies",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>What still means something beside a <c>$ref</c> before 2019-09. The rest is ignored.</summary>
+    private static readonly FrozenSet<string> BesideLegacyRef = new[]
+    {
+        "$ref", "definitions", "title", "description", "$comment", "default", "examples", "readOnly", "writeOnly",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    private static readonly FrozenSet<string> AnyDialect = new[]
+    {
+        "$id", "$ref", "$schema", "$vocabulary", "title", "description", "default", "examples", "type", "const", "enum", "minimum",
+        "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "format", "items",
+        "contains", "minItems", "maxItems", "uniqueItems", "properties", "required", "patternProperties", "additionalProperties",
+        "propertyNames", "minProperties", "maxProperties", "allOf", "anyOf", "oneOf", "not",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>In-place applicators feed <c>unevaluated*</c> with annotations, which Zorg doesn't collect.</summary>
+    private static readonly string[] InPlaceApplicators = ["$ref", "allOf", "anyOf", "oneOf", "if", "dependentSchemas"];
+
+    private readonly JsonElement _root;
+    private readonly JsonSchemaImportOptions _options;
+    private readonly JsonSchemaImportDialect _dialect;
+    private readonly Dictionary<string, SchemaNode> _nodes = new(StringComparer.Ordinal);
+    private readonly Dictionary<SchemaNode, string> _locations = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<(string Resource, string Name), string> _anchors = [];
+    private readonly List<PendingReference> _references = [];
+    private int _count;
+
+    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect)
+    {
+        _root = root;
+        _options = options;
+        _dialect = dialect;
+    }
+
+    private enum Position
+    {
+        Schema,
+        Map,
+        List,
+        Opaque,
+    }
+
+    private bool IsLegacy => _dialect != JsonSchemaImportDialect.Draft202012;
+
+    public static SchemaNode Import(JsonElement schema, JsonSchemaImportOptions? options)
+    {
+        JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
+        JsonElement root = schema.Clone();
+        SchemaImporter importer = new(root, effective, DetectDialect(root, effective));
+
+        SchemaNode node = importer.Build(root, new Scope(string.Empty, string.Empty, 0, IsWalked: true));
+        importer.ResolveReferences();
+        importer.CheckInPlaceGraph();
+        return node;
+    }
+
+    public static SchemaNode Import(string schema, JsonSchemaImportOptions? options)
+    {
+        JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
+        return Import(Parse(schema, effective), effective);
+    }
+
+    private static JsonElement Parse(string schema, JsonSchemaImportOptions options)
+    {
+        // A subschema takes at most two levels of JSON, as in properties/name.
+        int depth = (options.MaxDepth * 2) + 2;
+
+        try
+        {
+            return JsonElement.Parse(schema, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = depth });
+        }
+        catch (JsonException exception)
+        {
+            string code = IsWellFormed(schema) ? JsonSchemaImportCodes.LimitExceeded : JsonSchemaImportCodes.InvalidSchema;
+            throw new JsonSchemaImportException(code, string.Empty, exception.Message, exception);
+        }
+    }
+
+    private static bool IsWellFormed(string schema)
+    {
+        try
+        {
+            JsonElement.Parse(schema, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = int.MaxValue });
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static JsonSchemaImportDialect DetectDialect(JsonElement root, JsonSchemaImportOptions options)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("$schema", out JsonElement declared))
+        {
+            return options.DefaultDialect;
+        }
+
+        if (declared.ValueKind != JsonValueKind.String)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, "/$schema", "$schema must be a string.");
+        }
+
+        return ToDialect(declared.GetString()!)
+            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{declared.GetString()}\" can't be imported. Use Draft 2020-12, draft-07 or draft-06.");
+    }
+
+    private static JsonSchemaImportDialect? ToDialect(string uri) => uri.TrimEnd('#') switch
+    {
+        "https://json-schema.org/draft/2020-12/schema" => JsonSchemaImportDialect.Draft202012,
+        "http://json-schema.org/draft-07/schema" or "https://json-schema.org/draft-07/schema" => JsonSchemaImportDialect.Draft07,
+        "http://json-schema.org/draft-06/schema" or "https://json-schema.org/draft-06/schema" => JsonSchemaImportDialect.Draft06,
+        _ => null,
+    };
+
+    private static JsonSchemaImportException Error(string code, string location, string message) => new(code, location, message);
+
+    private static string Escape(string name) =>
+        name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
+
+    private static string Unescape(string token) =>
+        token.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
+
+    private static string DecodeToken(string token) => Unescape(Uri.UnescapeDataString(token));
+
+    private static bool IsAnchorName(string name) =>
+        name.Length > 0
+        && (char.IsAsciiLetter(name[0]) || name[0] == '_')
+        && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+
+    private static bool IsKeyword(string keyword) =>
+        AnyDialect.Contains(keyword) || SinceDraft07.Contains(keyword) || UntilDraft07.Contains(keyword);
+
+    private static JsonTypes ToType(JsonElement value, string location) => value.ValueKind == JsonValueKind.String
+        ? value.GetString() switch
+        {
+            "null" => JsonTypes.Null,
+            "boolean" => JsonTypes.Boolean,
+            "integer" => JsonTypes.Integer,
+            "number" => JsonTypes.Number,
+            "string" => JsonTypes.String,
+            "array" => JsonTypes.Array,
+            "object" => JsonTypes.Object,
+            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, location, $"\"{value.GetString()}\" isn't a JSON Schema type."),
+        }
+        : throw Error(JsonSchemaImportCodes.InvalidSchema, location, "A type must be a string.");
+
+    private static ImmutableArray<string> ToUniqueStrings(JsonElement value, string location)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, location, "Expected an array of strings.");
+        }
+
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        ImmutableArray<string>.Builder names = ImmutableArray.CreateBuilder<string>(value.GetArrayLength());
+
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || !seen.Add(item.GetString()!))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, location, "Expected an array of unique strings.");
+            }
+
+            names.Add(item.GetString()!);
+        }
+
+        return names.MoveToImmutable();
+    }
+
+    private static void RejectUnsupported(Dictionary<string, JsonElement> values, Scope at)
+    {
+        foreach (string keyword in (ReadOnlySpan<string>)["$dynamicRef", "$dynamicAnchor"])
+        {
+            if (values.ContainsKey(keyword))
+            {
+                throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} needs a dynamic scope at validation time, which Zorg doesn't have.");
+            }
+        }
+
+        foreach (string keyword in (ReadOnlySpan<string>)["unevaluatedItems", "unevaluatedProperties"])
+        {
+            if (values.ContainsKey(keyword))
+            {
+                string? beside = InPlaceApplicators.FirstOrDefault(values.ContainsKey);
+
+                if (beside is null && keyword == "unevaluatedItems" && values.ContainsKey("contains"))
+                {
+                    beside = "contains";
+                }
+
+                if (beside is not null)
+                {
+                    throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} beside {beside} needs annotation collection, which Zorg doesn't have.");
+                }
+            }
+        }
+    }
+
+    private static (string Token, Position Next) Translate(string token, string name, JsonElement? schema)
+    {
+        bool isArrayForm = schema is { ValueKind: JsonValueKind.Object } parent
+            && parent.TryGetProperty("items", out JsonElement items)
+            && items.ValueKind == JsonValueKind.Array;
+
+        return name switch
+        {
+            "definitions" => ("$defs", Position.Map),
+            "dependencies" => ("dependentSchemas", Position.Map),
+            "items" => isArrayForm ? ("prefixItems", Position.List) : (token, Position.Schema),
+            "additionalItems" => isArrayForm ? ("items", Position.Schema) : (token, Position.Opaque),
+            "properties" or "patternProperties" => (token, Position.Map),
+            "allOf" or "anyOf" or "oneOf" => (token, Position.List),
+            "not" or "if" or "then" or "else" or "additionalProperties" or "propertyNames" or "contains" => (token, Position.Schema),
+            _ => (token, Position.Opaque),
+        };
+    }
+
+    private static JsonElement? Step(JsonElement element, string token)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            return element.TryGetProperty(token, out JsonElement child) ? child : null;
+        }
+
+        bool isCanonical = token == "0" || (token.Length > 0 && token[0] != '0' && token.All(char.IsAsciiDigit));
+
+        if (element.ValueKind == JsonValueKind.Array
+            && isCanonical
+            && int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out int index)
+            && index < element.GetArrayLength())
+        {
+            return element[index];
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<SchemaNode> InPlaceEdges(SchemaNode node)
+    {
+        if (node.Behavior.Target is { } target)
+        {
+            yield return target();
+        }
+
+        foreach (SchemaNode child in node.AllOf.Concat(node.AnyOf).Concat(node.OneOf).Concat(node.DependentSchemas.Select(property => property.Schema)))
+        {
+            yield return child;
+        }
+
+        SchemaNode?[] singles = [node.Not, node.If, node.Then, node.Else];
+
+        foreach (SchemaNode child in singles.OfType<SchemaNode>())
+        {
+            yield return child;
+        }
+    }
+
+    private SchemaNode Build(JsonElement schema, Scope at)
+    {
+        if (at.Depth > _options.MaxDepth)
+        {
+            throw Error(JsonSchemaImportCodes.LimitExceeded, at.Pointer, $"Subschemas nest more than {_options.MaxDepth} levels deep.");
+        }
+
+        if (++_count > _options.MaxNodes)
+        {
+            throw Error(JsonSchemaImportCodes.LimitExceeded, at.Pointer, $"The document has more than {_options.MaxNodes} subschemas.");
+        }
+
+        SchemaNode node = schema.ValueKind switch
+        {
+            JsonValueKind.True => SchemaNode.True,
+            JsonValueKind.False => SchemaNode.False,
+            JsonValueKind.Object => BuildObject(schema, at),
+            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, "A schema must be an object or a boolean."),
+        };
+
+        _nodes.TryAdd(at.Pointer, node);
+        _locations.TryAdd(node, at.Pointer);
+        return node;
+    }
+
+    private SchemaNode BuildObject(JsonElement schema, Scope at)
+    {
+        Dictionary<string, JsonElement> values = new(StringComparer.Ordinal);
+
+        foreach (JsonProperty property in schema.EnumerateObject())
+        {
+            if (!values.TryAdd(property.Name, property.Value))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(property.Name), "The keyword appears twice.");
+            }
+        }
+
+        if (!IsLegacy)
+        {
+            RejectUnsupported(values, at);
+        }
+
+        Keywords keywords = new(this, values, at, ignoresSiblings: IsLegacy && values.ContainsKey("$ref"));
+        (string? id, string? anchor, Scope scope) = ReadIdentity(keywords, at);
+        string? reference = keywords.String("$ref");
+        SchemaBehavior behavior = SchemaBehavior.Empty;
+
+        if (reference is not null)
+        {
+            ReferenceTarget target = new();
+            _references.Add(new PendingReference(target, reference, scope));
+            behavior = behavior with { Target = target.Get };
+            reference = NormalizeReference(reference, scope);
+        }
+
+        string? format = keywords.String("format");
+
+        if (format is not null)
+        {
+            CheckFormat(format, at);
+            behavior = _options.Formats == FormatHandling.AnnotateOnly ? behavior with { FormatIsAnnotation = true } : behavior;
+        }
+
+        ImmutableArray<SchemaProperty> defs = keywords.Named(IsLegacy ? "definitions" : "$defs", scope);
+        (ImmutableArray<SchemaNode> prefixItems, SchemaNode? items) = ReadItems(keywords, scope);
+        (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> dependentRequired, ImmutableArray<SchemaProperty> dependentSchemas) = ReadDependencies(keywords, scope);
+        bool rejectsEverything = keywords.Peek("enum", out JsonElement declared) && declared.ValueKind == JsonValueKind.Array && declared.GetArrayLength() == 0;
+        ImmutableArray<SchemaNode> allOf = keywords.NonEmptyList("allOf", scope);
+
+        SchemaNode node = new()
+        {
+            Id = id,
+            Anchor = anchor,
+            Ref = reference,
+            Defs = defs,
+            Title = keywords.String("title"),
+            Description = keywords.String("description"),
+            Comment = keywords.String("$comment"),
+            Default = keywords.Element("default"),
+            Examples = keywords.Elements("examples"),
+            Deprecated = keywords.Boolean("deprecated"),
+            ReadOnly = keywords.Boolean("readOnly"),
+            WriteOnly = keywords.Boolean("writeOnly"),
+            Types = ReadTypes(keywords),
+            Const = keywords.Element("const"),
+            Enum = keywords.Elements("enum"),
+            Minimum = keywords.Number("minimum"),
+            Maximum = keywords.Number("maximum"),
+            ExclusiveMinimum = keywords.Number("exclusiveMinimum"),
+            ExclusiveMaximum = keywords.Number("exclusiveMaximum"),
+            MultipleOf = keywords.PositiveNumber("multipleOf"),
+            MinLength = keywords.Count("minLength"),
+            MaxLength = keywords.Count("maxLength"),
+            Pattern = keywords.Pattern("pattern"),
+            Format = format,
+            ContentEncoding = keywords.String("contentEncoding"),
+            ContentMediaType = keywords.String("contentMediaType"),
+            ContentSchema = keywords.Schema("contentSchema", scope),
+            PrefixItems = prefixItems,
+            Items = items,
+            Contains = keywords.Schema("contains", scope),
+            MinContains = keywords.Count("minContains"),
+            MaxContains = keywords.Count("maxContains"),
+            MinItems = keywords.Count("minItems"),
+            MaxItems = keywords.Count("maxItems"),
+            UniqueItems = keywords.Boolean("uniqueItems"),
+            Properties = keywords.Named("properties", scope),
+            Required = keywords.Strings("required"),
+            PatternProperties = keywords.PatternNamed("patternProperties", scope),
+            AdditionalProperties = keywords.Schema("additionalProperties", scope),
+            PropertyNames = keywords.Schema("propertyNames", scope),
+            DependentRequired = dependentRequired,
+            DependentSchemas = dependentSchemas,
+            MinProperties = keywords.Count("minProperties"),
+            MaxProperties = keywords.Count("maxProperties"),
+
+            // The model reads an empty enum as absent, but the keyword rejects everything.
+            AllOf = rejectsEverything ? allOf.Add(SchemaNode.False) : allOf,
+            AnyOf = keywords.NonEmptyList("anyOf", scope),
+            OneOf = keywords.NonEmptyList("oneOf", scope),
+            Not = keywords.Schema("not", scope),
+            If = keywords.Schema("if", scope),
+            Then = keywords.Schema("then", scope),
+            Else = keywords.Schema("else", scope),
+            UnevaluatedItems = keywords.Schema("unevaluatedItems", scope),
+            UnevaluatedProperties = keywords.Schema("unevaluatedProperties", scope),
+            Behavior = behavior,
+        };
+
+        return node with { Extensions = ReadExtensions(values, at, keywords.IgnoresSiblings, hasDefinitions: !defs.IsEmpty) };
+    }
+
+    private (string? Id, string? Anchor, Scope Scope) ReadIdentity(Keywords keywords, Scope at)
+    {
+        string? id = keywords.String("$id");
+        string? anchor = keywords.String("$anchor");
+        Scope scope = at;
+
+        if (anchor is not null && !IsAnchorName(anchor))
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword("$anchor"), $"\"{anchor}\" isn't a valid anchor name.");
+        }
+
+        if (id is not null)
+        {
+            int fragment = id.IndexOf('#', StringComparison.Ordinal);
+            bool hasFragment = fragment >= 0 && fragment < id.Length - 1;
+
+            if (hasFragment && !IsLegacy)
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword("$id"), "$id can't have a non-empty fragment. Use $anchor.");
+            }
+
+            if (fragment == 0 && hasFragment)
+            {
+                anchor = id[1..];
+                id = null;
+            }
+            else if (fragment != 0 && at.Pointer.Length > 0)
+            {
+                scope = at with { Resource = at.Pointer };
+            }
+        }
+
+        if (anchor is not null && at.IsWalked && !_anchors.TryAdd((scope.Resource, anchor), at.Pointer))
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, $"The anchor \"{anchor}\" is declared twice.");
+        }
+
+        return (id, anchor, scope);
+    }
+
+    private void CheckFormat(string format, Scope at)
+    {
+        if (_options.UnknownFormats == UnknownFormatHandling.Error && !StringFormats.IsKnown(format))
+        {
+            throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword("format"), $"The format \"{format}\" is unknown.");
+        }
+    }
+
+    private static JsonTypes ReadTypes(Keywords keywords)
+    {
+        if (!keywords.Take("type", out JsonElement value, out string location))
+        {
+            return JsonTypes.None;
+        }
+
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            return ToType(value, location);
+        }
+
+        JsonTypes types = JsonTypes.None;
+
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            JsonTypes type = ToType(item, location);
+
+            if (types.HasFlag(type))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, location, "A type appears twice.");
+            }
+
+            types |= type;
+        }
+
+        return types != JsonTypes.None ? types : throw Error(JsonSchemaImportCodes.InvalidSchema, location, "type can't be an empty array.");
+    }
+
+    private (ImmutableArray<SchemaNode> PrefixItems, SchemaNode? Items) ReadItems(Keywords keywords, Scope scope)
+    {
+        if (!IsLegacy)
+        {
+            return (keywords.NonEmptyList("prefixItems", scope), keywords.Schema("items", scope));
+        }
+
+        if (!keywords.Peek("items", out JsonElement items) || items.ValueKind != JsonValueKind.Array)
+        {
+            return ([], keywords.Schema("items", scope));
+        }
+
+        return (keywords.List("items", scope), keywords.Schema("additionalItems", scope));
+    }
+
+    private (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> Required, ImmutableArray<SchemaProperty> Schemas) ReadDependencies(Keywords keywords, Scope scope)
+    {
+        if (!IsLegacy)
+        {
+            return (keywords.DependentRequired(), keywords.Named("dependentSchemas", scope));
+        }
+
+        if (!keywords.Take("dependencies", out JsonElement dependencies, out string location))
+        {
+            return ([], []);
+        }
+
+        if (dependencies.ValueKind != JsonValueKind.Object)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, location, "dependencies must be an object.");
+        }
+
+        ImmutableArray<KeyValuePair<string, ImmutableArray<string>>>.Builder required = ImmutableArray.CreateBuilder<KeyValuePair<string, ImmutableArray<string>>>();
+        ImmutableArray<SchemaProperty>.Builder schemas = ImmutableArray.CreateBuilder<SchemaProperty>();
+
+        foreach (JsonProperty property in dependencies.EnumerateObject())
+        {
+            Scope child = scope.Child("dependencies", property.Name);
+
+            if (property.Value.ValueKind == JsonValueKind.Array)
+            {
+                required.Add(KeyValuePair.Create(property.Name, ToUniqueStrings(property.Value, child.Pointer)));
+            }
+            else
+            {
+                schemas.Add(new SchemaProperty(property.Name, Build(property.Value, child)));
+            }
+        }
+
+        return (required.ToImmutable(), schemas.ToImmutable());
+    }
+
+    private ImmutableArray<KeyValuePair<string, JsonElement>> ReadExtensions(Dictionary<string, JsonElement> remaining, Scope at, bool ignoresSiblings, bool hasDefinitions)
+    {
+        ImmutableArray<KeyValuePair<string, JsonElement>>.Builder extensions = ImmutableArray.CreateBuilder<KeyValuePair<string, JsonElement>>(remaining.Count);
+
+        foreach ((string keyword, JsonElement value) in remaining.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            if (keyword == "$schema")
+            {
+                if (at.Pointer.Length == 0)
+                {
+                    continue;
+                }
+
+                CheckNestedDialect(value, at);
+            }
+
+            bool isUnknown = !IsKeyword(keyword) && !Only202012.Contains(keyword) && !keyword.StartsWith("x-", StringComparison.Ordinal);
+
+            if (isUnknown && _options.UnknownKeywords == UnknownKeywordHandling.Error)
+            {
+                throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"The keyword {keyword} is unknown.");
+            }
+
+            extensions.Add(KeyValuePair.Create(IsInert(keyword, ignoresSiblings, hasDefinitions) ? InertPrefix + keyword : keyword, value));
+        }
+
+        return extensions.ToImmutable();
+    }
+
+    private void CheckNestedDialect(JsonElement value, Scope at)
+    {
+        if (value.ValueKind != JsonValueKind.String || ToDialect(value.GetString()!) != _dialect)
+        {
+            throw Error(JsonSchemaImportCodes.UnsupportedDialect, at.Keyword("$schema"), "A subschema can't change the dialect.");
+        }
+    }
+
+    private bool IsInert(string keyword, bool ignoresSiblings, bool hasDefinitions)
+    {
+        if (!IsLegacy)
+        {
+            return false;
+        }
+
+        // Documents often point into $defs under draft-07, so the name stays unless definitions takes its place.
+        if (keyword == "$defs")
+        {
+            return hasDefinitions;
+        }
+
+        return keyword == "$schema"
+            || Only202012.Contains(keyword)
+            || (_dialect == JsonSchemaImportDialect.Draft06 && SinceDraft07.Contains(keyword))
+            || (ignoresSiblings && IsKeyword(keyword));
+    }
+
+    private bool IsActive(string keyword, bool ignoresSiblings)
+    {
+        if (ignoresSiblings && !BesideLegacyRef.Contains(keyword))
+        {
+            return false;
+        }
+
+        return _dialect switch
+        {
+            JsonSchemaImportDialect.Draft202012 => !UntilDraft07.Contains(keyword),
+            JsonSchemaImportDialect.Draft07 => !Only202012.Contains(keyword),
+            _ => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword),
+        };
+    }
+
+    private void CheckPattern(string pattern, string location)
+    {
+        if (pattern.Length > _options.MaxPatternLength)
+        {
+            throw Error(JsonSchemaImportCodes.LimitExceeded, location, $"The pattern is longer than {_options.MaxPatternLength} characters.");
+        }
+
+        try
+        {
+            PatternCompiler.Compile(pattern);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new JsonSchemaImportException(JsonSchemaImportCodes.InvalidPattern, location, exception.Message, exception);
+        }
+    }
+
+    /// <summary>
+    /// Before 2019-09 a pointer can spell keywords the model doesn't keep, such as <c>definitions</c>. The node's
+    /// <c>$ref</c> has to name the location the emitter will write, so each token is translated by its position.
+    /// </summary>
+    private string NormalizeReference(string reference, Scope scope)
+    {
+        if (!IsLegacy || !reference.StartsWith("#/", StringComparison.Ordinal))
+        {
+            return reference;
+        }
+
+        JsonElement? current = Walk(scope.Resource);
+        Position position = Position.Schema;
+        List<string> written = ["#"];
+
+        foreach (string token in reference[2..].Split('/'))
+        {
+            string name = DecodeToken(token);
+            (string spelled, Position next) = position switch
+            {
+                Position.Schema => Translate(token, name, current),
+                Position.Map or Position.List => (token, Position.Schema),
+                _ => (token, Position.Opaque),
+            };
+
+            written.Add(spelled);
+            position = next;
+            current = current is { } element ? Step(element, name) : null;
+        }
+
+        return string.Join('/', written);
+    }
+
+    private JsonElement? Walk(string pointer)
+    {
+        JsonElement? current = _root;
+
+        foreach (string token in pointer.Split('/').Skip(1))
+        {
+            current = current is { } element ? Step(element, Unescape(token)) : null;
+        }
+
+        return current;
+    }
+
+    private void ResolveReferences()
+    {
+        // The list grows when a target outside the walked tree has references of its own.
+        for (int index = 0; index < _references.Count; index++)
+        {
+            PendingReference reference = _references[index];
+            reference.Target.Node = Find(reference);
+        }
+    }
+
+    private SchemaNode Find(PendingReference reference)
+    {
+        string location = reference.At.Keyword("$ref");
+
+        if (!reference.Text.StartsWith('#'))
+        {
+            throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" isn't local. Only #, JSON Pointers and $anchor names can be resolved, and nothing is fetched.");
+        }
+
+        string fragment = Uri.UnescapeDataString(reference.Text[1..]);
+        string resource = reference.At.Resource;
+        string? pointer = fragment.Length == 0 || fragment[0] == '/'
+            ? resource + fragment
+            : _anchors.GetValueOrDefault((resource, fragment));
+
+        if (pointer is null)
+        {
+            throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"No $anchor is named \"{fragment}\".");
+        }
+
+        if (_nodes.TryGetValue(pointer, out SchemaNode? node))
+        {
+            return node;
+        }
+
+        // Not a keyword Zorg walks, but a pointer may still lead there.
+        if (Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False } target)
+        {
+            return Build(target, new Scope(pointer, resource, 0, IsWalked: false));
+        }
+
+        throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" doesn't point at a schema.");
+    }
+
+    /// <summary>
+    /// Walks the edges that stay on the same instance. A cycle among them never ends, and a long chain
+    /// would exhaust the stack at validation time. Iterative, because the chain length is what's being measured.
+    /// </summary>
+    private void CheckInPlaceGraph()
+    {
+        Dictionary<SchemaNode, int> finished = new(ReferenceEqualityComparer.Instance);
+        HashSet<SchemaNode> active = new(ReferenceEqualityComparer.Instance);
+        Stack<Frame> stack = new();
+
+        foreach (SchemaNode start in _locations.Keys)
+        {
+            if (start.BooleanValue is not null || finished.ContainsKey(start))
+            {
+                continue;
+            }
+
+            active.Add(start);
+            stack.Push(new Frame(start));
+
+            while (stack.TryPeek(out Frame? frame))
+            {
+                if (frame.Next() is { } child)
+                {
+                    if (active.Contains(child))
+                    {
+                        throw Error(JsonSchemaImportCodes.RefCycle, Location(frame.Node), "This cycle of references never reaches a child of the instance, so evaluating it wouldn't end.");
+                    }
+
+                    if (finished.TryGetValue(child, out int depth))
+                    {
+                        frame.Depth = Math.Max(frame.Depth, depth);
+                    }
+                    else if (child.BooleanValue is null)
+                    {
+                        active.Add(child);
+                        stack.Push(new Frame(child));
+                    }
+
+                    continue;
+                }
+
+                stack.Pop();
+                active.Remove(frame.Node);
+                int length = frame.Depth + 1;
+
+                if (length > _options.MaxDepth)
+                {
+                    throw Error(JsonSchemaImportCodes.LimitExceeded, Location(frame.Node), $"A chain of references is longer than {_options.MaxDepth}.");
+                }
+
+                finished[frame.Node] = length;
+
+                if (stack.TryPeek(out Frame? parent))
+                {
+                    parent.Depth = Math.Max(parent.Depth, length);
+                }
+            }
+        }
+    }
+
+    private string Location(SchemaNode node)
+    {
+        string pointer = _locations[node];
+        return node.Ref is null ? pointer : $"{pointer}/$ref";
+    }
+
+    private sealed class ReferenceTarget
+    {
+        public SchemaNode? Node { get; set; }
+
+        public SchemaNode Get() => Node!;
+    }
+
+    private sealed record PendingReference(ReferenceTarget Target, string Text, Scope At);
+
+    private sealed class Frame(SchemaNode node)
+    {
+        private readonly SchemaNode[] _edges = [.. InPlaceEdges(node)];
+        private int _index;
+
+        public SchemaNode Node { get; } = node;
+
+        public int Depth { get; set; }
+
+        public SchemaNode? Next() => _index < _edges.Length ? _edges[_index++] : null;
+    }
+
+    /// <summary>Where a subschema is: its pointer, the root of its <c>$id</c> resource, and its depth.</summary>
+    private readonly record struct Scope(string Pointer, string Resource, int Depth, bool IsWalked)
+    {
+        public string Keyword(string keyword) => $"{Pointer}/{Escape(keyword)}";
+
+        public Scope Child(string keyword) => this with { Pointer = Keyword(keyword), Depth = Depth + 1 };
+
+        public Scope Child(string keyword, string name) => this with { Pointer = $"{Keyword(keyword)}/{Escape(name)}", Depth = Depth + 1 };
+
+        public Scope Child(string keyword, int index) => Child(keyword, index.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Reads keywords off one schema object. What's left afterwards goes to <see cref="SchemaNode.Extensions"/>.</summary>
+    private sealed class Keywords(SchemaImporter importer, Dictionary<string, JsonElement> values, Scope at, bool ignoresSiblings)
+    {
+        public bool IgnoresSiblings => ignoresSiblings;
+
+        public bool Peek(string keyword, out JsonElement value) => values.TryGetValue(keyword, out value) && importer.IsActive(keyword, ignoresSiblings);
+
+        public bool Take(string keyword, out JsonElement value, out string location)
+        {
+            location = string.Empty;
+
+            if (!importer.IsActive(keyword, ignoresSiblings) || !values.Remove(keyword, out value))
+            {
+                value = default;
+                return false;
+            }
+
+            location = at.Keyword(keyword);
+            return true;
+        }
+
+        public string? String(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return null;
+            }
+
+            return value.ValueKind == JsonValueKind.String ? value.GetString() : throw Invalid(location, "a string");
+        }
+
+        public bool? Boolean(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return null;
+            }
+
+            return value.ValueKind is JsonValueKind.True or JsonValueKind.False ? value.GetBoolean() : throw Invalid(location, "a boolean");
+        }
+
+        public JsonElement? Element(string keyword) => Take(keyword, out JsonElement value, out _) ? value : null;
+
+        public ImmutableArray<JsonElement> Elements(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return [];
+            }
+
+            return value.ValueKind == JsonValueKind.Array ? [.. value.EnumerateArray()] : throw Invalid(location, "an array");
+        }
+
+        public ImmutableArray<string> Strings(string keyword) =>
+            Take(keyword, out JsonElement value, out string location) ? ToUniqueStrings(value, location) : [];
+
+        public JsonElement? Number(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return null;
+            }
+
+            return value.ValueKind == JsonValueKind.Number ? value : throw Invalid(location, "a number");
+        }
+
+        public JsonElement? PositiveNumber(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return null;
+            }
+
+            bool isPositive = value.ValueKind == JsonValueKind.Number && ExactNumber.Parse(value.GetRawText()).CompareTo(ExactNumber.Parse("0")) > 0;
+            return isPositive ? value : throw Invalid(location, "a number above zero");
+        }
+
+        public int? Count(string keyword)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return null;
+            }
+
+            if (value.ValueKind != JsonValueKind.Number)
+            {
+                throw Invalid(location, "a non-negative integer");
+            }
+
+            ExactNumber number = ExactNumber.Parse(value.GetRawText());
+
+            if (!number.IsInteger || number.CompareTo(ExactNumber.Parse("0")) < 0)
+            {
+                throw Invalid(location, "a non-negative integer");
+            }
+
+            if (number.CompareTo(ExactNumber.Parse("2147483647")) > 0)
+            {
+                throw Error(JsonSchemaImportCodes.LimitExceeded, location, $"{keyword} is larger than Zorg can represent.");
+            }
+
+            return (int)value.GetDouble();
+        }
+
+        public string? Pattern(string keyword)
+        {
+            string? pattern = String(keyword);
+
+            if (pattern is not null)
+            {
+                importer.CheckPattern(pattern, at.Keyword(keyword));
+            }
+
+            return pattern;
+        }
+
+        public SchemaNode? Schema(string keyword, Scope scope) =>
+            Take(keyword, out JsonElement value, out _) ? importer.Build(value, scope.Child(keyword)) : null;
+
+        public ImmutableArray<SchemaNode> List(string keyword, Scope scope)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return [];
+            }
+
+            if (value.ValueKind != JsonValueKind.Array)
+            {
+                throw Invalid(location, "an array of schemas");
+            }
+
+            ImmutableArray<SchemaNode>.Builder nodes = ImmutableArray.CreateBuilder<SchemaNode>(value.GetArrayLength());
+
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                nodes.Add(importer.Build(item, scope.Child(keyword, nodes.Count)));
+            }
+
+            return nodes.MoveToImmutable();
+        }
+
+        public ImmutableArray<SchemaNode> NonEmptyList(string keyword, Scope scope)
+        {
+            if (Peek(keyword, out JsonElement value) && value.ValueKind == JsonValueKind.Array && value.GetArrayLength() == 0)
+            {
+                throw Invalid(at.Keyword(keyword), "a non-empty array of schemas");
+            }
+
+            return List(keyword, scope);
+        }
+
+        public ImmutableArray<SchemaProperty> Named(string keyword, Scope scope) => Named(keyword, scope, checkNames: false);
+
+        public ImmutableArray<SchemaProperty> PatternNamed(string keyword, Scope scope) => Named(keyword, scope, checkNames: true);
+
+        public ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> DependentRequired()
+        {
+            if (!Take("dependentRequired", out JsonElement value, out string location))
+            {
+                return [];
+            }
+
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                throw Invalid(location, "an object");
+            }
+
+            return [.. value.EnumerateObject().Select(property =>
+                KeyValuePair.Create(property.Name, ToUniqueStrings(property.Value, $"{location}/{Escape(property.Name)}")))];
+        }
+
+        private static JsonSchemaImportException Invalid(string location, string expected) =>
+            Error(JsonSchemaImportCodes.InvalidSchema, location, $"Expected {expected}.");
+
+        private ImmutableArray<SchemaProperty> Named(string keyword, Scope scope, bool checkNames)
+        {
+            if (!Take(keyword, out JsonElement value, out string location))
+            {
+                return [];
+            }
+
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                throw Invalid(location, "an object of schemas");
+            }
+
+            HashSet<string> seen = new(StringComparer.Ordinal);
+            ImmutableArray<SchemaProperty>.Builder properties = ImmutableArray.CreateBuilder<SchemaProperty>();
+
+            foreach (JsonProperty property in value.EnumerateObject())
+            {
+                Scope child = scope.Child(keyword, property.Name);
+
+                if (!seen.Add(property.Name))
+                {
+                    throw Error(JsonSchemaImportCodes.InvalidSchema, child.Pointer, "The name appears twice.");
+                }
+
+                if (checkNames)
+                {
+                    importer.CheckPattern(property.Name, child.Pointer);
+                }
+
+                properties.Add(new SchemaProperty(property.Name, importer.Build(property.Value, child)));
+            }
+
+            return properties.ToImmutable();
+        }
+    }
+}

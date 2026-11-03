@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Numerics;
 using System.Text.Json;
+using Zorg.Json.Import;
 using Zorg.Json.Model;
 
 namespace Zorg.Json;
@@ -264,6 +265,44 @@ public static class Z
             Ref = $"#/$defs/{name}",
             Behavior = new SchemaBehavior { DefinitionName = name, Target = () => target.Value },
         });
+    }
+
+    /// <summary>
+    /// Imports a JSON Schema document (Draft 2020-12, draft-07 or draft-06), so that it validates like any other schema.
+    /// JSON Schema: all of the core, applicator and validation vocabularies, except <c>$dynamicRef</c> and
+    /// <c>unevaluated*</c> beside in-place applicators. Zod equivalent: <c>z.fromJSONSchema()</c>.
+    /// </summary>
+    /// <param name="schema">The document. It's copied, so it needn't outlive this call.</param>
+    /// <param name="options">Dialect, format handling and limits. Null uses the defaults.</param>
+    /// <returns>A new schema, with unknown properties allowed and no default values filled in.</returns>
+    /// <exception cref="JsonSchemaImportException">The document can't be imported faithfully. Nothing is dropped silently.</exception>
+    /// <example>
+    /// <code>
+    /// JsonValueSchema tool = Z.FromJsonSchema(JsonElement.Parse(inputSchema));
+    /// ParseResult&lt;JsonElement&gt; result = tool.SafeParse(arguments);
+    /// </code>
+    /// </example>
+    public static JsonValueSchema FromJsonSchema(JsonElement schema, JsonSchemaImportOptions? options = null) =>
+        new(SchemaImporter.Import(schema, options));
+
+    /// <summary>
+    /// Imports a JSON Schema document from text. Malformed JSON and duplicate keys fail with
+    /// <see cref="JsonSchemaImportCodes.InvalidSchema"/>. JSON Schema: see
+    /// <see cref="FromJsonSchema(JsonElement, JsonSchemaImportOptions?)"/>. Zod equivalent: <c>z.fromJSONSchema()</c>.
+    /// </summary>
+    /// <param name="schema">The JSON text.</param>
+    /// <param name="options">Dialect, format handling and limits. Null uses the defaults.</param>
+    /// <returns>A new schema, with unknown properties allowed and no default values filled in.</returns>
+    /// <exception cref="JsonSchemaImportException">The document can't be imported faithfully. Nothing is dropped silently.</exception>
+    /// <example>
+    /// <code>
+    /// JsonValueSchema name = Z.FromJsonSchema("""{ "type": "string", "minLength": 1 }""");
+    /// </code>
+    /// </example>
+    public static JsonValueSchema FromJsonSchema(string schema, JsonSchemaImportOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        return new(SchemaImporter.Import(schema, options));
     }
 
     private static ImmutableArray<SchemaNode> Nodes(ReadOnlySpan<ISchema> schemas)
