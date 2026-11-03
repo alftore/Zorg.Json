@@ -80,3 +80,16 @@ jobs:
       - name: Run
         shell: bash
         run: '"$RUNNER_TEMP/aot/Zorg.Json.AotSmoke"'
+
+      - name: Publish ASP.NET Core
+        shell: bash
+        run: |
+          dotnet publish samples/Zorg.Json.AspNetCore.AotSmoke -r linux-x64 -c Release -o "$RUNNER_TEMP/aot-web" | tee "$RUNNER_TEMP/publish-web.log"
+          if grep -E '\bIL[23][0-9]{3}\b' "$RUNNER_TEMP/publish-web.log"; then
+            echo "::error::The publish reported trim or AOT warnings."
+            exit 1
+          fi
+
+      - name: Run ASP.NET Core
+        shell: bash
+        run: '"$RUNNER_TEMP/aot-web/Zorg.Json.AspNetCore.AotSmoke"'

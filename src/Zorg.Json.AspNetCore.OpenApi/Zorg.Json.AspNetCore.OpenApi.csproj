@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Puts Zorg.Json schemas into the OpenAPI documents of Microsoft.AspNetCore.OpenApi.</Description>
+    <PackageTags>json;json-schema;validation;zod;aspnetcore;openapi</PackageTags>
+    <!-- The shared framework's reference assemblies don't carry the attribute this checks. samples/Zorg.Json.AspNetCore.AotSmoke publishes for real instead. -->
+    <VerifyReferenceAotCompatibility>false</VerifyReferenceAotCompatibility>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zorg.Json.AspNetCore\Zorg.Json.AspNetCore.csproj" />
+  </ItemGroup>
+
+</Project>
