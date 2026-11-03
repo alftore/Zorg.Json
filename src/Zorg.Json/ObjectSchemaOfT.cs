@@ -38,7 +38,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     {
         ArgumentNullException.ThrowIfNull(configure);
         (string name, SchemaNode node) = Find(member);
-        return ReplaceProperty(name, configure(new StringSchema(node)).ToNode());
+        return UpdateProperty(name, configure(new StringSchema(node)).ToNode());
     }
 
     /// <summary>Adds rules to a boolean property.</summary>
@@ -55,7 +55,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     {
         ArgumentNullException.ThrowIfNull(configure);
         (string name, SchemaNode node) = Find(member);
-        return ReplaceProperty(name, configure(new BooleanSchema(node)).ToNode());
+        return UpdateProperty(name, configure(new BooleanSchema(node)).ToNode());
     }
 
     /// <summary>Adds rules to a numeric property.</summary>
@@ -74,7 +74,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     {
         ArgumentNullException.ThrowIfNull(configure);
         (string name, SchemaNode node) = Find(member);
-        return ReplaceProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
+        return UpdateProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
     }
 
     /// <summary>Adds rules to a nullable numeric property. <c>null</c> stays allowed.</summary>
@@ -93,7 +93,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     {
         ArgumentNullException.ThrowIfNull(configure);
         (string name, SchemaNode node) = Find(member);
-        return ReplaceProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
+        return UpdateProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
     }
 
     /// <summary>Adds rules to a collection property.</summary>
@@ -118,7 +118,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
             item => (TItem)item.Deserialize(options.GetTypeInfo(typeof(TItem)))!,
             item => JsonSerializer.SerializeToElement(item, options.GetTypeInfo(typeof(TItem))));
 
-        return ReplaceProperty(name, configure(seeded).ToNode());
+        return UpdateProperty(name, configure(seeded).ToNode());
     }
 
     /// <summary>
@@ -141,7 +141,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
         (string name, SchemaNode seeded) = Find(member);
         SchemaNode node = schema.ToNode();
         bool nullable = seeded.Types.HasFlag(JsonTypes.Null) || seeded.AnyOf.Any(branch => branch.Types == JsonTypes.Null);
-        return ReplaceProperty(name, nullable ? node.WithNull() : node);
+        return UpdateProperty(name, nullable ? node.WithNull() : node);
     }
 
     /// <summary>
@@ -158,7 +158,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     [Pure]
     public ObjectSchema<T> Optional<TProperty>(Expression<Func<T, TProperty>> member)
     {
-        (string name, _) = Find(member);
+        string name = FindRemovable(member);
         return With(Node with { Required = Node.Required.Remove(name) });
     }
 
@@ -177,8 +177,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     [Pure]
     public ObjectSchema<T> Omit<TProperty>(Expression<Func<T, TProperty>> member)
     {
-        (string name, _) = Find(member);
-        return RemoveProperty(name);
+        return RemoveProperty(FindRemovable(member));
     }
 
     /// <summary>
@@ -209,6 +208,16 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     internal override T Materialize(JsonElement value) => value.Deserialize(_typeInfo)!;
 
     internal override JsonElement ToElement(T value) => JsonSerializer.SerializeToElement(value, _typeInfo);
+
+    /// <summary>System.Text.Json fails on a missing <c>required</c> member, so such a property can't be made optional.</summary>
+    private string FindRemovable(LambdaExpression member)
+    {
+        (string name, _) = Find(member);
+
+        return _typeInfo.Properties.Any(property => property.Name == name && property.IsRequired)
+            ? throw new ArgumentException($"{name} is required by System.Text.Json, so it must stay in the input.", nameof(member))
+            : name;
+    }
 
     private (string Name, SchemaNode Node) Find(LambdaExpression member)
     {

@@ -45,15 +45,18 @@ public abstract class Schema<T> : ISchema
     public ParseResult<T> SafeParse(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
+        JsonElement element;
 
         try
         {
-            return SafeParse(JsonElement.Parse(json, DocumentOptions));
+            element = JsonElement.Parse(json, DocumentOptions);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (IsUnreadable(exception))
         {
             return InvalidJson(exception);
         }
+
+        return SafeParse(element);
     }
 
     /// <summary>Validates UTF-8 JSON and returns a result instead of throwing. Zod equivalent: <c>safeParse</c>.</summary>
@@ -66,14 +69,18 @@ public abstract class Schema<T> : ISchema
     /// </example>
     public ParseResult<T> SafeParse(ReadOnlySpan<byte> utf8Json)
     {
+        JsonElement element;
+
         try
         {
-            return SafeParse(JsonElement.Parse(utf8Json, DocumentOptions));
+            element = JsonElement.Parse(utf8Json, DocumentOptions);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (IsUnreadable(exception))
         {
             return InvalidJson(exception);
         }
+
+        return SafeParse(element);
     }
 
     /// <summary>Validates an already parsed element and returns a result instead of throwing. Zod equivalent: <c>safeParse</c>.</summary>
@@ -86,6 +93,11 @@ public abstract class Schema<T> : ISchema
     /// </example>
     public ParseResult<T> SafeParse(JsonElement json)
     {
+        if (json.ValueKind == JsonValueKind.Undefined)
+        {
+            return InvalidJson(new JsonException("The element has no value."));
+        }
+
         ValidationContext context = new();
         JsonElement value = Plan.Run(json, context);
 
@@ -110,14 +122,20 @@ public abstract class Schema<T> : ISchema
     {
         ArgumentNullException.ThrowIfNull(utf8Json);
 
+        JsonDocument document;
+
         try
         {
-            using JsonDocument document = await JsonDocument.ParseAsync(utf8Json, DocumentOptions, cancellationToken).ConfigureAwait(false);
-            return await SafeParseAsync(document.RootElement, cancellationToken).ConfigureAwait(false);
+            document = await JsonDocument.ParseAsync(utf8Json, DocumentOptions, cancellationToken).ConfigureAwait(false);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (IsUnreadable(exception))
         {
             return InvalidJson(exception);
+        }
+
+        using (document)
+        {
+            return await SafeParseAsync(document.RootElement, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -132,6 +150,11 @@ public abstract class Schema<T> : ISchema
     /// </example>
     public async ValueTask<ParseResult<T>> SafeParseAsync(JsonElement json, CancellationToken cancellationToken = default)
     {
+        if (json.ValueKind == JsonValueKind.Undefined)
+        {
+            return InvalidJson(new JsonException("The element has no value."));
+        }
+
         ValidationContext context = new();
         JsonElement value = Plan.Run(json, context);
 
@@ -247,7 +270,7 @@ public abstract class Schema<T> : ISchema
         {
             return ParseResult<T>.Success(Materialize(value));
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (Deserialization.Failed(exception))
         {
             context.ReportDeserializationFailed(exception);
             return ParseResult<T>.Failure(context.ToIssues());
@@ -257,7 +280,11 @@ public abstract class Schema<T> : ISchema
     private static T ValueOrThrow(ParseResult<T> result) =>
         result.IsSuccess ? result.Value : throw new SchemaValidationException(result.Issues);
 
-    private static ParseResult<T> InvalidJson(JsonException exception)
+    /// <summary>Besides malformed JSON, the parser throws these for invalid UTF-16 and for undecodable property names.</summary>
+    private static bool IsUnreadable(Exception exception) =>
+        exception is JsonException or InvalidOperationException or ArgumentException;
+
+    private static ParseResult<T> InvalidJson(Exception exception)
     {
         ValidationContext context = new();
         context.ReportInvalidJson(exception);

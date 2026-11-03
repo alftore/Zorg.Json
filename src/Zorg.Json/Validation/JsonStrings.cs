@@ -8,6 +8,9 @@ namespace Zorg.Json.Validation;
 
 internal static class JsonStrings
 {
+    private static readonly JsonWriterOptions WriterOptions = new() { MaxDepth = int.MaxValue, SkipValidation = true };
+    private static readonly JsonDocumentOptions ReaderOptions = new() { MaxDepth = int.MaxValue };
+
     public static JsonElement ToElement(string value) => Write(writer => writer.WriteStringValue(value));
 
     public static JsonElement ToArray(IEnumerable<JsonElement> items) => Write(writer =>
@@ -52,11 +55,11 @@ internal static class JsonStrings
     {
         ArrayBufferWriter<byte> buffer = new();
 
-        using (Utf8JsonWriter writer = new(buffer))
+        using (Utf8JsonWriter writer = new(buffer, WriterOptions))
         {
             write(writer);
         }
 
-        return JsonElement.Parse(buffer.WrittenSpan);
+        return JsonElement.Parse(buffer.WrittenSpan, ReaderOptions);
     }
 }

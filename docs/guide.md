@@ -67,9 +67,13 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Names** come from the contract, so `[JsonPropertyName]` and naming policies apply.
 - **Required:** a property marked `required`, or a constructor parameter with no default. System.Text.Json doesn't enforce the second kind itself, but `record Person(string Name)` says it's needed.
 - **Nullable:** follows the declaration, so `string?` allows `null` and `string` doesn't. Absent and `null` are separate: `string? Nickname` as a constructor parameter must be present, and may be `null`. Use `.Optional(p => p.Nickname)` or give it a default to let it be absent.
-- **Unknown properties** are rejected, unless the type has `[JsonExtensionData]`.
+- **Unknown properties** are rejected, unless the type has `[JsonExtensionData]`. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is rejected even with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
+- **`[JsonIgnore]` properties** aren't part of the schema.
+- **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
 - **Computed properties** with no setter aren't accepted as input, but appear in the output schema.
 - **`[JsonPolymorphic]` hierarchies** become a discriminated union. System.Text.Json expects the discriminator first unless `AllowOutOfOrderMetadataProperties` is set.
+
+A `required` member can't be made optional with `.Optional` or `.Omit`, because System.Text.Json would then fail on it. `DateTime` and `TimeOnly` have no `format`, because System.Text.Json writes them without an offset.
 
 `Schema.Object<Person>()` is the short form using reflection, with web defaults. It doesn't work with trimming or Native AOT, which is why `Schema.Object(AppJson.Default.Person)` is the form to prefer.
 
@@ -89,6 +93,10 @@ Z.String().Trim().MinLength(1)     // "   " fails, because length is checked aft
 Z.String().ToLowerInvariant().Enum("web", "news")
 Z.String().Overwrite(text => text.Replace("-", ""))
 ```
+
+Constraints on the whole value see the result: `MinProperties` and `MaxProperties` count after `Strip` and `Default`, and `UniqueItems` compares after each item's own steps.
+
+Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Schema, so a `Trim` in one branch doesn't affect another. If several branches change the value, the last change wins.
 
 There's no general `Transform`. Use `ParseResult<T>.Map` to convert to another type.
 
@@ -139,6 +147,8 @@ static readonly ObjectSchema Tree = Z.Object()
 
 Combine objects with `.Extend(other)`, not `Z.AllOf`: a closed object rejects the properties of the other branch. `Extend` builds one flat object.
 
+`Z.DiscriminatedUnion` selects a branch by the property when every branch requires it with its own values. Otherwise, for example when two branches share a value, it behaves like `Z.OneOf`.
+
 ## Emitting JSON Schema
 
 ```csharp
@@ -162,6 +172,9 @@ JsonObject schema = PersonSchema.ToJsonSchema();
 - Refinements are C#.
 - Constraints after `Trim` and similar steps. `Z.String().Trim().MaxLength(3)` accepts `"  abc  "`, so emitting `maxLength: 3` would wrongly reject it.
 - Parts of a schema a dialect has no keyword for.
+- `format`, which Zorg enforces and other validators may treat as a note.
+
+Leaving a rule out makes a schema looser, but under `not`, `if`, `maxContains` or `oneOf` a looser subschema would make the document **stricter**. So a subschema that can't be stated exactly takes that keyword with it: `not`, `if` and `maxContains` are left out, and `oneOf` becomes `anyOf`. This applies to any subschema with a normalizer, a refinement, a known format, or a .NET numeric range. Discriminated unions stay `oneOf`, because their branches can't overlap.
 
 By default each of these is noted in `description`. `Emit()` also returns them as diagnostics:
 
@@ -184,13 +197,17 @@ Every issue has a stable `Code`, a localized `Message`, a JSON Pointer `Instance
 | `too_small` | Below a minimum | `minLength`, `minimum`, `exclusiveMinimum`, `minItems`, `minProperties`, `contains` |
 | `too_big` | Above a maximum | `maxLength`, `maximum`, `exclusiveMaximum`, `maxItems`, `maxProperties`, `maxContains` |
 | `invalid_format` | Doesn't match | `pattern`, `format` |
-| `invalid_value` | Not an allowed value | `const`, `enum`, `not`, `uniqueItems` |
+| `invalid_value` | Not an allowed value, invalid Unicode, or a value too complex to evaluate | `const`, `enum`, `not`, `uniqueItems` |
 | `not_multiple_of` | Not a multiple | `multipleOf` |
 | `required` | Missing property, reported at its own path | `required`, `dependentRequired` |
 | `unrecognized_keys` | Unknown properties, listed in `Parameters["keys"]` | `additionalProperties` |
 | `invalid_union` | No branch matched, or more than one of a `oneOf` | `anyOf`, `oneOf` |
 | `deserialization_failed` | Valid, but System.Text.Json couldn't read it | |
 | `custom` | A refinement failed | |
+
+Messages are safe to show to clients. For `invalid_json` and `deserialization_failed`, the exception text is in `Parameters["detail"]`, for logs.
+
+`SafeParse` doesn't throw for any input. Exceptions from your own refinements pass through, and sync parsing of a schema with `RefineAsync` throws `InvalidOperationException`.
 
 `issues.ToDictionary()` gives the shape of `ValidationProblemDetails`, and `issues.ToPrettyString()` is for logs.
 

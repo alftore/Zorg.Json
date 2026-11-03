@@ -14,6 +14,8 @@ namespace Zorg.Json.Typed;
 /// </summary>
 internal sealed class ContractSeeder
 {
+    private static readonly SchemaNode AnyValue = new();
+
     private readonly JsonSerializerOptions _options;
     private readonly Dictionary<Type, SchemaNode> _finished = [];
     private readonly HashSet<Type> _inProgress = [];
@@ -23,7 +25,7 @@ internal sealed class ContractSeeder
     public static SchemaNode Seed(JsonTypeInfo typeInfo)
     {
         ContractSeeder seeder = new(typeInfo.Options);
-        return seeder.SeedObject(typeInfo);
+        return typeInfo.Kind == JsonTypeInfoKind.Object ? seeder.SeedObject(typeInfo) : seeder.Seed(typeInfo.Type);
     }
 
     /// <summary>A constructor parameter without a default is required, although System.Text.Json doesn't enforce it.</summary>
@@ -33,7 +35,8 @@ internal sealed class ContractSeeder
 
     public static bool IsReadable(JsonPropertyInfo property) => property.Set is not null || property.AssociatedParameter is not null;
 
-    private static SchemaNode Scalar(JsonTypes types, string? format = null) => new() { Types = types, Format = format };
+    private static SchemaNode Scalar(JsonTypes types, string? format = null) =>
+        new() { Types = types, Format = format, Behavior = new SchemaBehavior { FormatIsFluent = format is not null } };
 
     private static SchemaNode? Primitive(Type type) => type switch
     {
@@ -52,9 +55,10 @@ internal sealed class ContractSeeder
         _ when type == typeof(double) => NumberNode<double>(),
         _ when type == typeof(decimal) => NumberNode<decimal>(),
         _ when type == typeof(Guid) => Scalar(JsonTypes.String, "uuid"),
-        _ when type == typeof(DateTimeOffset) || type == typeof(DateTime) => Scalar(JsonTypes.String, "date-time"),
+        _ when type == typeof(DateTimeOffset) => Scalar(JsonTypes.String, "date-time"),
+        _ when type == typeof(DateTime) => Scalar(JsonTypes.String),
         _ when type == typeof(DateOnly) => Scalar(JsonTypes.String, "date"),
-        _ when type == typeof(TimeOnly) => Scalar(JsonTypes.String, "time"),
+        _ when type == typeof(TimeOnly) => Scalar(JsonTypes.String),
         _ when type == typeof(TimeSpan) => Scalar(JsonTypes.String),
         _ when type == typeof(Uri) => Scalar(JsonTypes.String, "uri-reference"),
         _ when type == typeof(byte[]) => new SchemaNode { Types = JsonTypes.String, ContentEncoding = "base64" },
@@ -68,6 +72,12 @@ internal sealed class ContractSeeder
     private SchemaNode Seed(Type type)
     {
         Type target = Nullable.GetUnderlyingType(type) ?? type;
+
+        // A custom converter decides the JSON shape, and it can't be known from here.
+        if (_options.TryGetTypeInfo(target, out JsonTypeInfo? known) && known.Converter.GetType().Assembly != typeof(JsonSerializer).Assembly)
+        {
+            return new SchemaNode();
+        }
 
         if (Primitive(target) is { } primitive)
         {
@@ -145,14 +155,20 @@ internal sealed class ContractSeeder
                 continue;
             }
 
-            SchemaNode schema = Seed(property.PropertyType);
+            bool readable = IsReadable(property);
 
-            if (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null)
+            if (!readable && property.Get is null)
+            {
+                continue;
+            }
+
+            SchemaNode schema = property.CustomConverter is not null ? new SchemaNode() : Seed(property.PropertyType);
+
+            if (schema != AnyValue && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
             {
                 schema = schema.WithNull();
             }
 
-            bool readable = IsReadable(property);
             properties.Add(new SchemaProperty(property.Name, schema) { OutputOnly = !readable });
 
             if (readable && IsRequired(property))
@@ -166,7 +182,11 @@ internal sealed class ContractSeeder
             Types = JsonTypes.Object,
             Properties = properties.ToImmutable(),
             Required = required.ToImmutable(),
-            Behavior = new SchemaBehavior { UnknownProperties = hasExtensionData ? UnknownProperties.Allow : UnknownProperties.Reject },
+            Behavior = new SchemaBehavior
+            {
+                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : UnknownProperties.Reject,
+                IgnoresNameCase = _options.PropertyNameCaseInsensitive,
+            },
         };
     }
 

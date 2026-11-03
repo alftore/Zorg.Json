@@ -115,7 +115,11 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
     /// </code>
     /// </example>
     [Pure]
-    public NumberSchema<TNumber> Const(TNumber value) => With(Node with { Const = ToElement(value) });
+    public NumberSchema<TNumber> Const(TNumber value)
+    {
+        SchemaNode node = Node with { Const = ToElement(value) };
+        return With(Node.Types.HasFlag(JsonTypes.Null) ? node.WithNull() : node);
+    }
 
     /// <summary>Requires one of these values. JSON Schema: <c>enum</c>. Zod equivalent: <c>z.literal([...])</c>.</summary>
     /// <param name="values">The allowed values.</param>
@@ -135,7 +139,8 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
             elements.Add(ToElement(value));
         }
 
-        return With(Node with { Enum = elements.MoveToImmutable() });
+        SchemaNode node = Node with { Enum = elements.MoveToImmutable() };
+        return With(Node.Types.HasFlag(JsonTypes.Null) ? node.WithNull() : node);
     }
 
     /// <summary>

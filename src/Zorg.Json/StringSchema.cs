@@ -88,7 +88,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     public StringSchema Format(string format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        return With(Node with { Format = format });
+        return With(Node with { Format = format, Behavior = Node.Behavior with { FormatIsFluent = true } });
     }
 
     /// <summary>Requires an email address. JSON Schema: <c>format: email</c>. Zod equivalent: <c>z.email()</c>.</summary>
@@ -272,7 +272,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     /// </example>
     [Pure]
     public StringSchema NormalizeUnicode(NormalizationForm form = NormalizationForm.FormC) =>
-        Normalize(nameof(NormalizeUnicode), text => text.Normalize(form));
+        Normalize(nameof(NormalizeUnicode), text => NormalizeOrKeep(text, form));
 
     /// <summary>
     /// Replaces the value before the constraints run, keeping it a string. No keyword: constraints that it can affect
@@ -297,6 +297,19 @@ public sealed class StringSchema : Schema<string, StringSchema>
     internal override string Materialize(JsonElement value) => value.GetString()!;
 
     internal override JsonElement ToElement(string value) => JsonStrings.ToElement(value);
+
+    /// <summary>Unicode noncharacters are valid in JSON, but <see cref="string.Normalize(NormalizationForm)"/> can refuse them.</summary>
+    private static string NormalizeOrKeep(string text, NormalizationForm form)
+    {
+        try
+        {
+            return text.Normalize(form);
+        }
+        catch (ArgumentException)
+        {
+            return text;
+        }
+    }
 
     private StringSchema Normalize(string name, Func<string, string> apply) => With(Node with
     {

@@ -63,7 +63,6 @@
     "tuple",
     "tree"
   ],
-  "additionalProperties": false,
   "$defs": {
     "tree": {
       "type": "object",

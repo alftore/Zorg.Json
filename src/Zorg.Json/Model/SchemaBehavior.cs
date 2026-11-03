@@ -44,6 +44,12 @@ public sealed record SchemaBehavior
 
     internal bool FormatIsAnnotation { get; init; }
 
+    /// <summary>Set by the fluent API, where Zorg enforces a format that other validators may only annotate.</summary>
+    internal bool FormatIsFluent { get; init; }
+
+    /// <summary>Set when the serializer matches names ignoring case, so <c>AGE</c> would bind to the property <c>age</c>.</summary>
+    internal bool IgnoresNameCase { get; init; }
+
     internal Func<string, bool>? NumberCheck { get; init; }
 
     internal string? NumberType { get; init; }
@@ -106,6 +112,13 @@ public abstract class SchemaRefinement
     internal abstract ValueTask<bool> CheckAsync(JsonElement value, CancellationToken cancellationToken);
 }
 
+internal static class Deserialization
+{
+    /// <summary>What System.Text.Json and <c>Parse</c> throw for a value they can't read. A caller's own exceptions pass through.</summary>
+    public static bool Failed(Exception exception) =>
+        exception is JsonException or NotSupportedException or InvalidOperationException or FormatException or OverflowException;
+}
+
 internal sealed class SchemaRefinement<T>(
     Func<JsonElement, T> materialize,
     Func<T, bool>? predicate,
@@ -116,8 +129,23 @@ internal sealed class SchemaRefinement<T>(
 {
     internal override bool IsAsync => asyncPredicate is not null;
 
-    internal override bool Check(JsonElement value) => predicate!(materialize(value));
+    internal override bool Check(JsonElement value) => predicate!(Read(value));
 
     internal override ValueTask<bool> CheckAsync(JsonElement value, CancellationToken cancellationToken) =>
-        asyncPredicate!(materialize(value), cancellationToken);
+        asyncPredicate!(Read(value), cancellationToken);
+
+    internal SchemaRefinement<T> WithMaterializer(Func<JsonElement, T> replacement) =>
+        new(replacement, predicate, asyncPredicate, Message, Path, Hint);
+
+    private T Read(JsonElement value)
+    {
+        try
+        {
+            return materialize(value);
+        }
+        catch (Exception exception) when (Deserialization.Failed(exception) && exception is not JsonException)
+        {
+            throw new JsonException(exception.Message, exception);
+        }
+    }
 }

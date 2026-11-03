@@ -29,7 +29,9 @@ public sealed class StructuredGuaranteeTests
     private static readonly string[] Objects =
     [
         """{"name":" a "}""", """{"name":"a"}""", """{"kind":"square"}""", """{"kind":"circle","radius":1}""",
-        """{"name":"a","count":1}""", """{"name":"a","count":1,"note":null}""", """{"a":"x","b":1}""", """{"a":1,"b":[{"a":2}]}""",
+        """{"name":"a","count":1}""", """{"name":"a","count":1,"note":null}""", """{"a":"x","b":1}""", """{"a":1,"b":[{"a":2}]}""", """{"k":"a"}""", """{"k":"b"}""", """{"k":" a "}""", """{"junk":1}""",
+        """{"a":1,"b":2}""", """{"x-a":"  a  "}""", "[]", """["  ","a"]""", """["1",1]""", "\"   \"", "\"  abc  \"", "\"b\"", "1e30", "\"1.0\"", "\"1e2\"", "\"5\"",
+        "\"ann@example.com\"", "\"2eb8aa08-aa98-11ea-b4aa-73b441d16380\"",
     ];
 
     private static readonly string[] Keys = ["a", "b", "name", "count", "note", "kind", "radius", "x-y", "other"];
@@ -38,7 +40,7 @@ public sealed class StructuredGuaranteeTests
     {
         { "number limits", Z.Number().Minimum(1).Maximum(50) },
         { "exclusive", Z.Number().ExclusiveMinimum(0).ExclusiveMaximum(2) },
-        { "multipleOf", Z.Number<decimal>().MultipleOf(0.1m) },
+        { "multipleOf", Z.Number().MultipleOf(0.1) },
         { "boolean", Z.Boolean() },
         { "null", Z.Null() },
         { "any", Z.Any() },
@@ -56,7 +58,7 @@ public sealed class StructuredGuaranteeTests
         { "property counts", Z.Object().Passthrough().MinProperties(1).MaxProperties(2) },
         { "dependent", Z.Object().Passthrough().DependentRequired("a", "b") },
         { "anyOf", Z.AnyOf(Z.String(), Z.Number()) },
-        { "oneOf", Z.OneOf(Z.Number(), Z.Number().Minimum(1)) },
+        { "oneOf", Z.OneOf(Z.String().MinLength(1), Z.String().MaxLength(1)) },
         { "allOf", Z.AllOf(Z.String().MinLength(1), Z.String().MaxLength(2)) },
         { "not", Z.Not(Z.String()) },
         { "if", Z.If(Z.String(), Z.String().MinLength(1), Z.Number()) },
@@ -84,6 +86,40 @@ public sealed class StructuredGuaranteeTests
                 Z.Object().Property("kind", Z.String().Const("square")))
         },
         { "typed", Schema.Object(ComplianceJson.Default.Item).Property(item => item.Count, s => s.Minimum(0)) },
+        { "not normalized", Z.Not(Z.String().Trim().MinLength(1)) },
+        { "not refined", Z.Not(Z.String().Refine(text => text == "a", "x")) },
+        { "not integer", Z.Not(Z.Integer()) },
+        { "not format", Z.Not(Z.String().Email()) },
+        { "not nested", Z.Not(Z.AnyOf(Z.Boolean(), Z.Not(Z.String().Trim().MinLength(1)))) },
+        { "oneOf refined", Z.OneOf(Z.String().Refine(text => text == "a", "x"), Z.String().Refine(text => text == "b", "y")) },
+        { "oneOf normalized", Z.OneOf(Z.String().Trim().Const("a"), Z.String().Trim().Const("b")) },
+        { "oneOf format", Z.OneOf(Z.String().Email(), Z.String().Uuid()) },
+        { "if refined", Z.If(Z.String().Refine(_ => false, "x"), Z.String().MinLength(5), Z.Any()) },
+        { "maxContains", Z.Array().Contains(Z.String().Trim().MinLength(1), maximum: 1) },
+        {
+            "normalized discriminator",
+            Z.DiscriminatedUnion(
+                "k",
+                Z.Object().Property("k", Z.String().Trim().Const("a")),
+                Z.Object().Property("k", Z.String().Trim().Const("b")))
+        },
+        {
+            "overlapping discriminator",
+            Z.DiscriminatedUnion(
+                "k",
+                Z.Object().Property("k", Z.String().Enum("a", "b")),
+                Z.Object().Property("k", Z.String().Enum("a", "c")))
+        },
+        {
+            "allOf default",
+            Z.AllOf(Z.Object().Passthrough().Property("a", Z.Integer().Default(1)), Z.Object().Passthrough().Property("a", Z.Integer().Optional()))
+        },
+        { "allOf coerce", Z.AllOf(Z.Integer().Coerce(), Z.Number()) },
+        { "allOf trim", Z.AllOf(Z.String().Trim(), Z.String().MaxLength(3)) },
+        { "property and pattern", Z.Object().Property("x-a", Z.String().Trim()).PatternProperty("^x-", Z.String().MaxLength(9)) },
+        { "strip counts", Z.Object().Strip().Property("a", Z.Number()).MaxProperties(1) },
+        { "default counts", Z.Object().Property("a", Z.Integer().Default(1)).MinProperties(1) },
+        { "coerced unique", Z.Array(Z.Integer().Coerce()).UniqueItems() },
     };
 
     private static Func<string, bool> Parser(ISchema schema) => schema switch
@@ -99,6 +135,7 @@ public sealed class StructuredGuaranteeTests
         Schema<Item> item => document => item.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<string>> list => document => list.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<JsonElement>> list => document => list.SafeParse(document).IsSuccess,
+        Schema<IReadOnlyList<long>> list => document => list.SafeParse(document).IsSuccess,
         _ => throw new NotSupportedException(schema.GetType().Name),
     };
 
@@ -115,6 +152,7 @@ public sealed class StructuredGuaranteeTests
         Schema<Item> item => FromText(item.Emit().Schema),
         Schema<IReadOnlyList<string>> list => FromText(list.Emit().Schema),
         Schema<IReadOnlyList<JsonElement>> list => FromText(list.Emit().Schema),
+        Schema<IReadOnlyList<long>> list => FromText(list.Emit().Schema),
         _ => throw new NotSupportedException(schema.GetType().Name),
     };
 

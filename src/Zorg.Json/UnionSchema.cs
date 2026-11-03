@@ -54,15 +54,31 @@ public sealed class UnionSchema<T> : Schema<T, UnionSchema<T>>
         };
 
         UnionCase union = new(element => schema.Materialize(element), item => schema.ToElement((TCase)item!), typeof(TCase));
-        return new UnionSchema<T>(node, _cases.Add(value, union));
+        UnionSchema<T> result = new(node, _cases.Add(value, union));
+
+        // A refinement parses with the schema it was added to, which doesn't know this case.
+        return result.With(node with
+        {
+            Behavior = node.Behavior with
+            {
+                Refinements = [.. node.Behavior.Refinements.Select(refinement => ((SchemaRefinement<T>)refinement).WithMaterializer(result.Materialize))],
+            },
+        });
     }
 
     private protected override UnionSchema<T> With(SchemaNode node) => new(node, _cases);
 
     internal override T Materialize(JsonElement value)
     {
-        string selected = value.GetProperty(Node.Behavior.Discriminator!).GetString()!;
-        return _cases[selected].Materialize(value);
+        if (value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty(Node.Behavior.Discriminator!, out JsonElement selected)
+            && selected.ValueKind == JsonValueKind.String
+            && _cases.TryGetValue(selected.GetString()!, out UnionCase? union))
+        {
+            return union.Materialize(value);
+        }
+
+        throw new JsonException("The value doesn't select a case of this union.");
     }
 
     internal override JsonElement ToElement(T value)

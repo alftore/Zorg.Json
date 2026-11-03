@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
@@ -13,22 +14,35 @@ internal sealed class ValidationContext
 {
     private const int MaxDepth = 512;
 
+    /// <summary>Union branches re-evaluate the same value, which is exponential for a recursive schema.</summary>
+    private const int MaxSpeculativeSteps = 20_000_000;
+
     private readonly List<PathSegment> _path;
+    private readonly Limits _limits;
+    private readonly bool _isFork;
     private List<ParseIssue>? _issues;
     private List<PendingRefinement>? _pending;
 
     public ValidationContext()
-        : this([])
+        : this([], new Limits(), isFork: false)
     {
     }
 
-    private ValidationContext(List<PathSegment> path) => _path = path;
+    private ValidationContext(List<PathSegment> path, Limits limits, bool isFork)
+    {
+        _path = path;
+        _limits = limits;
+        _isFork = isFork;
+    }
 
     public int IssueCount => _issues?.Count ?? 0;
 
     public bool HasIssues => IssueCount > 0;
 
     public bool HasPendingRefinements => _pending is not null;
+
+    /// <summary>Set once evaluation stopped early. A fork's verdict then means nothing, so <c>not</c> mustn't invert it.</summary>
+    public bool LimitExceeded => _limits.Exceeded;
 
     public int RewriteCount { get; private set; }
 
@@ -43,7 +57,16 @@ internal sealed class ValidationContext
         if (++Depth > MaxDepth)
         {
             Depth--;
+            _limits.Exceeded = true;
             Report(IssueCodes.InvalidValue, "$ref", "invalid_value.depth", "maximum", MaxDepth);
+            return false;
+        }
+
+        if (_isFork && ++_limits.SpeculativeSteps > MaxSpeculativeSteps)
+        {
+            Depth--;
+            _limits.Exceeded = true;
+            Report(IssueCodes.InvalidValue, "anyOf", "invalid_value.complex", "maximum", MaxSpeculativeSteps);
             return false;
         }
 
@@ -59,7 +82,7 @@ internal sealed class ValidationContext
     public void Pop() => _path.RemoveAt(_path.Count - 1);
 
     /// <summary>Evaluates a branch whose issues only count if the caller says so. Shares the path.</summary>
-    public ValidationContext Fork() => new(_path) { Depth = Depth };
+    public ValidationContext Fork() => new(_path, _limits, isFork: true) { Depth = Depth };
 
     public void Adopt(ValidationContext fork)
     {
@@ -92,7 +115,7 @@ internal sealed class ValidationContext
     public void ReportRefinement(SchemaRefinement refinement) =>
         ReportRefinement(refinement, Pointer());
 
-    public void ReportInvalidJson(JsonException exception) =>
+    public void ReportInvalidJson(Exception exception) =>
         Add(new ParseIssue
         {
             Code = IssueCodes.InvalidJson,
@@ -101,14 +124,7 @@ internal sealed class ValidationContext
             Parameters = Detail(exception),
         });
 
-    public void ReportDeserializationFailed(JsonException exception) =>
-        Add(new ParseIssue
-        {
-            Code = IssueCodes.DeserializationFailed,
-            Message = Messages.Get(IssueCodes.DeserializationFailed),
-            InstanceLocation = Pointer(),
-            Parameters = Detail(exception),
-        });
+    public void ReportDeserializationFailed(Exception exception) => ReportDeserializationFailed(exception, Pointer());
 
     public void Defer(SchemaRefinement refinement, JsonElement value) =>
         (_pending ??= []).Add(new PendingRefinement(refinement, value.Clone(), Pointer()));
@@ -122,18 +138,34 @@ internal sealed class ValidationContext
 
         foreach (PendingRefinement pending in _pending)
         {
-            if (!await pending.Refinement.CheckAsync(pending.Value, cancellationToken).ConfigureAwait(false))
+            try
             {
-                ReportRefinement(pending.Refinement, pending.Location);
+                if (!await pending.Refinement.CheckAsync(pending.Value, cancellationToken).ConfigureAwait(false))
+                {
+                    ReportRefinement(pending.Refinement, pending.Location);
+                }
+            }
+            catch (JsonException exception)
+            {
+                ReportDeserializationFailed(exception, pending.Location);
             }
         }
     }
+
+    private void ReportDeserializationFailed(Exception exception, string location) =>
+        Add(new ParseIssue
+        {
+            Code = IssueCodes.DeserializationFailed,
+            Message = Messages.Get(IssueCodes.DeserializationFailed),
+            InstanceLocation = location,
+            Parameters = Detail(exception),
+        });
 
     private void ReportRefinement(SchemaRefinement refinement, string location) =>
         Add(new ParseIssue { Code = IssueCodes.Custom, Message = refinement.Message, InstanceLocation = location + refinement.Path });
 
     /// <summary>Exception text can name CLR types, so it's kept out of messages, which reach API clients.</summary>
-    private static ImmutableDictionary<string, object?> Detail(JsonException exception) =>
+    private static ImmutableDictionary<string, object?> Detail(Exception exception) =>
         ImmutableDictionary<string, object?>.Empty.Add("detail", exception.Message);
 
     private void Add(ParseIssue issue) => (_issues ??= []).Add(issue);
@@ -162,6 +194,13 @@ internal sealed class ValidationContext
         }
 
         return pointer.ToString();
+    }
+
+    private sealed class Limits
+    {
+        public int SpeculativeSteps { get; set; }
+
+        public bool Exceeded { get; set; }
     }
 
     private readonly record struct PathSegment(string? Name, int Index);

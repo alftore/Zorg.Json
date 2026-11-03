@@ -163,6 +163,18 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
         });
     }
 
+    /// <summary>Changes a property's rules, keeping whether it's required and whether it's output-only.</summary>
+    private protected TSelf UpdateProperty(string name, SchemaNode schema)
+    {
+        int index = Node.Properties.ToList().FindIndex(existing => existing.Name == name);
+
+        return With(Node with
+        {
+            Properties = Node.Properties.SetItem(index, Node.Properties[index] with { Schema = schema }),
+            Required = schema.Behavior.IsOptional ? Node.Required.Remove(name) : Node.Required,
+        });
+    }
+
     private protected TSelf RemoveProperty(string name) => With(Node with
     {
         Properties = [.. Node.Properties.Where(property => property.Name != name)],

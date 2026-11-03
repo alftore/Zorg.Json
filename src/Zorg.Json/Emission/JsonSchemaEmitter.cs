@@ -14,7 +14,6 @@ namespace Zorg.Json.Emission;
 internal sealed class JsonSchemaEmitter
 {
     private const string NumberPattern = @"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$";
-    private const string IntegerPattern = "^-?(0|[1-9][0-9]*)$";
     private const string BooleanPattern = "^(true|false)$";
 
     private readonly JsonSchemaOptions _options;
@@ -215,7 +214,12 @@ internal sealed class JsonSchemaEmitter
 
             _definitionNames.Add(target, name);
             _definitions[name] = new JsonObject();
-            _definitions[name] = EmitObject(Rewrite(target, isRoot: false), $"/{_profile.DefinitionsKeyword}/{Escape(name)}");
+
+            // A target that's a reference itself must register its own definition. Anything else is written here,
+            // because EmitNode would refer a named schema back to this very definition.
+            string location = $"/{_profile.DefinitionsKeyword}/{Escape(name)}";
+            SchemaNode rewritten = Rewrite(target, isRoot: false);
+            _definitions[name] = rewritten.Behavior.Target is null ? EmitObject(rewritten, location) : EmitNode(rewritten, location);
         }
 
         return ReferencePrefix + Escape(name);
@@ -224,7 +228,7 @@ internal sealed class JsonSchemaEmitter
     private JsonObject EmitObject(SchemaNode source, string location)
     {
         List<string> notes = [];
-        SchemaNode node = IsInput ? Relocate(source, notes, location) : source;
+        SchemaNode node = IsInput ? RelocateCounts(Relocate(source, notes, location), notes, location) : source;
         JsonObject schema = [];
 
         Add(schema, IsDraft07 ? "$id" : "$id", node.Id);
@@ -425,6 +429,22 @@ internal sealed class JsonSchemaEmitter
         return normalized ? result with { MinLength = null, MaxLength = null, Pattern = null, Format = null } : result;
     }
 
+    /// <summary>Property counts apply after Strip and Default, which the input schema can't see.</summary>
+    private SchemaNode RelocateCounts(SchemaNode node, List<string> notes, string location)
+    {
+        bool changesCount = node.Behavior.UnknownProperties == UnknownProperties.Strip
+            || node.Properties.Any(property => property.Schema.Behavior.FillDefault);
+
+        if (!changesCount || (node.MinProperties is null && node.MaxProperties is null))
+        {
+            return node;
+        }
+
+        UnsupportedIf(node.MinProperties is not null, "minProperties", notes, location);
+        UnsupportedIf(node.MaxProperties is not null, "maxProperties", notes, location);
+        return node with { MinProperties = null, MaxProperties = null };
+    }
+
     private void WriteTypes(JsonObject schema, SchemaNode node)
     {
         JsonTypes types = node.Types;
@@ -439,7 +459,11 @@ internal sealed class JsonSchemaEmitter
 
         if (IsOpenApi30 && written is JsonArray alternatives)
         {
-            schema["anyOf"] = new JsonArray([.. alternatives.Select(type => (JsonNode?)new JsonObject { ["type"] = type!.DeepClone() })]);
+            // nullable only applies beside a type, so it goes on each alternative.
+            schema["anyOf"] = new JsonArray([.. alternatives.Select(type => (JsonNode?)(nullable
+                ? new JsonObject { ["type"] = type!.DeepClone(), ["nullable"] = true }
+                : new JsonObject { ["type"] = type!.DeepClone() }))]);
+            nullable = false;
         }
         else if (written is not null)
         {
@@ -519,8 +543,7 @@ internal sealed class JsonSchemaEmitter
             return null;
         }
 
-        bool isInteger = node.Types.HasFlag(JsonTypes.Integer) && !node.Types.HasFlag(JsonTypes.Number);
-        return coercion == SchemaCoercion.Boolean ? BooleanPattern : isInteger ? IntegerPattern : NumberPattern;
+        return coercion == SchemaCoercion.Boolean ? BooleanPattern : NumberPattern;
     }
 
     private void WriteArrays(JsonObject schema, SchemaNode node, List<string> notes, string location)
@@ -548,7 +571,8 @@ internal sealed class JsonSchemaEmitter
 
         if (node.Contains is not null)
         {
-            if (IsOpenApi30)
+            // Without minContains, contains would demand a match that minContains: 0 doesn't.
+            if (IsOpenApi30 || (IsDraft07 && node.MinContains == 0))
             {
                 Unsupported("contains", notes, location);
             }
@@ -566,7 +590,15 @@ internal sealed class JsonSchemaEmitter
         else
         {
             Add(schema, "minContains", node.MinContains);
-            Add(schema, "maxContains", node.MaxContains);
+
+            if (node.MaxContains is not null && node.Contains is not null && IsInput && !SchemaExactness.IsExact(node.Contains))
+            {
+                Unsupported("maxContains", notes, location);
+            }
+            else
+            {
+                Add(schema, "maxContains", node.MaxContains);
+            }
         }
 
         Add(schema, "minItems", node.MinItems);
@@ -613,7 +645,12 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
-        if (node.AdditionalProperties is not null)
+        // Without patternProperties, additionalProperties would also apply to the properties those cover.
+        if (IsOpenApi30 && !node.PatternProperties.IsEmpty)
+        {
+            Unsupported("additionalProperties", notes, location);
+        }
+        else if (node.AdditionalProperties is not null)
         {
             schema["additionalProperties"] = EmitNode(node.AdditionalProperties, $"{location}/additionalProperties");
         }
@@ -689,16 +726,23 @@ internal sealed class JsonSchemaEmitter
     {
         WriteList(schema, "allOf", node.AllOf, location);
         WriteList(schema, "anyOf", node.AnyOf, location);
-        WriteList(schema, "oneOf", node.OneOf, location);
+        WriteOneOf(schema, node, notes, location);
 
         if (node.Not is not null)
         {
-            schema["not"] = EmitNode(node.Not, $"{location}/not");
+            if (IsInput && !SchemaExactness.IsExact(node.Not))
+            {
+                Unsupported("not", notes, location);
+            }
+            else
+            {
+                schema["not"] = EmitNode(node.Not, $"{location}/not");
+            }
         }
 
         if (node.If is not null || node.Then is not null || node.Else is not null)
         {
-            if (IsOpenApi30)
+            if (IsOpenApi30 || (IsInput && node.If is not null && !SchemaExactness.IsExact(node.If)))
             {
                 Unsupported("if", notes, location);
             }
@@ -719,6 +763,27 @@ internal sealed class JsonSchemaEmitter
         {
             WriteSingle(schema, "unevaluatedItems", node.UnevaluatedItems, location);
             WriteSingle(schema, "unevaluatedProperties", node.UnevaluatedProperties, location);
+        }
+    }
+
+    /// <summary>
+    /// Branches that aren't exact can overlap in the emitted schema though only one matches in Zorg, so
+    /// <c>oneOf</c> relaxes to <c>anyOf</c>. Discriminated branches can't overlap, whatever else they leave out.
+    /// </summary>
+    private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
+    {
+        if (!IsInput || node.OneOf.All(SchemaExactness.IsExact) || DiscriminatorKeys.TryBuild(node, out _))
+        {
+            WriteList(schema, "oneOf", node.OneOf, location);
+        }
+        else if (node.AnyOf.IsEmpty)
+        {
+            _diagnostics.Add(new EmitDiagnostic("oneOf", "Some branches can't be stated exactly, so oneOf is written as anyOf.", location));
+            WriteList(schema, "anyOf", node.OneOf, location);
+        }
+        else
+        {
+            Unsupported("oneOf", notes, location);
         }
     }
 
