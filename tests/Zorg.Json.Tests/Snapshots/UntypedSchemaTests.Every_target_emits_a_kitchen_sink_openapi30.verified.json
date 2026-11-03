@@ -1,0 +1,89 @@
+{
+  "type": "object",
+  "properties": {
+    "nullable": {
+      "type": "string",
+      "nullable": true
+    },
+    "mixed": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "format": "int64"
+        }
+      ]
+    },
+    "number": {
+      "example": 1,
+      "type": "number",
+      "format": "double",
+      "minimum": 0,
+      "maximum": 5,
+      "exclusiveMinimum": true
+    },
+    "constant": {
+      "type": "string",
+      "enum": [
+        "a"
+      ]
+    },
+    "tuple": {
+      "type": "array",
+      "minItems": 2
+    },
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "nullable",
+    "mixed",
+    "number",
+    "constant",
+    "tuple",
+    "tree"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "nullable": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mixed": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "number": {
+      "examples": [
+        1
+      ],
+      "type": "number",
+      "maximum": 5,
+      "exclusiveMinimum": 0
+    },
+    "constant": {
+      "type": "string",
+      "const": "a"
+    },
+    "tuple": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "items": false,
+      "minItems": 2
+    },
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "nullable",
+    "mixed",
+    "number",
+    "constant",
+    "tuple",
+    "tree"
+  ],
+  "patternProperties": {
+    "^x-": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "dependentRequired": {
+    "constant": [
+      "number"
+    ]
+  },
+  "$defs": {
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

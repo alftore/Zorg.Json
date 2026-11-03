@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "T",
+  "description": "D",
+  "$comment": "C",
+  "examples": [
+    "x",
+    "y"
+  ],
+  "deprecated": true,
+  "readOnly": true,
+  "writeOnly": true,
+  "type": "string",
+  "minLength": 1,
+  "x-order": 1
+}

@@ -296,6 +296,7 @@ dotnet_diagnostic.CA1707.severity = none       # underscores in test method name
 dotnet_diagnostic.CA2007.severity = none       # ConfigureAwait not needed in tests
 dotnet_diagnostic.CA1062.severity = none       # argument validation not needed in tests
 dotnet_diagnostic.CA1515.severity = none       # test classes must be public
+dotnet_diagnostic.CA1002.severity = none       # test models use List<T> because real contracts do
 dotnet_diagnostic.CA1822.severity = suggestion # test methods may not use instance state
 dotnet_diagnostic.CA1861.severity = none       # constant arrays as arguments are fine in tests
 dotnet_diagnostic.CA5394.severity = none       # insecure randomness is fine for test data

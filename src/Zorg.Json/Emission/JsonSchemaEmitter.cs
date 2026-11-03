@@ -92,6 +92,7 @@ internal sealed class JsonSchemaEmitter
         JsonTypes written = nullable ? types & ~JsonTypes.Null : types;
         string[] names = [.. Enum.GetValues<JsonTypes>()
             .Where(type => type != JsonTypes.None && written.HasFlag(type))
+            .OrderBy(type => type == JsonTypes.Null)
             .Select(JsonTypeNames.Name)];
 
         return names.Length switch
@@ -397,7 +398,10 @@ internal sealed class JsonSchemaEmitter
             schema["pattern"] = pattern;
         }
 
-        if (node.Behavior.NumberType is { Length: > 0 } format && node.Format is null)
+        // int32 and friends are OpenAPI's formats. JSON Schema doesn't define them.
+        if (_profile.Dialect is JsonSchemaDialect.OpenApi30 or JsonSchemaDialect.OpenApi31
+            && node.Behavior.NumberType is { Length: > 0 } format
+            && node.Format is null)
         {
             schema["format"] = format;
         }
@@ -471,7 +475,8 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
-        if (node.Items is not null)
+        // Without prefixItems, items would apply to the tuple's positions too.
+        if (node.Items is not null && !(IsOpenApi30 && !node.PrefixItems.IsEmpty))
         {
             string keyword = IsDraft07 && !node.PrefixItems.IsEmpty ? "additionalItems" : "items";
             schema[keyword] = EmitNode(node.Items, $"{location}/{keyword}");

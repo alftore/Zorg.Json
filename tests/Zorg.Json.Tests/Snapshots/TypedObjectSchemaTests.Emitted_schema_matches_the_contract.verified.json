@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10
+    },
+    "nick": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "height": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "salary": {
+      "type": "number",
+      "multipleOf": 0.5
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "addresses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "street": {
+            "type": "string",
+            "minLength": 1
+          },
+          "zip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "street"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "home": {
+      "type": "object",
+      "properties": {
+        "street": {
+          "type": "string",
+          "minLength": 1
+        },
+        "zip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "street"
+      ],
+      "additionalProperties": false
+    },
+    "other": {
+      "type": "string"
+    },
+    "mustHave": {
+      "type": "string"
+    },
+    "id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "name",
+    "nick",
+    "age",
+    "height",
+    "salary",
+    "active",
+    "addresses",
+    "tags",
+    "home",
+    "mustHave"
+  ],
+  "additionalProperties": false
+}
