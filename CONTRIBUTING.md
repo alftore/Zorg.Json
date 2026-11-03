@@ -89,3 +89,11 @@ GitHub can't read these from files, so the owner has to turn them on by hand.
 - Require actions to be pinned to a full-length commit SHA.
 - Turn on private vulnerability reporting, Dependabot alerts, secret scanning and push protection.
 - Use two-factor authentication on GitHub and nuget.org.
+
+## Benchmarks
+
+```bash
+dotnet run -c Release --project benchmarks/Zorg.Json.Benchmarks -- --filter '*' --job short --inProcess
+```
+
+`--inProcess` is required: BenchmarkDotNet's generated project inherits the repo's build rules, and its code has no XML docs.
