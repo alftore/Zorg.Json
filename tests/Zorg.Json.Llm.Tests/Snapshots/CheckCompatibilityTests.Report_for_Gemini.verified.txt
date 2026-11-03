@@ -1,0 +1,11 @@
+Warning Relocated format @/properties/id: Gemini won't enforce this format. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/properties/customer/properties/name: Gemini won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated maxLength @/properties/customer/properties/name: Gemini won't enforce this maxLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated format @/properties/customer/properties/email: Gemini won't enforce this format. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated exclusiveMinimum @/properties/price: Gemini won't enforce this exclusiveMinimum. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated multipleOf @/properties/price: Gemini won't enforce this multipleOf. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/properties/category/properties/name: Gemini won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated pattern @/properties/code: Gemini won't enforce this pattern. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/$defs/category/properties/name: Gemini won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Refinement  @/properties/code: The refinement "The code must have an even length" can't be expressed in JSON Schema.
+Info Relocated default @/properties/priority: Gemini won't enforce this default. It moves to description or a looser form, and ParseModelOutput still enforces it.

@@ -1,0 +1,119 @@
+{
+  "description": "A customer order",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Must also satisfy: minLength 1; maxLength 100.",
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "nickname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "nickname"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "paid",
+        "shipped"
+      ]
+    },
+    "quantity": {
+      "description": "Must also satisfy: minimum 1; maximum 99.",
+      "type": "integer"
+    },
+    "price": {
+      "description": "Must also satisfy: exclusiveMinimum 0; multipleOf 0.01.",
+      "type": "number"
+    },
+    "priority": {
+      "default": 3,
+      "type": "integer"
+    },
+    "note": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tags": {
+      "description": "Must also satisfy: maxItems 5.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "category": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Must also satisfy: minLength 1.",
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "Must also satisfy: minLength 1.",
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "description": "Recursive: must also satisfy #/$defs/category."
+                }
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "code": {
+      "description": "Refinement: The code must have an even length",
+      "type": "string",
+      "pattern": "^Z[0-9]+$"
+    }
+  },
+  "required": [
+    "id",
+    "customer",
+    "status",
+    "quantity",
+    "price",
+    "tags",
+    "category",
+    "code"
+  ],
+  "additionalProperties": false
+}

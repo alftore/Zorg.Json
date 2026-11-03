@@ -10,6 +10,9 @@ public sealed record EmitResult(JsonObject Schema, ImmutableArray<EmitDiagnostic
 {
     /// <summary>Definitions kept out of <see cref="Schema"/>, when <see cref="JsonSchemaOptions.ReferencePrefix"/> is set.</summary>
     public ImmutableDictionary<string, JsonObject> Definitions { get; init; } = ImmutableDictionary<string, JsonObject>.Empty;
+
+    /// <summary>The profile that produced <see cref="Schema"/>, so that a consumer can tell which rewrites to undo.</summary>
+    public JsonSchemaProfile? Target { get; init; }
 }
 
 /// <summary>A rule that an emitted schema leaves out.</summary>

@@ -1,0 +1,14 @@
+$ref @: anthropic-strict can't state the recursive reference #/$defs/category.
+minLength @: anthropic-strict can't state minLength, so it moved to description.
+maxLength @: anthropic-strict can't state maxLength, so it moved to description.
+minimum @: anthropic-strict can't state minimum, so it moved to description.
+maximum @: anthropic-strict can't state maximum, so it moved to description.
+exclusiveMinimum @: anthropic-strict can't state exclusiveMinimum, so it moved to description.
+multipleOf @: anthropic-strict can't state multipleOf, so it moved to description.
+maxItems @: anthropic-strict can't state maxItems, so it moved to description.
+minLength @: anthropic-strict can't state minLength, so it moved to description.
+minLength @: anthropic-strict can't state minLength, so it moved to description.
+(refinement) @/properties/code: The refinement "The code must have an even length" can't be expressed in JSON Schema.
+format @/properties/quantity: anthropic-strict can't state this format.
+format @/properties/price: anthropic-strict can't state this format.
+format @/properties/priority: anthropic-strict can't state this format.
