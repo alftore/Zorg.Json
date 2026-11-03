@@ -1,0 +1,288 @@
+using System;
+using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.Contracts;
+using System.Text;
+using System.Text.Json;
+using Zorg.Json.Model;
+using Zorg.Json.Validation;
+
+namespace Zorg.Json;
+
+/// <summary>A schema for JSON strings. Create one with <see cref="Z.String"/>. Zod equivalent: <c>ZodString</c>.</summary>
+public sealed class StringSchema : Schema<string, StringSchema>
+{
+    internal StringSchema(SchemaNode node)
+        : base(node)
+    {
+    }
+
+    /// <summary>
+    /// Requires at least this many Unicode code points, so an emoji counts as one. JSON Schema: <c>minLength</c>.
+    /// Zod equivalent: <c>.min()</c>, which counts UTF-16 units instead.
+    /// </summary>
+    /// <param name="length">The minimum length.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().MinLength(1);
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema MinLength(int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        return With(Node with { MinLength = length });
+    }
+
+    /// <summary>
+    /// Allows at most this many Unicode code points, so an emoji counts as one. JSON Schema: <c>maxLength</c>.
+    /// Zod equivalent: <c>.max()</c>, which counts UTF-16 units instead.
+    /// </summary>
+    /// <param name="length">The maximum length.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().MaxLength(100);
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema MaxLength(int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        return With(Node with { MaxLength = length });
+    }
+
+    /// <summary>
+    /// Requires a regular expression match, which isn't anchored unless the pattern says so.
+    /// JSON Schema: <c>pattern</c>. Zod equivalent: <c>.regex()</c>.
+    /// </summary>
+    /// <param name="pattern">The regular expression.</param>
+    /// <returns>A new schema.</returns>
+    /// <exception cref="ArgumentException">The pattern isn't a valid regular expression.</exception>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Pattern("^[a-z]+$");
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Pattern([StringSyntax(StringSyntaxAttribute.Regex)] string pattern)
+    {
+        ArgumentNullException.ThrowIfNull(pattern);
+        _ = PatternCompiler.Compile(pattern);
+        return With(Node with { Pattern = pattern });
+    }
+
+    /// <summary>
+    /// Sets the format. <c>email</c>, <c>uuid</c>, <c>uri</c>, <c>date-time</c> and <c>date</c> are enforced;
+    /// any other name is only emitted. JSON Schema: <c>format</c>.
+    /// </summary>
+    /// <param name="format">The format name.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Format("hostname");
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Format(string format)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        return With(Node with { Format = format });
+    }
+
+    /// <summary>Requires an email address. JSON Schema: <c>format: email</c>. Zod equivalent: <c>z.email()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Email();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Email() => Format("email");
+
+    /// <summary>Requires a UUID. JSON Schema: <c>format: uuid</c>. Zod equivalent: <c>z.uuid()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Uuid();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Uuid() => Format("uuid");
+
+    /// <summary>Requires an absolute URI. JSON Schema: <c>format: uri</c>. Zod equivalent: <c>z.url()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Uri();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Uri() => Format("uri");
+
+    /// <summary>Requires an RFC 3339 timestamp. JSON Schema: <c>format: date-time</c>. Zod equivalent: <c>z.iso.datetime()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().DateTime();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema DateTime() => Format("date-time");
+
+    /// <summary>Requires an RFC 3339 date. JSON Schema: <c>format: date</c>. Zod equivalent: <c>z.iso.date()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Date();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Date() => Format("date");
+
+    /// <summary>Requires exactly this value. JSON Schema: <c>const</c>. Zod equivalent: <c>z.literal()</c>.</summary>
+    /// <param name="value">The only allowed value.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Const("circle");
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Const(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return With(Node with { Const = JsonStrings.ToElement(value) });
+    }
+
+    /// <summary>Requires one of these values. JSON Schema: <c>enum</c>. Zod equivalent: <c>z.enum()</c>.</summary>
+    /// <param name="values">The allowed values.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Enum("web", "news");
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Enum(params ReadOnlySpan<string> values)
+    {
+        ImmutableArray<JsonElement>.Builder elements = ImmutableArray.CreateBuilder<JsonElement>(values.Length);
+
+        foreach (string value in values)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            elements.Add(JsonStrings.ToElement(value));
+        }
+
+        return With(Node with { Enum = elements.MoveToImmutable() });
+    }
+
+    /// <summary>
+    /// Removes surrounding whitespace before the constraints run. No keyword: constraints that it can affect are left
+    /// out of the input schema. Zod equivalent: <c>.trim()</c>.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Trim().MinLength(1);
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Trim() => Normalize(nameof(Trim), static text => text.Trim());
+
+    /// <summary>
+    /// Removes leading whitespace before the constraints run. No keyword: constraints that it can affect are left
+    /// out of the input schema.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().TrimStart();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema TrimStart() => Normalize(nameof(TrimStart), static text => text.TrimStart());
+
+    /// <summary>
+    /// Removes trailing whitespace before the constraints run. No keyword: constraints that it can affect are left
+    /// out of the input schema.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().TrimEnd();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema TrimEnd() => Normalize(nameof(TrimEnd), static text => text.TrimEnd());
+
+    /// <summary>
+    /// Converts to lower case before the constraints run. No keyword: constraints that it can affect are left out of
+    /// the input schema. Zod equivalent: <c>.toLowerCase()</c>.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().ToLowerInvariant().Enum("web", "news");
+    /// </code>
+    /// </example>
+    [Pure]
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Lower case is what the caller asked for.")]
+    public StringSchema ToLowerInvariant() => Normalize(nameof(ToLowerInvariant), static text => text.ToLowerInvariant());
+
+    /// <summary>
+    /// Converts to upper case before the constraints run. No keyword: constraints that it can affect are left out of
+    /// the input schema. Zod equivalent: <c>.toUpperCase()</c>.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().ToUpperInvariant();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema ToUpperInvariant() => Normalize(nameof(ToUpperInvariant), static text => text.ToUpperInvariant());
+
+    /// <summary>
+    /// Applies Unicode normalization before the constraints run. No keyword: constraints that it can affect are left out
+    /// of the input schema. Zod equivalent: <c>.normalize()</c>.
+    /// </summary>
+    /// <param name="form">The normalization form.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().NormalizeUnicode();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema NormalizeUnicode(NormalizationForm form = NormalizationForm.FormC) =>
+        Normalize(nameof(NormalizeUnicode), text => text.Normalize(form));
+
+    /// <summary>
+    /// Replaces the value before the constraints run, keeping it a string. No keyword: constraints that it can affect
+    /// are left out of the input schema. Zod equivalent: <c>.overwrite()</c>.
+    /// </summary>
+    /// <param name="overwrite">The replacement.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Overwrite(text => text.Replace("-", ""));
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Overwrite(Func<string, string> overwrite)
+    {
+        ArgumentNullException.ThrowIfNull(overwrite);
+        return Normalize(nameof(Overwrite), overwrite);
+    }
+
+    private protected override StringSchema With(SchemaNode node) => new(node);
+
+    private protected override string Materialize(JsonElement value) => value.GetString()!;
+
+    private StringSchema Normalize(string name, Func<string, string> apply) => With(Node with
+    {
+        Behavior = Node.Behavior with { Normalizers = Node.Behavior.Normalizers.Add(new SchemaNormalizer(name, apply)) },
+    });
+}

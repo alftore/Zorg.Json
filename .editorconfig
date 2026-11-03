@@ -267,6 +267,7 @@ dotnet_diagnostic.CA1848.severity = none       # LoggerMessage delegates: the co
 dotnet_diagnostic.CA1873.severity = none       # expensive logging arguments: no logging in the core
 dotnet_diagnostic.CA1720.severity = none       # identifier contains type name: the API deliberately mirrors JSON Schema types (Z.String(), Z.Object(), Z.Integer())
 dotnet_diagnostic.CA1716.severity = none       # identifier matches a keyword: same reason (e.g. Object, String)
+dotnet_diagnostic.CA1724.severity = none       # Schema clashes with System.Xml.Schema in name only: a using directive doesn't import nested namespaces, so Schema still binds to our type
 
 # Downgraded because they produce false positives:
 dotnet_diagnostic.CA1508.severity = suggestion # dead conditional code

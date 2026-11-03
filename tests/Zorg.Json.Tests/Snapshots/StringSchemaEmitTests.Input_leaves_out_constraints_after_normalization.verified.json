@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Name After Trim, ToLowerInvariant: const \"a\"; enum [\"a\"]; minLength 1; maxLength 3; pattern ^a; format email.",
+  "type": "string"
+}

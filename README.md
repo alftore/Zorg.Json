@@ -2,15 +2,13 @@
 
 A fluent, Zod-inspired JSON schema library for .NET. Define strict schemas, validate JSON, and get precise errors.
 
-Status: research phase. No public API yet.
+Status: early development. Only string schemas exist so far, and the API may change.
 
 ```csharp
-// Planned shape (not implemented yet)
-var user = Zorg.Object()
-    .Prop("name", Zorg.String().Min(3))
-    .Prop("age", Zorg.Int().Range(0, 150));
+StringSchema name = Z.String().Trim().MinLength(1).MaxLength(100);
 
-var result = user.Parse(json);
+ParseResult<string> result = name.SafeParse("\"  Ada  \"");   // Value: "Ada"
+JsonObject schema = name.ToJsonSchema();                       // JSON Schema 2020-12
 ```
 
 ## Scratch space

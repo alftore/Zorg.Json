@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A title",
+  "description": "A description",
+  "type": "string",
+  "const": "ab",
+  "enum": [
+    "ab",
+    "ac"
+  ],
+  "minLength": 1,
+  "maxLength": 5,
+  "pattern": "^a",
+  "format": "email"
+}
