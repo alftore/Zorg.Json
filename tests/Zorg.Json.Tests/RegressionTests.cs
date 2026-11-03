@@ -51,6 +51,17 @@ public sealed class RegressionTests
         Assert.Equal("d", schema.Parse("{}").GetProperty("a").GetString());
     }
 
+    [Fact]
+    public void Exception_text_stays_out_of_messages()
+    {
+        ObjectSchema<Circle> schema = Schema.Object(TestJson.Default.Circle).Refine(_ => true, "unused");
+
+        ParseIssue malformed = Assert.Single(schema.SafeParse("{").Issues);
+
+        Assert.Equal("The input is not valid JSON.", malformed.Message);
+        Assert.NotNull(malformed.Parameters["detail"]);
+    }
+
     private static class NodeSchemas
     {
         public static readonly ObjectSchema<Node> Schema = Zorg.Json.Schema.Object(TestJson.Default.Node)

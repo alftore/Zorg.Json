@@ -96,16 +96,18 @@ internal sealed class ValidationContext
         Add(new ParseIssue
         {
             Code = IssueCodes.InvalidJson,
-            Message = Messages.Get(IssueCodes.InvalidJson, exception.Message),
+            Message = Messages.Get(IssueCodes.InvalidJson),
             InstanceLocation = string.Empty,
+            Parameters = Detail(exception),
         });
 
     public void ReportDeserializationFailed(JsonException exception) =>
         Add(new ParseIssue
         {
             Code = IssueCodes.DeserializationFailed,
-            Message = Messages.Get(IssueCodes.DeserializationFailed, exception.Message),
+            Message = Messages.Get(IssueCodes.DeserializationFailed),
             InstanceLocation = Pointer(),
+            Parameters = Detail(exception),
         });
 
     public void Defer(SchemaRefinement refinement, JsonElement value) =>
@@ -129,6 +131,10 @@ internal sealed class ValidationContext
 
     private void ReportRefinement(SchemaRefinement refinement, string location) =>
         Add(new ParseIssue { Code = IssueCodes.Custom, Message = refinement.Message, InstanceLocation = location + refinement.Path });
+
+    /// <summary>Exception text can name CLR types, so it's kept out of messages, which reach API clients.</summary>
+    private static ImmutableDictionary<string, object?> Detail(JsonException exception) =>
+        ImmutableDictionary<string, object?>.Empty.Add("detail", exception.Message);
 
     private void Add(ParseIssue issue) => (_issues ??= []).Add(issue);
 

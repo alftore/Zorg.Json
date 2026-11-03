@@ -17,6 +17,9 @@ public sealed record ParseIssue
     /// <summary>The JSON Schema keyword that failed, such as <c>minLength</c>. Null when no keyword applies.</summary>
     public string? Keyword { get; init; }
 
-    /// <summary>Details specific to <see cref="Code"/>, such as <c>minimum</c> or <c>expected</c>.</summary>
+    /// <summary>
+    /// Details specific to <see cref="Code"/>, such as <c>minimum</c> or <c>expected</c>. <c>detail</c> holds the
+    /// exception text of <c>invalid_json</c> and <c>deserialization_failed</c>, which is for logs and not for clients.
+    /// </summary>
     public ImmutableDictionary<string, object?> Parameters { get; init; } = ImmutableDictionary<string, object?>.Empty;
 }
