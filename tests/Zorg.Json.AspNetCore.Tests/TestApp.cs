@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Zorg.Json.Model;
 
 namespace Zorg.Json.AspNetCore.Tests;
 
@@ -77,23 +76,9 @@ internal sealed class SmtpOptions
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class TestJson : JsonSerializerContext;
 
-/// <summary>
-/// Stands in for the typed object schema, which isn't in the core yet. Internals access is what lets it derive from
-/// <see cref="Schema{T}"/>; user code can't.
-/// </summary>
-internal sealed class PersonSchema : Schema<Person>
+internal static class PersonSchema
 {
-    public PersonSchema(SchemaNode node)
-        : base(node)
-    {
-    }
-
-    public static PersonSchema Create() => new(Z.Object()
-        .Property("name", Z.String().Trim().MinLength(1))
-        .Property("age", Z.Integer().Minimum(0).Default(18))
-        .ToNode());
-
-    internal override Person Materialize(JsonElement value) => value.Deserialize(TestJson.Default.Person)!;
-
-    internal override JsonElement ToElement(Person value) => JsonSerializer.SerializeToElement(value, TestJson.Default.Person);
+    public static ObjectSchema<Person> Create() => Schema.Object(TestJson.Default.Person)
+        .Property(person => person.Name, s => s.Trim().MinLength(1))
+        .Property(person => person.Age, s => s.Minimum(0).Default(18));
 }

@@ -8,7 +8,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Zorg.Json.Tests" />
     <InternalsVisibleTo Include="Zorg.Json.ComplianceTests" />
-    <InternalsVisibleTo Include="Zorg.Json.AspNetCore.Tests" />
   </ItemGroup>
 
 </Project>

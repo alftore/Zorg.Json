@@ -11,7 +11,7 @@ namespace Zorg.Json.AspNetCore.Tests;
 
 public sealed class OpenApiTests
 {
-    private static readonly PersonSchema People = PersonSchema.Create();
+    private static readonly ObjectSchema<Person> People = PersonSchema.Create();
 
     private static async Task<JsonElement> DocumentAsync(Action<WebApplication> map)
     {

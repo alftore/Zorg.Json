@@ -18,7 +18,7 @@ namespace Zorg.Json.AspNetCore.Tests;
 
 public sealed class ValidateBodyTests
 {
-    private static readonly PersonSchema People = PersonSchema.Create();
+    private static readonly ObjectSchema<Person> People = PersonSchema.Create();
 
     private static async Task<JsonElement> ProblemAsync(HttpResponseMessage response, HttpStatusCode status)
     {
