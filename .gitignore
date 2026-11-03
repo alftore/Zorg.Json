@@ -1,0 +1,24 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+*.nupkg
+*.snupkg
+TestResults/
+BenchmarkDotNet.Artifacts/
+*.received.*
+
+# Local scratch and temporary files (never committed)
+.tmp/
+
+# IDE and OS files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Secrets and local settings
+*.env
+appsettings.Local.json
