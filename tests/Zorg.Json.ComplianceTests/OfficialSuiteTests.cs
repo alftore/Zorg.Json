@@ -12,8 +12,17 @@ namespace Zorg.Json.ComplianceTests;
 /// </summary>
 public sealed class OfficialSuiteTests
 {
-    // Needs the ECMA-262 to .NET regex translator: .NET has no \p{Letter}. Remove when it exists.
-    private const string UnicodePropertyEscape = "pattern with Unicode property escape requires unicode mode";
+    // These groups use patternProperties on object data, which Z.String().Pattern(...) can't express. The same
+    // patterns are covered by the "pattern" groups next to them in the suite.
+    private static readonly HashSet<string> PatternPropertiesGroups =
+    [
+        "patterns always use unicode semantics with patternProperties",
+        "\\w in patternProperties matches [A-Za-z0-9_], not unicode letters",
+        "patternProperties with ASCII ranges",
+        "\\d in patternProperties matches [0-9], not unicode digits",
+        "patternProperties with non-ASCII digits",
+        "Proper UTF-16 surrogate pair handling: patternProperties",
+    ];
 
     private static void Run(string file, Func<JsonElement, StringSchema> build)
     {
@@ -23,7 +32,7 @@ public sealed class OfficialSuiteTests
 
         foreach (JsonElement group in groups.EnumerateArray())
         {
-            if (group.GetProperty("description").ValueEquals(UnicodePropertyEscape))
+            if (PatternPropertiesGroups.Contains(group.GetProperty("description").GetString()!))
             {
                 continue;
             }
@@ -52,6 +61,8 @@ public sealed class OfficialSuiteTests
         Assert.Empty(failures);
     }
 
+    private static StringSchema PatternSchema(JsonElement schema) => Z.String().Pattern(schema.GetProperty("pattern").GetString()!);
+
     [Fact]
     public void MinLength() =>
         Run("minLength.json", schema => Z.String().MinLength((int)schema.GetProperty("minLength").GetDouble()));
@@ -61,6 +72,11 @@ public sealed class OfficialSuiteTests
         Run("maxLength.json", schema => Z.String().MaxLength((int)schema.GetProperty("maxLength").GetDouble()));
 
     [Fact]
-    public void Pattern() =>
-        Run("pattern.json", schema => Z.String().Pattern(schema.GetProperty("pattern").GetString()!));
+    public void Pattern() => Run("pattern.json", PatternSchema);
+
+    [Fact]
+    public void EcmaScriptRegex() => Run(Path.Combine("optional", "ecmascript-regex.json"), PatternSchema);
+
+    [Fact]
+    public void NonBmpRegex() => Run(Path.Combine("optional", "non-bmp-regex.json"), PatternSchema);
 }
