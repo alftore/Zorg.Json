@@ -244,7 +244,13 @@ public sealed record SchemaNode
     {
         if (Types == JsonTypes.None && Const is null && Enum.IsEmpty)
         {
-            return new SchemaNode { AnyOf = [this, new SchemaNode { Types = JsonTypes.Null }] };
+            // Presence belongs to the outermost node, because that's the one the parent object reads.
+            return new SchemaNode
+            {
+                Default = Default,
+                AnyOf = [this, new SchemaNode { Types = JsonTypes.Null }],
+                Behavior = new SchemaBehavior { IsOptional = Behavior.IsOptional, FillDefault = Behavior.FillDefault },
+            };
         }
 
         JsonElement nullValue = JsonElement.Parse("null");

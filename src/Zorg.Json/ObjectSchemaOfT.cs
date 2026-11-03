@@ -135,13 +135,13 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     /// </code>
     /// </example>
     [Pure]
-    public ObjectSchema<T> Property<TProperty>(Expression<Func<T, TProperty>> member, Schema<TProperty> schema)
+    public ObjectSchema<T> Property<TProperty>(Expression<Func<T, TProperty?>> member, Schema<TProperty> schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
         (string name, SchemaNode seeded) = Find(member);
         SchemaNode node = schema.ToNode();
         bool nullable = seeded.Types.HasFlag(JsonTypes.Null) || seeded.AnyOf.Any(branch => branch.Types == JsonTypes.Null);
-        return ReplaceProperty(name, nullable ? node.WithNull() with { Behavior = node.Behavior } : node);
+        return ReplaceProperty(name, nullable ? node.WithNull() : node);
     }
 
     /// <summary>

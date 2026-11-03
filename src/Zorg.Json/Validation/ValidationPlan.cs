@@ -521,9 +521,17 @@ internal sealed class ValidationPlan
 
             foreach ((Regex pattern, ValidationPlan patternPlan) in _patternProperties)
             {
-                if (pattern.IsMatch(name))
+                try
                 {
-                    result = patternPlan.Run(result, context);
+                    if (pattern.IsMatch(name))
+                    {
+                        result = patternPlan.Run(result, context);
+                        covered = true;
+                    }
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    context.Report(IssueCodes.InvalidFormat, "patternProperties", "invalid_format.timeout", "pattern", pattern.ToString(), pattern.ToString());
                     covered = true;
                 }
             }
@@ -607,7 +615,19 @@ internal sealed class ValidationPlan
         _node.Behavior.UnknownProperties != UnknownProperties.Strip
         || _additionalProperties is not null
         || _properties.ContainsKey(name)
-        || _patternProperties.Any(entry => entry.Pattern.IsMatch(name));
+        || _patternProperties.Any(entry => MatchesWithoutTimeout(entry.Pattern, name));
+
+    private static bool MatchesWithoutTimeout(Regex pattern, string name)
+    {
+        try
+        {
+            return pattern.IsMatch(name);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return true;
+        }
+    }
 
     private void CheckRequired(JsonElement value, ValidationContext context)
     {

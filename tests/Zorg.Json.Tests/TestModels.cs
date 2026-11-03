@@ -27,6 +27,8 @@ public sealed record Person(string Name, string? Nick, int Age, int? Height, dec
 
 public sealed record Category(string Name, List<Category> Children);
 
+public sealed record Node(string Id, Node? Next);
+
 public abstract record Shape;
 
 public sealed record Circle(double Radius) : Shape;
@@ -54,6 +56,7 @@ public sealed class Open
 
 [JsonSerializable(typeof(Person))]
 [JsonSerializable(typeof(Category))]
+[JsonSerializable(typeof(Node))]
 [JsonSerializable(typeof(Circle))]
 [JsonSerializable(typeof(Square))]
 [JsonSerializable(typeof(Animal))]
