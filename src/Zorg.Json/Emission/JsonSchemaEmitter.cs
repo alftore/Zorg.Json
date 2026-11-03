@@ -77,7 +77,12 @@ internal sealed class JsonSchemaEmitter
         }
     }
 
-    private static JsonNode? ToNode(JsonElement element) => JsonValue.Create(element);
+    private static JsonNode? ToNode(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => JsonObject.Create(element),
+        JsonValueKind.Array => JsonArray.Create(element),
+        _ => JsonValue.Create(element),
+    };
 
     private static JsonArray ToArray(IEnumerable<JsonElement> values) => new([.. values.Select(ToNode)]);
 
@@ -136,14 +141,19 @@ internal sealed class JsonSchemaEmitter
         {
             if (_options.ReferencePrefix is null)
             {
-                JsonObject defs = schema[_profile.DefinitionsKeyword] as JsonObject ?? [];
+                JsonObject? existing = schema[_profile.DefinitionsKeyword] as JsonObject;
+                JsonObject defs = existing ?? [];
 
                 foreach ((string name, JsonNode definition) in _definitions.OrderBy(entry => entry.Key, StringComparer.Ordinal))
                 {
                     defs[name] = definition;
                 }
 
-                schema[_profile.DefinitionsKeyword] = defs;
+                if (existing is null)
+                {
+                    // Definitions come before extensions, as they do in WriteDefinitions.
+                    schema.Insert(schema.Count - node.Extensions.Length, _profile.DefinitionsKeyword, defs);
+                }
             }
             else
             {
@@ -227,7 +237,7 @@ internal sealed class JsonSchemaEmitter
             Add(schema, "$anchor", node.Anchor);
         }
 
-        Add(schema, "$ref", node.Ref?.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal));
+        Add(schema, "$ref", WrittenReference(node.Ref));
         Add(schema, "title", node.Title);
         int descriptionIndex = schema.Count;
         Add(schema, "$comment", node.Comment);
@@ -255,12 +265,21 @@ internal sealed class JsonSchemaEmitter
         WriteStrings(schema, node, location);
         WriteArrays(schema, node, notes, location);
         WriteObjects(schema, node, notes, location);
+        int applicatorsIndex = schema.Count;
         WriteApplicators(schema, node, notes, location);
         WriteDefinitions(schema, node, location);
 
         foreach ((string keyword, JsonElement value) in node.Extensions.OrderBy(extension => extension.Key, StringComparer.Ordinal))
         {
-            schema[keyword] = ToNode(value);
+            if (IsDraft07 && keyword is "additionalItems" or "dependencies")
+            {
+                // Inert in the 2020-12 document it came from, but draft-07 would apply it.
+                _diagnostics.Add(new EmitDiagnostic(keyword, $"{keyword} is an unknown keyword here, but draft-07 would apply it.", location));
+            }
+            else
+            {
+                schema[keyword] = ToNode(value);
+            }
         }
 
         foreach (SchemaRefinement refinement in node.Behavior.Refinements)
@@ -276,13 +295,14 @@ internal sealed class JsonSchemaEmitter
         if (description is not null)
         {
             schema.Insert(descriptionIndex, "description", description);
+            applicatorsIndex++;
         }
 
-        return (IsDraft07 || IsOpenApi30) && schema.ContainsKey("$ref") && schema.Count > 1 ? WrapReference(schema) : schema;
+        return (IsDraft07 || IsOpenApi30) && schema.ContainsKey("$ref") && schema.Count > 1 ? WrapReference(schema, applicatorsIndex) : schema;
     }
 
     /// <summary>Before 2019-09, keywords beside <c>$ref</c> are ignored, so <c>$ref</c> moves into an <c>allOf</c>.</summary>
-    private static JsonObject WrapReference(JsonObject schema)
+    private static JsonObject WrapReference(JsonObject schema, int applicatorsIndex)
     {
         JsonNode reference = schema["$ref"]!.DeepClone();
         schema.Remove("$ref");
@@ -293,10 +313,50 @@ internal sealed class JsonSchemaEmitter
         }
         else
         {
-            schema["allOf"] = new JsonArray(new JsonObject { ["$ref"] = reference });
+            schema.Insert(applicatorsIndex - 1, "allOf", new JsonArray(new JsonObject { ["$ref"] = reference }));
         }
 
         return schema;
+    }
+
+    /// <summary>Respells a pointer for draft-07, token by token, because a property may be named like a keyword.</summary>
+    private static string ToDraft07Pointer(string reference)
+    {
+        if (!reference.StartsWith("#/", StringComparison.Ordinal))
+        {
+            return reference;
+        }
+
+        string[] tokens = reference.Split('/');
+        PointerPosition position = PointerPosition.Schema;
+
+        for (int index = 1; index < tokens.Length; index++)
+        {
+            if (position == PointerPosition.Schema)
+            {
+                (tokens[index], position) = tokens[index] switch
+                {
+                    "$defs" or "definitions" => ("definitions", PointerPosition.Name),
+                    "dependentSchemas" => ("dependencies", PointerPosition.Name),
+                    "prefixItems" => ("items", PointerPosition.Name),
+                    "properties" or "patternProperties" or "allOf" or "anyOf" or "oneOf" => (tokens[index], PointerPosition.Name),
+                    "items" or "contains" or "additionalProperties" or "propertyNames" or "not" or "if" or "then" or "else" => (tokens[index], PointerPosition.Schema),
+                    _ => (tokens[index], PointerPosition.Opaque),
+                };
+            }
+            else if (position == PointerPosition.Name)
+            {
+                position = PointerPosition.Schema;
+            }
+        }
+
+        return string.Join('/', tokens);
+    }
+
+    private string? WrittenReference(string? reference)
+    {
+        string? written = reference?.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal);
+        return IsDraft07 && written is not null ? ToDraft07Pointer(written) : written;
     }
 
     /// <summary>
@@ -389,18 +449,6 @@ internal sealed class JsonSchemaEmitter
         {
             schema["nullable"] = true;
         }
-
-        if (IsInput && coercion != SchemaCoercion.None)
-        {
-            bool isInteger = node.Types.HasFlag(JsonTypes.Integer) && !node.Types.HasFlag(JsonTypes.Number);
-            string pattern = coercion == SchemaCoercion.Boolean ? BooleanPattern : isInteger ? IntegerPattern : NumberPattern;
-            schema["pattern"] = pattern;
-        }
-
-        if (node.Behavior.NumberType is { Length: > 0 } format && node.Format is null)
-        {
-            schema["format"] = format;
-        }
     }
 
     private void WriteValues(JsonObject schema, SchemaNode node)
@@ -444,8 +492,8 @@ internal sealed class JsonSchemaEmitter
     {
         Add(schema, "minLength", node.MinLength);
         Add(schema, "maxLength", node.MaxLength);
-        Add(schema, "pattern", node.Pattern);
-        Add(schema, "format", node.Format);
+        Add(schema, "pattern", CoercionPattern(node) ?? node.Pattern);
+        Add(schema, "format", node.Format ?? (node.Behavior.NumberType is { Length: > 0 } format ? format : null));
         Add(schema, "contentEncoding", node.ContentEncoding);
         Add(schema, "contentMediaType", node.ContentMediaType);
 
@@ -453,6 +501,19 @@ internal sealed class JsonSchemaEmitter
         {
             schema["contentSchema"] = EmitNode(node.ContentSchema, $"{location}/contentSchema");
         }
+    }
+
+    private string? CoercionPattern(SchemaNode node)
+    {
+        SchemaCoercion coercion = node.Behavior.Coercion;
+
+        if (!IsInput || coercion == SchemaCoercion.None)
+        {
+            return null;
+        }
+
+        bool isInteger = node.Types.HasFlag(JsonTypes.Integer) && !node.Types.HasFlag(JsonTypes.Number);
+        return coercion == SchemaCoercion.Boolean ? BooleanPattern : isInteger ? IntegerPattern : NumberPattern;
     }
 
     private void WriteArrays(JsonObject schema, SchemaNode node, List<string> notes, string location)
@@ -710,5 +771,12 @@ internal sealed class JsonSchemaEmitter
     {
         notes.Add($"Also applies {keyword}, which {_profile.Name} can't state.");
         _diagnostics.Add(new EmitDiagnostic(keyword, $"{_profile.Name} has no {keyword} keyword.", location));
+    }
+
+    private enum PointerPosition
+    {
+        Schema,
+        Name,
+        Opaque,
     }
 }
