@@ -41,6 +41,13 @@ jobs:
       - name: Test
         run: dotnet test --solution Zorg.Json.slnx -c Release --no-build --coverage --coverage-output-format cobertura
 
+      - name: Pack
+        shell: bash
+        run: |
+          for project in src/*/*.csproj; do
+            dotnet pack "$project" -c Release --no-build -p:PackageOutputPath="$RUNNER_TEMP/packages"
+          done
+
       - name: Upload coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
