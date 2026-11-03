@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Contracts;
@@ -18,7 +19,7 @@ namespace Zorg.Json;
 /// Store it in a <see langword="static readonly"/> field. Create one with <see cref="Z"/>.
 /// </summary>
 /// <typeparam name="T">The type of the parsed value.</typeparam>
-public abstract class Schema<T>
+public abstract class Schema<T> : ISchema
 {
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
 
@@ -28,10 +29,9 @@ public abstract class Schema<T>
 
     private protected SchemaNode Node { get; }
 
-    private ValidationPlan Plan => _plan ??= new ValidationPlan(Node);
+    private ValidationPlan Plan => _plan ??= ValidationPlan.Create(Node);
 
-    /// <summary>Gets the keyword model behind this schema.</summary>
-    /// <returns>The node.</returns>
+    /// <inheritdoc/>
     public SchemaNode ToNode() => Node;
 
     /// <summary>Validates JSON text and returns a result instead of throwing. Zod equivalent: <c>safeParse</c>.</summary>
@@ -89,22 +89,12 @@ public abstract class Schema<T>
         ValidationContext context = new();
         JsonElement value = Plan.Run(json, context);
 
-        if (context.HasIssues)
+        if (context.HasPendingRefinements)
         {
-            return ParseResult<T>.Failure(context.ToIssues());
+            throw new InvalidOperationException("This schema has async refinements. Use SafeParseAsync.");
         }
 
-        T result = Materialize(value);
-
-        foreach (SchemaRefinement refinement in Node.Behavior.Refinements)
-        {
-            if (!((SchemaRefinement<T>)refinement).Predicate(result))
-            {
-                context.ReportCustom(refinement.Message);
-            }
-        }
-
-        return context.HasIssues ? ParseResult<T>.Failure(context.ToIssues()) : ParseResult<T>.Success(result);
+        return Finish(value, context);
     }
 
     /// <summary>Reads and validates a UTF-8 JSON stream. Zod equivalent: <c>safeParseAsync</c>.</summary>
@@ -123,12 +113,34 @@ public abstract class Schema<T>
         try
         {
             using JsonDocument document = await JsonDocument.ParseAsync(utf8Json, DocumentOptions, cancellationToken).ConfigureAwait(false);
-            return SafeParse(document.RootElement);
+            return await SafeParseAsync(document.RootElement, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException exception)
         {
             return InvalidJson(exception);
         }
+    }
+
+    /// <summary>Validates an element, running async refinements. Zod equivalent: <c>safeParseAsync</c>.</summary>
+    /// <param name="json">The element.</param>
+    /// <param name="cancellationToken">Passed to the async refinements.</param>
+    /// <returns>The value, or the issues.</returns>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;string&gt; result = await schema.SafeParseAsync(document.RootElement, cancellationToken);
+    /// </code>
+    /// </example>
+    public async ValueTask<ParseResult<T>> SafeParseAsync(JsonElement json, CancellationToken cancellationToken = default)
+    {
+        ValidationContext context = new();
+        JsonElement value = Plan.Run(json, context);
+
+        if (!context.HasIssues)
+        {
+            await context.RunPendingAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return Finish(value, context);
     }
 
     /// <summary>Validates JSON text and throws if it's invalid. Zod equivalent: <c>parse</c>.</summary>
@@ -220,7 +232,27 @@ public abstract class Schema<T>
     /// </example>
     public EmitResult Emit(JsonSchemaOptions? options = null) => JsonSchemaEmitter.Emit(Node, options ?? new JsonSchemaOptions());
 
-    private protected abstract T Materialize(JsonElement value);
+    internal abstract T Materialize(JsonElement value);
+
+    internal abstract JsonElement ToElement(T value);
+
+    private ParseResult<T> Finish(JsonElement value, ValidationContext context)
+    {
+        if (context.HasIssues)
+        {
+            return ParseResult<T>.Failure(context.ToIssues());
+        }
+
+        try
+        {
+            return ParseResult<T>.Success(Materialize(value));
+        }
+        catch (JsonException exception)
+        {
+            context.ReportDeserializationFailed(exception);
+            return ParseResult<T>.Failure(context.ToIssues());
+        }
+    }
 
     private static T ValueOrThrow(ParseResult<T> result) =>
         result.IsSuccess ? result.Value : throw new SchemaValidationException(result.Issues);
@@ -285,12 +317,144 @@ public abstract class Schema<T, TSelf> : Schema<T>
     [Pure]
     public TSelf Describe(string description) => Description(description);
 
+    /// <summary>Records why this exists. JSON Schema: <c>$comment</c>.</summary>
+    /// <param name="comment">The comment.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Comment("Kept for older clients");
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Comment(string comment)
+    {
+        ArgumentNullException.ThrowIfNull(comment);
+        return With(Node with { Comment = comment });
+    }
+
+    /// <summary>Marks the value as deprecated. JSON Schema: <c>deprecated</c>. Zod equivalent: <c>.meta({ deprecated: true })</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Deprecated();
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Deprecated() => With(Node with { Deprecated = true });
+
+    /// <summary>Marks the value as read-only. JSON Schema: <c>readOnly</c>. It's only an annotation.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().ReadOnly();
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf ReadOnly() => With(Node with { ReadOnly = true });
+
+    /// <summary>Marks the value as write-only. JSON Schema: <c>writeOnly</c>. It's only an annotation.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().WriteOnly();
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf WriteOnly() => With(Node with { WriteOnly = true });
+
+    /// <summary>Adds example values. JSON Schema: <c>examples</c>. Zod equivalent: <c>.meta({ examples })</c>.</summary>
+    /// <param name="examples">The examples.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Examples("Ada", "Grace");
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Examples(params ReadOnlySpan<T> examples)
+    {
+        ImmutableArray<JsonElement>.Builder elements = ImmutableArray.CreateBuilder<JsonElement>(examples.Length);
+
+        foreach (T example in examples)
+        {
+            elements.Add(ToElement(example));
+        }
+
+        return With(Node with { Examples = Node.Examples.AddRange(elements) });
+    }
+
+    /// <summary>Adds a custom keyword to the emitted schema, such as <c>x-order</c>. Zod equivalent: <c>.meta()</c>.</summary>
+    /// <param name="keyword">The keyword.</param>
+    /// <param name="value">Its value.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Meta("x-order", JsonElement.Parse("1"));
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Meta(string keyword, JsonElement value)
+    {
+        ArgumentNullException.ThrowIfNull(keyword);
+        return With(Node with { Extensions = Node.Extensions.Add(KeyValuePair.Create(keyword, value.Clone())) });
+    }
+
+    /// <summary>
+    /// Names this schema, so that it's written once under <c>$defs</c> when
+    /// <see cref="JsonSchemaOptions.Reused"/> is <see cref="ReusedSchemaHandling.Ref"/>. Zod equivalent: <c>.meta({ id })</c>.
+    /// </summary>
+    /// <param name="name">The name under <c>$defs</c>.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema email = Z.String().Email().Named("email");
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Named(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return With(Node with { Behavior = Node.Behavior with { DefinitionName = name } });
+    }
+
+    /// <summary>
+    /// Lets the property be absent, when used as an object property. No keyword of its own: the property is left out of
+    /// <c>required</c>. Zod equivalent: <c>.optional()</c>.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// ObjectSchema schema = Z.Object().Property("nick", Z.String().Optional());
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Optional() => With(Node with { Behavior = Node.Behavior with { IsOptional = true } });
+
+    /// <summary>
+    /// Fills in this value when the property is absent. JSON Schema: <c>default</c>, and the property is left out of
+    /// <c>required</c> in the input schema. Zod equivalent: <c>.default()</c>.
+    /// </summary>
+    /// <param name="value">The default value.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// ObjectSchema schema = Z.Object().Property("limit", Z.Integer().Default(10));
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf Default(T value) => With(Node with
+    {
+        Default = ToElement(value),
+        Behavior = Node.Behavior with { IsOptional = true, FillDefault = true },
+    });
+
     /// <summary>
     /// Adds a C# check that runs after the constraints have passed. JSON Schema can't express it, so see
     /// <see cref="JsonSchemaOptions.Unrepresentable"/>. Zod equivalent: <c>.refine()</c>.
     /// </summary>
     /// <param name="predicate">Returns true when the value is valid.</param>
     /// <param name="message">The issue message. The issue's code is <see cref="IssueCodes.Custom"/>.</param>
+    /// <param name="hint">Replaces the message in the emitted schema.</param>
     /// <returns>A new schema.</returns>
     /// <example>
     /// <code>
@@ -298,16 +462,38 @@ public abstract class Schema<T, TSelf> : Schema<T>
     /// </code>
     /// </example>
     [Pure]
-    public TSelf Refine(Func<T, bool> predicate, string message)
+    public TSelf Refine(Func<T, bool> predicate, string message, string? hint = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(message);
-
-        return With(Node with
-        {
-            Behavior = Node.Behavior with { Refinements = Node.Behavior.Refinements.Add(new SchemaRefinement<T>(predicate, message)) },
-        });
+        return AddRefinement(new SchemaRefinement<T>(Materialize, predicate, null, message, string.Empty, hint));
     }
+
+    /// <summary>
+    /// Adds an async C# check, such as a database lookup. The schema then has to be parsed with <c>SafeParseAsync</c>.
+    /// Zod equivalent: an async <c>.refine()</c>.
+    /// </summary>
+    /// <param name="predicate">Returns true when the value is valid.</param>
+    /// <param name="message">The issue message. The issue's code is <see cref="IssueCodes.Custom"/>.</param>
+    /// <param name="hint">Replaces the message in the emitted schema.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().RefineAsync(users.IsFreeAsync, "This name is taken");
+    /// </code>
+    /// </example>
+    [Pure]
+    public TSelf RefineAsync(Func<T, CancellationToken, ValueTask<bool>> predicate, string message, string? hint = null)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        ArgumentNullException.ThrowIfNull(message);
+        return AddRefinement(new SchemaRefinement<T>(Materialize, null, predicate, message, string.Empty, hint));
+    }
+
+    private protected TSelf AddRefinement(SchemaRefinement refinement) => With(Node with
+    {
+        Behavior = Node.Behavior with { Refinements = Node.Behavior.Refinements.Add(refinement) },
+    });
 
     private protected abstract TSelf With(SchemaNode node);
 }

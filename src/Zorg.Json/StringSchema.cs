@@ -153,7 +153,8 @@ public sealed class StringSchema : Schema<string, StringSchema>
     public StringSchema Const(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        return With(Node with { Const = JsonStrings.ToElement(value) });
+        SchemaNode node = Node with { Const = JsonStrings.ToElement(value) };
+        return With(Node.Types.HasFlag(JsonTypes.Null) ? node.WithNull() : node);
     }
 
     /// <summary>Requires one of these values. JSON Schema: <c>enum</c>. Zod equivalent: <c>z.enum()</c>.</summary>
@@ -175,8 +176,22 @@ public sealed class StringSchema : Schema<string, StringSchema>
             elements.Add(JsonStrings.ToElement(value));
         }
 
-        return With(Node with { Enum = elements.MoveToImmutable() });
+        SchemaNode node = Node with { Enum = elements.MoveToImmutable() };
+        return With(Node.Types.HasFlag(JsonTypes.Null) ? node.WithNull() : node);
     }
+
+    /// <summary>
+    /// Also allows JSON <c>null</c>, which parses to a null string. JSON Schema: adds <c>null</c> to <c>type</c>.
+    /// Zod equivalent: <c>.nullable()</c>.
+    /// </summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Nullable();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Nullable() => With(Node.WithNull());
 
     /// <summary>
     /// Removes surrounding whitespace before the constraints run. No keyword: constraints that it can affect are left
@@ -279,7 +294,9 @@ public sealed class StringSchema : Schema<string, StringSchema>
 
     private protected override StringSchema With(SchemaNode node) => new(node);
 
-    private protected override string Materialize(JsonElement value) => value.GetString()!;
+    internal override string Materialize(JsonElement value) => value.GetString()!;
+
+    internal override JsonElement ToElement(string value) => JsonStrings.ToElement(value);
 
     private StringSchema Normalize(string name, Func<string, string> apply) => With(Node with
     {

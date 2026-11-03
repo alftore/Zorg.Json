@@ -24,8 +24,44 @@
   <data name="too_big.string" xml:space="preserve">
     <value>Must be at most {0} characters long.</value>
   </data>
+  <data name="too_small.number" xml:space="preserve">
+    <value>Must be at least {0}.</value>
+  </data>
+  <data name="too_big.number" xml:space="preserve">
+    <value>Must be at most {0}.</value>
+  </data>
+  <data name="too_small.exclusive" xml:space="preserve">
+    <value>Must be greater than {0}.</value>
+  </data>
+  <data name="too_big.exclusive" xml:space="preserve">
+    <value>Must be less than {0}.</value>
+  </data>
+  <data name="too_small.array" xml:space="preserve">
+    <value>Must have at least {0} items.</value>
+  </data>
+  <data name="too_big.array" xml:space="preserve">
+    <value>Must have at most {0} items.</value>
+  </data>
+  <data name="too_small.object" xml:space="preserve">
+    <value>Must have at least {0} properties.</value>
+  </data>
+  <data name="too_big.object" xml:space="preserve">
+    <value>Must have at most {0} properties.</value>
+  </data>
+  <data name="too_small.contains" xml:space="preserve">
+    <value>Must contain at least {0} matching items.</value>
+  </data>
+  <data name="too_big.contains" xml:space="preserve">
+    <value>Must contain at most {0} matching items.</value>
+  </data>
+  <data name="not_multiple_of" xml:space="preserve">
+    <value>Must be a multiple of {0}.</value>
+  </data>
   <data name="invalid_format.pattern" xml:space="preserve">
     <value>Must match the pattern {0}.</value>
+  </data>
+  <data name="invalid_format.timeout" xml:space="preserve">
+    <value>Matching the pattern {0} took too long.</value>
   </data>
   <data name="invalid_format.format" xml:space="preserve">
     <value>Must be a valid {0}.</value>
@@ -38,5 +74,38 @@
   </data>
   <data name="invalid_value.string" xml:space="preserve">
     <value>The string contains invalid Unicode.</value>
+  </data>
+  <data name="invalid_value.false" xml:space="preserve">
+    <value>No value is allowed here.</value>
+  </data>
+  <data name="invalid_value.not" xml:space="preserve">
+    <value>Must not match the excluded schema.</value>
+  </data>
+  <data name="invalid_value.unique" xml:space="preserve">
+    <value>Items {0} and {1} must not be equal.</value>
+  </data>
+  <data name="invalid_value.depth" xml:space="preserve">
+    <value>The schema nests too deeply. A recursive schema may not be consuming any input.</value>
+  </data>
+  <data name="required" xml:space="preserve">
+    <value>The property {0} is required.</value>
+  </data>
+  <data name="required.dependent" xml:space="preserve">
+    <value>The property {0} is required when {1} is present.</value>
+  </data>
+  <data name="unrecognized_keys" xml:space="preserve">
+    <value>Unrecognized properties: {0}.</value>
+  </data>
+  <data name="invalid_union.none" xml:space="preserve">
+    <value>Does not match any of the allowed schemas.</value>
+  </data>
+  <data name="invalid_union.many" xml:space="preserve">
+    <value>Matches {0} schemas, but must match exactly one.</value>
+  </data>
+  <data name="invalid_union.discriminator" xml:space="preserve">
+    <value>Must be one of {0}.</value>
+  </data>
+  <data name="deserialization_failed" xml:space="preserve">
+    <value>The value could not be deserialized: {0}</value>
   </data>
 </root>

@@ -11,6 +11,7 @@ BenchmarkDotNet.Artifacts/
 .tmp/
 
 # IDE and OS files
+.claude/
 .vs/
 .vscode/
 .idea/
