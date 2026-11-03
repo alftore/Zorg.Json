@@ -18,4 +18,7 @@
   <Folder Name="/benchmarks/">
     <Project Path="benchmarks/Zorg.Json.Benchmarks/Zorg.Json.Benchmarks.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Zorg.Json.AotSmoke/Zorg.Json.AotSmoke.csproj" />
+  </Folder>
 </Solution>
