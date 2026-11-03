@@ -10,8 +10,11 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Zorg.Json/Zorg.Json.csproj" />
+    <Project Path="src/Zorg.Json.AspNetCore/Zorg.Json.AspNetCore.csproj" />
+    <Project Path="src/Zorg.Json.AspNetCore.OpenApi/Zorg.Json.AspNetCore.OpenApi.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Zorg.Json.AspNetCore.Tests/Zorg.Json.AspNetCore.Tests.csproj" />
     <Project Path="tests/Zorg.Json.ComplianceTests/Zorg.Json.ComplianceTests.csproj" />
     <Project Path="tests/Zorg.Json.Tests/Zorg.Json.Tests.csproj" />
   </Folder>
@@ -20,5 +23,6 @@
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Zorg.Json.AotSmoke/Zorg.Json.AotSmoke.csproj" />
+    <Project Path="samples/Zorg.Json.AspNetCore.AotSmoke/Zorg.Json.AspNetCore.AotSmoke.csproj" />
   </Folder>
 </Solution>

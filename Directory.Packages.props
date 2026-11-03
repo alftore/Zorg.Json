@@ -5,9 +5,15 @@
   </PropertyGroup>
 
   <!-- The core has no package dependencies: System.Text.Json is in the net10.0 shared framework. -->
+  <ItemGroup Label="OpenApi">
+    <!-- Not in the shared framework, which is why Zorg.Json.AspNetCore.OpenApi is its own package. -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
+  </ItemGroup>
+
   <ItemGroup Label="Tests">
     <!-- Test oracle only: its binaries carry a maintenance-fee agreement. -->
     <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
   </ItemGroup>

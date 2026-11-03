@@ -30,6 +30,8 @@ dotnet publish samples/Zorg.Json.AotSmoke -r win-x64 -c Release
 samples/Zorg.Json.AotSmoke/bin/Release/net10.0/win-x64/publish/Zorg.Json.AotSmoke.exe
 ```
 
+`samples/Zorg.Json.AspNetCore.AotSmoke` does the same for the ASP.NET Core packages, over real HTTP, and is published and run the same way. It catches failures that a clean publish doesn't, because a missing JSON contract only shows up at run time.
+
 Use `linux-x64` and drop `.exe` on Linux. Windows needs the Visual Studio C++ workload, with `C:\Program Files (x86)\Microsoft Visual Studio\Installer` on `PATH` for vswhere. Ubuntu needs `clang` and `zlib1g-dev`.
 
 ## Accepting a snapshot
