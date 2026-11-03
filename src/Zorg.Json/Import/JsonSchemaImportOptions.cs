@@ -46,7 +46,12 @@ public sealed record JsonSchemaImportOptions
     public int MaxPatternLength { get; init; } = 1_024;
 }
 
-/// <summary>The JSON Schema dialects that can be imported, chosen by <c>$schema</c>.</summary>
+/// <summary>The JSON Schema dialects that can be imported, chosen by <c>$schema</c>. Zod equivalent: the dialect detection in <c>z.fromJSONSchema</c>.</summary>
+/// <example>
+/// <code>
+/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { DefaultDialect = JsonSchemaImportDialect.Draft07 });
+/// </code>
+/// </example>
 public enum JsonSchemaImportDialect
 {
     /// <summary>JSON Schema Draft 2020-12.</summary>
@@ -59,7 +64,12 @@ public enum JsonSchemaImportDialect
     Draft06,
 }
 
-/// <summary>What to do with keywords no dialect defines.</summary>
+/// <summary>What to do with keywords no dialect defines. Zod keeps them as metadata, as <see cref="Preserve"/> does.</summary>
+/// <example>
+/// <code>
+/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { UnknownKeywords = UnknownKeywordHandling.Error });
+/// </code>
+/// </example>
 public enum UnknownKeywordHandling
 {
     /// <summary>Keep them in <see cref="Model.SchemaNode.Extensions"/>, so that they're emitted again.</summary>
@@ -69,7 +79,12 @@ public enum UnknownKeywordHandling
     Error,
 }
 
-/// <summary>Whether the <c>format</c> keyword is checked.</summary>
+/// <summary>Whether the <c>format</c> keyword is checked. Zod equivalent: none, because its string formats always assert.</summary>
+/// <example>
+/// <code>
+/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { Formats = FormatHandling.AnnotateOnly });
+/// </code>
+/// </example>
 public enum FormatHandling
 {
     /// <summary>Check every format Zorg knows, which is its stance for fluent schemas too.</summary>
@@ -79,7 +94,12 @@ public enum FormatHandling
     AnnotateOnly,
 }
 
-/// <summary>What to do with a <c>format</c> Zorg doesn't know.</summary>
+/// <summary>What to do with a <c>format</c> Zorg doesn't know. Zod ignores custom formats, as <see cref="Annotate"/> does.</summary>
+/// <example>
+/// <code>
+/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { UnknownFormats = UnknownFormatHandling.Error });
+/// </code>
+/// </example>
 public enum UnknownFormatHandling
 {
     /// <summary>Keep it as an annotation, as the JSON Schema specification requires.</summary>

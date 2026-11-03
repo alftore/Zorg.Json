@@ -1,6 +1,14 @@
 namespace Zorg.Json.Import;
 
 /// <summary>The stable values of <see cref="JsonSchemaImportException.Code"/>.</summary>
+/// <example>
+/// <code>
+/// catch (JsonSchemaImportException exception) when (exception.Code == JsonSchemaImportCodes.RefCycle)
+/// {
+///     logger.LogWarning("{Location}: {Message}", exception.SchemaLocation, exception.Message);
+/// }
+/// </code>
+/// </example>
 public static class JsonSchemaImportCodes
 {
     /// <summary>

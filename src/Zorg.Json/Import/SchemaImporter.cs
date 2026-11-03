@@ -22,10 +22,13 @@ internal sealed class SchemaImporter
     /// </summary>
     private const string InertPrefix = "x-inert-";
 
+    /// <summary>How many in-place evaluations of one value are allowed, per <see cref="JsonSchemaImportOptions.MaxNodes"/>.</summary>
+    private const long EvaluationsPerNode = 100;
+
     private static readonly FrozenSet<string> Only202012 = new[]
     {
         "$defs", "$anchor", "$dynamicRef", "$dynamicAnchor", "prefixItems", "minContains", "maxContains", "dependentRequired",
-        "dependentSchemas", "unevaluatedItems", "unevaluatedProperties", "deprecated", "contentSchema",
+        "dependentSchemas", "unevaluatedItems", "unevaluatedProperties", "contentSchema",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     private static readonly FrozenSet<string> SinceDraft07 = new[]
@@ -46,7 +49,7 @@ internal sealed class SchemaImporter
 
     private static readonly FrozenSet<string> AnyDialect = new[]
     {
-        "$id", "$ref", "$schema", "$vocabulary", "title", "description", "default", "examples", "type", "const", "enum", "minimum",
+        "$id", "$ref", "$schema", "$vocabulary", "title", "description", "default", "deprecated", "examples", "type", "const", "enum", "minimum",
         "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "format", "items",
         "contains", "minItems", "maxItems", "uniqueItems", "properties", "required", "patternProperties", "additionalProperties",
         "propertyNames", "minProperties", "maxProperties", "allOf", "anyOf", "oneOf", "not",
@@ -83,6 +86,11 @@ internal sealed class SchemaImporter
 
     public static SchemaNode Import(JsonElement schema, JsonSchemaImportOptions? options)
     {
+        if (schema.ValueKind == JsonValueKind.Undefined)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, "A schema must be an object or a boolean.");
+        }
+
         JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
         JsonElement root = schema.Clone();
         SchemaImporter importer = new(root, effective, DetectDialect(root, effective));
@@ -734,12 +742,14 @@ internal sealed class SchemaImporter
     }
 
     /// <summary>
-    /// Walks the edges that stay on the same instance. A cycle among them never ends, and a long chain
-    /// would exhaust the stack at validation time. Iterative, because the chain length is what's being measured.
+    /// Walks the edges that stay on the same instance. A cycle among them never ends, a long chain would exhaust the
+    /// stack at validation time, and shared targets can multiply into exponential work per value, as
+    /// in <c>a: allOf[b, b], b: allOf[c, c]</c>. Iterative, because the chain length is what's being measured.
     /// </summary>
     private void CheckInPlaceGraph()
     {
-        Dictionary<SchemaNode, int> finished = new(ReferenceEqualityComparer.Instance);
+        long maxEvaluations = _options.MaxNodes * EvaluationsPerNode;
+        Dictionary<SchemaNode, (int Depth, long Evaluations)> finished = new(ReferenceEqualityComparer.Instance);
         HashSet<SchemaNode> active = new(ReferenceEqualityComparer.Instance);
         Stack<Frame> stack = new();
 
@@ -759,12 +769,13 @@ internal sealed class SchemaImporter
                 {
                     if (active.Contains(child))
                     {
-                        throw Error(JsonSchemaImportCodes.RefCycle, Location(frame.Node), "This cycle of references never reaches a child of the instance, so evaluating it wouldn't end.");
+                        SchemaNode reference = stack.FirstOrDefault(entry => entry.Node.Ref is not null)?.Node ?? frame.Node;
+                        throw Error(JsonSchemaImportCodes.RefCycle, Location(reference), "This cycle of references never reaches a child of the instance, so evaluating it wouldn't end.");
                     }
 
-                    if (finished.TryGetValue(child, out int depth))
+                    if (finished.TryGetValue(child, out (int Depth, long Evaluations) known))
                     {
-                        frame.Depth = Math.Max(frame.Depth, depth);
+                        frame.Add(known.Depth, known.Evaluations);
                     }
                     else if (child.BooleanValue is null)
                     {
@@ -778,17 +789,23 @@ internal sealed class SchemaImporter
                 stack.Pop();
                 active.Remove(frame.Node);
                 int length = frame.Depth + 1;
+                long evaluations = frame.Evaluations + 1;
 
-                if (length > _options.MaxDepth)
+                if (frame.Depth > _options.MaxDepth)
                 {
                     throw Error(JsonSchemaImportCodes.LimitExceeded, Location(frame.Node), $"A chain of references is longer than {_options.MaxDepth}.");
                 }
 
-                finished[frame.Node] = length;
+                if (evaluations > maxEvaluations)
+                {
+                    throw Error(JsonSchemaImportCodes.LimitExceeded, Location(frame.Node), $"Shared references make one value cost more than {maxEvaluations} evaluations.");
+                }
+
+                finished[frame.Node] = (length, evaluations);
 
                 if (stack.TryPeek(out Frame? parent))
                 {
-                    parent.Depth = Math.Max(parent.Depth, length);
+                    parent.Add(length, evaluations);
                 }
             }
         }
@@ -816,9 +833,17 @@ internal sealed class SchemaImporter
 
         public SchemaNode Node { get; } = node;
 
-        public int Depth { get; set; }
+        public int Depth { get; private set; }
+
+        public long Evaluations { get; private set; }
 
         public SchemaNode? Next() => _index < _edges.Length ? _edges[_index++] : null;
+
+        public void Add(int depth, long evaluations)
+        {
+            Depth = Math.Max(Depth, depth);
+            Evaluations += evaluations;
+        }
     }
 
     /// <summary>Where a subschema is: its pointer, the root of its <c>$id</c> resource, and its depth.</summary>
