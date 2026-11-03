@@ -1,0 +1,12 @@
+Error Recursion $ref @: anthropic-strict can't state the recursive reference #/$defs/category.
+Warning Relocated minLength @/properties/customer/properties/name: Anthropic won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated maxLength @/properties/customer/properties/name: Anthropic won't enforce this maxLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minimum @/properties/quantity: Anthropic won't enforce this minimum. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated maximum @/properties/quantity: Anthropic won't enforce this maximum. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated exclusiveMinimum @/properties/price: Anthropic won't enforce this exclusiveMinimum. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated multipleOf @/properties/price: Anthropic won't enforce this multipleOf. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated maxItems @/properties/tags: Anthropic won't enforce this maxItems. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/properties/category/properties/name: Anthropic won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/$defs/category/properties/name: Anthropic won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Refinement  @/properties/code: The refinement "The code must have an even length" can't be expressed in JSON Schema.
+Warning MissingType type @/properties/category/properties/children/items/properties/children/items: This schema has no type, which strict providers may refuse.

@@ -1,6 +1,9 @@
 using System;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Zorg.Json;
+using Zorg.Json.Emission;
+using Zorg.Json.Llm;
 
 // Runs the public API in a Native AOT binary. Any wrong result makes the exit code non-zero.
 int failures = 0;
@@ -25,6 +28,18 @@ Check("pattern", Text(emitted, "pattern") == "^[a-z]+$");
 Check("minLength", emitted["minLength"]?.GetValue<int>() == 2);
 Check("maxLength", emitted["maxLength"]?.GetValue<int>() == 10);
 Check("serialized schema", JsonNode.Parse(emitted.ToJsonString()) is JsonObject);
+
+ObjectSchema answer = Z.Object()
+    .Property("name", Z.String().MinLength(1))
+    .Property("items", Z.Record(Z.Integer()).Optional())
+    .Property("nick", Z.String().Optional());
+
+EmitResult strict = answer.Emit(LlmProfiles.OpenAIStrict);
+Check("relocated keyword", strict.Schema["properties"]?["name"]?["description"]?.GetValue<string>() == "Must also satisfy: minLength 1.");
+Check("relocated schema", strict.Schema["properties"]?["items"]?.ToJsonString().Contains("additionalProperties", StringComparison.Ordinal) == true);
+Check("linter", !answer.CheckCompatibility(LlmProfiles.OpenAIStrict).IsCompatible);
+Check("model output", answer.ParseModelOutput(strict, """{ "name": "a", "items": null, "nick": null }""").IsSuccess);
+Check("element dictionary", strict.Schema.ToJsonElementDictionary()["type"].ValueKind == JsonValueKind.String);
 
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;

@@ -1,0 +1,9 @@
+default @: openai-strict can't state default.
+minLength @: openai-strict can't state minLength, so it moved to description.
+maxLength @: openai-strict can't state maxLength, so it moved to description.
+minLength @: openai-strict can't state minLength, so it moved to description.
+minLength @: openai-strict can't state minLength, so it moved to description.
+(refinement) @/properties/code: The refinement "The code must have an even length" can't be expressed in JSON Schema.
+format @/properties/quantity: openai-strict can't state this format.
+format @/properties/price: openai-strict can't state this format.
+format @/properties/priority: openai-strict can't state this format.

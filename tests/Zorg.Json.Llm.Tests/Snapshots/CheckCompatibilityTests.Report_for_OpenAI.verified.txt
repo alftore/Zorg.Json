@@ -1,0 +1,11 @@
+Warning Relocated minLength @/properties/customer/properties/name: OpenAI won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated maxLength @/properties/customer/properties/name: OpenAI won't enforce this maxLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/properties/category/properties/name: OpenAI won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Relocated minLength @/$defs/category/properties/name: OpenAI won't enforce this minLength. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Warning Refinement  @/properties/code: The refinement "The code must have an even length" can't be expressed in JSON Schema.
+Info OptionalProperty required @/properties/customer: The optional property "email" becomes required and nullable. ParseModelOutput turns null back into absent.
+Info Relocated default @/properties/priority: OpenAI won't enforce this default. It moves to description or a looser form, and ParseModelOutput still enforces it.
+Info OptionalProperty required @/properties/category: The optional property "children" becomes required and nullable. ParseModelOutput turns null back into absent.
+Info OptionalProperty required @/$defs/category: The optional property "children" becomes required and nullable. ParseModelOutput turns null back into absent.
+Info OptionalProperty required @: The optional property "priority" becomes required and nullable. ParseModelOutput turns null back into absent.
+Info OptionalProperty required @: The optional property "note" becomes required and nullable. ParseModelOutput turns null back into absent.

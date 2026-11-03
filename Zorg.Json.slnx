@@ -10,9 +10,11 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Zorg.Json/Zorg.Json.csproj" />
+    <Project Path="src/Zorg.Json.Llm/Zorg.Json.Llm.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Zorg.Json.ComplianceTests/Zorg.Json.ComplianceTests.csproj" />
+    <Project Path="tests/Zorg.Json.Llm.Tests/Zorg.Json.Llm.Tests.csproj" />
     <Project Path="tests/Zorg.Json.Tests/Zorg.Json.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmarks/">

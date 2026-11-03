@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Schema profiles for OpenAI, Anthropic and Gemini structured outputs, for Zorg.Json.</Description>
+    <PackageTags>json;json-schema;llm;structured-outputs;openai;anthropic;gemini</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zorg.Json\Zorg.Json.csproj" />
+  </ItemGroup>
+
+</Project>

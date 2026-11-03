@@ -1,0 +1,116 @@
+{
+  "description": "A customer order",
+  "type": "OBJECT",
+  "properties": {
+    "id": {
+      "type": "STRING",
+      "format": "uuid"
+    },
+    "customer": {
+      "type": "OBJECT",
+      "properties": {
+        "name": {
+          "type": "STRING",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "STRING",
+          "format": "email"
+        },
+        "nickname": {
+          "type": "STRING",
+          "nullable": true
+        }
+      },
+      "required": [
+        "name",
+        "nickname"
+      ]
+    },
+    "status": {
+      "type": "STRING",
+      "enum": [
+        "open",
+        "paid",
+        "shipped"
+      ]
+    },
+    "quantity": {
+      "type": "INTEGER",
+      "format": "int64",
+      "minimum": 1,
+      "maximum": 99
+    },
+    "price": {
+      "description": "Must also satisfy: exclusiveMinimum 0; multipleOf 0.01.",
+      "type": "NUMBER",
+      "format": "double"
+    },
+    "priority": {
+      "default": 3,
+      "type": "INTEGER",
+      "format": "int64"
+    },
+    "note": {
+      "type": "STRING",
+      "nullable": true
+    },
+    "tags": {
+      "type": "ARRAY",
+      "items": {
+        "type": "STRING"
+      },
+      "minItems": 1,
+      "maxItems": 5
+    },
+    "category": {
+      "type": "OBJECT",
+      "properties": {
+        "name": {
+          "type": "STRING",
+          "minLength": 1
+        },
+        "children": {
+          "type": "ARRAY",
+          "items": {
+            "type": "OBJECT",
+            "properties": {
+              "name": {
+                "type": "STRING",
+                "minLength": 1
+              },
+              "children": {
+                "type": "ARRAY",
+                "items": {
+                  "description": "Recursive: must also satisfy #/$defs/category."
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "code": {
+      "description": "Refinement: The code must have an even length",
+      "type": "STRING",
+      "pattern": "^Z[0-9]+$"
+    }
+  },
+  "required": [
+    "id",
+    "customer",
+    "status",
+    "quantity",
+    "price",
+    "tags",
+    "category",
+    "code"
+  ]
+}

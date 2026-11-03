@@ -163,7 +163,7 @@ internal sealed class JsonSchemaEmitter
             throw new InvalidOperationException(string.Join(' ', _diagnostics.Select(diagnostic => diagnostic.Message)));
         }
 
-        return new EmitResult(schema, _diagnostics.ToImmutable()) { Definitions = definitions };
+        return new EmitResult(schema, _diagnostics.ToImmutable()) { Definitions = definitions, Target = _profile };
     }
 
     private static JsonObject BooleanRoot(JsonNode emitted) =>

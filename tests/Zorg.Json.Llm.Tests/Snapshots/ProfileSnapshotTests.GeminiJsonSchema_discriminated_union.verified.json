@@ -1,0 +1,41 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "circle"
+          ]
+        },
+        "radius": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "square"
+          ]
+        },
+        "side": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "side"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
