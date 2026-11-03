@@ -37,6 +37,11 @@ internal static class SuiteRunner
         ("draft6", JsonSchemaImportDialect.Draft06),
     ];
 
+    private static readonly string[] Optional =
+    [
+        "bignum.json", "float-overflow.json", "anchor.json", "id.json", "no-schema.json", "refOfUnknownKeyword.json", "unknownKeyword.json",
+    ];
+
     private static readonly Lazy<ImmutableArray<FileResult>> LazyResults = new(RunAll);
 
     public static SuiteManifest Manifest { get; } = SuiteManifest.Load();
@@ -51,7 +56,7 @@ internal static class SuiteRunner
             string root = TestSuite.DraftPath(name);
             IEnumerable<string> paths = Directory.GetFiles(root, "*.json")
                 .Concat(Directory.GetFiles(Path.Combine(root, "optional", "format"), "*.json"))
-                .Concat([Path.Combine(root, "optional", "bignum.json"), Path.Combine(root, "optional", "float-overflow.json")]);
+                .Concat(Optional.Select(file => Path.Combine(root, "optional", file)).Where(File.Exists));
 
             foreach (string path in paths.Order(StringComparer.Ordinal))
             {

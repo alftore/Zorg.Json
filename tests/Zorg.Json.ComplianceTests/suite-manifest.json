@@ -196,6 +196,24 @@
           "Location-independent identifier in remote ref",
           "retrieved nested refs resolve relative to their URI not $id",
           "$ref to $ref finds location-independent $id"
+        ],
+        "draft2020-12/optional/id.json": [
+          "$id inside an enum is not a real identifier"
+        ],
+        "draft2020-12/optional/unknownKeyword.json": [
+          "$id inside an unknown keyword is not a real identifier"
+        ],
+        "draft7/optional/id.json": [
+          "id inside an enum is not a real identifier"
+        ],
+        "draft7/optional/unknownKeyword.json": [
+          "$id inside an unknown keyword is not a real identifier"
+        ],
+        "draft6/optional/id.json": [
+          "id inside an enum is not a real identifier"
+        ],
+        "draft6/optional/unknownKeyword.json": [
+          "$id inside an unknown keyword is not a real identifier"
         ]
       }
     },
