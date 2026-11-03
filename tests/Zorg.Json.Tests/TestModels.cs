@@ -49,7 +49,7 @@ public sealed class Open
     public required string Name { get; init; }
 
     [JsonExtensionData]
-    public Dictionary<string, JsonElement>? Extra { get; init; }
+    public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 
 [JsonSerializable(typeof(Person))]
