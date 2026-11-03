@@ -1,0 +1,89 @@
+# Contributing
+
+## Build and test
+
+You need the .NET SDK version in `global.json`. The compliance tests need the JSON Schema Test Suite submodule.
+
+```
+git clone --recurse-submodules <repository url>
+git submodule update --init      # if you've already cloned without it
+
+dotnet build Zorg.Json.slnx
+dotnet test --solution Zorg.Json.slnx
+```
+
+The build treats warnings as errors, so it has to finish with 0 warnings.
+
+To collect coverage, as CI does:
+
+```
+dotnet build Zorg.Json.slnx -c Release
+dotnet test --solution Zorg.Json.slnx -c Release --no-build --coverage --coverage-output-format cobertura
+```
+
+## AOT smoke test
+
+`samples/Zorg.Json.AotSmoke` checks that the core works under Native AOT. CI fails on any IL2xxx or IL3xxx warning, or if a result is wrong. To run it yourself:
+
+```
+dotnet publish samples/Zorg.Json.AotSmoke -r win-x64 -c Release
+samples/Zorg.Json.AotSmoke/bin/Release/net10.0/win-x64/publish/Zorg.Json.AotSmoke.exe
+```
+
+Use `linux-x64` and drop `.exe` on Linux. Windows needs the Visual Studio C++ workload, with `C:\Program Files (x86)\Microsoft Visual Studio\Installer` on `PATH` for vswhere. Ubuntu needs `clang` and `zlib1g-dev`.
+
+## Accepting a snapshot
+
+Snapshot tests compare output with `tests/Zorg.Json.Tests/Snapshots/*.verified.*`. On a mismatch the test fails and writes a `.received.` file next to the verified one.
+
+1. Compare the two files.
+2. If the new output is right, rename the file from `.received.` to `.verified.`, replacing the old one.
+3. Run the tests again and commit the `.verified.` file.
+
+`.received.` files are gitignored.
+
+## Conventions
+
+- **Keyword-first naming.** Method names are JSON Schema keywords (`MinLength`, `Pattern`, `Minimum`). Add a Zod alias only where it's unambiguous (`Optional`, `Nullable`, `Refine`, `Describe`).
+- **XML docs on all public members.** Each one names the JSON Schema keyword it emits and the Zod equivalent, and has an `<example>`.
+
+```csharp
+/// <summary>Sets the minimum length. JSON Schema: <c>minLength</c>. Zod equivalent: <c>.min()</c>.</summary>
+/// <param name="length">The minimum length.</param>
+/// <returns>A new schema.</returns>
+/// <example>
+/// <code>
+/// StringSchema name = Z.String().MinLength(1);
+/// </code>
+/// </example>
+```
+
+## Repository settings (for the owner)
+
+GitHub can't read these from files, so the owner has to turn them on by hand.
+
+**Branch protection for `main`** (Settings > Rules > Rulesets, or Branches):
+
+- Require a pull request before merging, with at least 1 approval, dismissing stale approvals, and approval of the most recent push. A sole maintainer can't approve their own pull request, so set this to 0 until there's a second maintainer.
+- Require status checks to pass, with the branch up to date. Required checks: `Build and test (windows-latest)`, `Build and test (ubuntu-latest)` and `AOT smoke publish`.
+- Require conversation resolution before merging.
+- Block force pushes and deletions.
+- Leave the bypass list empty, so the rules apply to administrators too.
+
+**Tags:** add a tag ruleset for `v*` that restricts creation, updates and deletions to maintainers.
+
+**The `nuget` environment** (Settings > Environments):
+
+- Add required reviewers. Turn on "Prevent self-review" once there's a second maintainer.
+- Limit deployments to selected tags, with the rule `v*`.
+- Turn off administrator bypass.
+- Add the secret `NUGET_USER`, holding the nuget.org profile name (not an email address).
+
+**nuget.org** (your username > Trusted Publishing): add a policy with the repository owner, repository `Zorg.Json`, workflow file `release.yml` and environment `nuget`.
+
+**Actions and security** (Settings > Actions, and Advanced Security):
+
+- Set the default `GITHUB_TOKEN` permission to read-only, and don't let Actions approve pull requests.
+- Require actions to be pinned to a full-length commit SHA.
+- Turn on private vulnerability reporting, Dependabot alerts, secret scanning and push protection.
+- Use two-factor authentication on GitHub and nuget.org.
