@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Zorg.Json;
 
 // Runs the public API in a Native AOT binary. Any wrong result makes the exit code non-zero.
@@ -26,6 +30,32 @@ Check("minLength", emitted["minLength"]?.GetValue<int>() == 2);
 Check("maxLength", emitted["maxLength"]?.GetValue<int>() == 10);
 Check("serialized schema", JsonNode.Parse(emitted.ToJsonString()) is JsonObject);
 
+ObjectSchema<Person> person = Schema.Object(SmokeJson.Default.Person)
+    .Property(p => p.Name, s => s.MinLength(1))
+    .Property(p => p.Age, s => s.Minimum(0))
+    .Property(p => p.Tags, s => s.MaxItems(2));
+
+ParseResult<Person> typed = person.SafeParse("""{ "name": "Ada", "age": 36, "tags": ["a"], "kind": "Admin" }""");
+Check("typed input", typed.IsSuccess && typed.Value.Name == "Ada" && typed.Value.Kind == Kind.Admin);
+
+ParseResult<Person> invalid = person.SafeParse("""{ "name": "", "age": 36, "tags": [], "kind": "Nope", "extra": 1 }""");
+Check("typed issues", invalid.Issues.Length == 3);
+Check("typed pointer", invalid.Issues.Any(issue => issue.InstanceLocation == "/name"));
+Check("typed schema", person.ToJsonSchema()["additionalProperties"]?.GetValue<bool>() == false);
+
+Schema<Person> recursive = Schema.Lazy("person", () => (Schema<Person>)person);
+Check("lazy", recursive.SafeParse("""{ "name": "Ada", "age": 36, "tags": [], "kind": "User" }""").IsSuccess);
+
+ObjectSchema untyped = Z.Object()
+    .Property("limit", Z.Integer().Coerce().Default(10))
+    .Property("price", Z.Number<decimal>().MultipleOf(0.01m).Optional())
+    .Property("tags", Z.Array(Z.String().Trim()).Optional());
+
+Check("defaults", untyped.Parse("{}").GetProperty("limit").GetInt32() == 10);
+Check("coercion", untyped.Parse("""{ "limit": "5" }""").GetProperty("limit").GetInt32() == 5);
+Check("exact numbers", !untyped.SafeParse("""{ "price": 0.015 }""").IsSuccess);
+Check("rewritten array", untyped.Parse("""{ "tags": [" a "] }""").GetProperty("tags")[0].GetString() == "a");
+
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 
@@ -42,3 +72,15 @@ void CheckIssue(string name, ParseResult<string> result, string expectedCode) =>
     Check(name, !result.IsSuccess && result.Issues[0].Code == expectedCode && !string.IsNullOrEmpty(result.Issues[0].Message));
 
 static string? Text(JsonObject schema, string keyword) => schema[keyword]?.GetValue<string>();
+
+internal enum Kind
+{
+    User,
+    Admin,
+}
+
+internal sealed record Person(string Name, int Age, IReadOnlyList<string> Tags, Kind Kind);
+
+[JsonSerializable(typeof(Person))]
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, Converters = [typeof(JsonStringEnumConverter<Kind>)])]
+internal sealed partial class SmokeJson : JsonSerializerContext;
