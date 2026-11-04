@@ -66,6 +66,10 @@ JSON Schema Draft 2020-12 is the default. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 
 - [LLM structured output](docs/llm.md)
 - [Importing JSON Schema](docs/import.md)
 
+## How this is built
+
+Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthropic. The maintainer sets the direction and makes the design decisions, and agents do most of the implementation. This note covers the whole project, so individual commits don't carry a co-author line.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Local scratch files go in `.tmp/`, which is gitignored.

@@ -37,6 +37,10 @@ ObjectSchema search = Z.Object()
     .Property("limit", Z.Integer().Minimum(1).Maximum(50).Default(10));
 ```
 
+## How this is built
+
+Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthropic. The maintainer sets the direction and makes the design decisions, and agents do most of the implementation. This note covers the whole project, so individual commits don't carry a co-author line.
+
 ## Packages
 
 | Package | Contents |

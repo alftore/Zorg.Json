@@ -24,6 +24,8 @@ dotnet test --solution Zorg.Json.slnx --no-build
 ```
 
 - `CONTRIBUTING.md` has the conventions. The build fails on any warning.
+- Commits are signed through `commit.gpgsign`. Never bypass it. If signing fails, stop and tell the maintainer.
+- Commit messages and pull requests have no `Co-Authored-By` or "Generated with" lines. The README states that agents help build the library.
 - The compliance tests need `git submodule update --init --depth 1`.
 - Accept a snapshot by reading the `.received.` file, then renaming it to `.verified.`. Never bulk-accept without reading.
 - `.tmp/design/01-core-model.md` holds the agreed design, where it exists on your machine.
