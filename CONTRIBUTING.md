@@ -64,6 +64,16 @@ Snapshot tests compare output with `tests/Zorg.Json.Tests/Snapshots/*.verified.*
 
 GitHub can't read these from files, so the owner has to turn them on by hand.
 
+The rulesets below are in `.github/rulesets/`. They need a public repository or GitHub Pro. Apply them with:
+
+```bash
+gh api repos/alftore/Zorg.Json/rulesets --method POST --input .github/rulesets/main.json
+```
+
+```bash
+gh api repos/alftore/Zorg.Json/rulesets --method POST --input .github/rulesets/tags.json
+```
+
 **Branch protection for `main`** (Settings > Rules > Rulesets, or Branches):
 
 - Require a pull request before merging, with at least 1 approval, dismissing stale approvals, and approval of the most recent push. A sole maintainer can't approve their own pull request, so set this to 0 until there's a second maintainer.
