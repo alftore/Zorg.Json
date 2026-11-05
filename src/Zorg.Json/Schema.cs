@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Zorg.Json.Emission;
 using Zorg.Json.Model;
 using Zorg.Json.Sampling;
+using Zorg.Json.Typed;
 using Zorg.Json.Validation;
 
 namespace Zorg.Json;
@@ -24,7 +25,10 @@ public abstract class Schema<T> : ISchema, ISampleTarget
 {
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
 
+    private static readonly JsonElement NullElement = JsonElement.Parse("null");
+
     private ValidationPlan? _plan;
+    private bool? _hasOutputOnly;
 
     private protected Schema(SchemaNode node) => Node = node;
 
@@ -222,6 +226,74 @@ public abstract class Schema<T> : ISchema, ISampleTarget
     }
 
     /// <summary>
+    /// Validates an object you already have, such as an MVC model or a bound options instance, by serializing it and
+    /// running the same pipeline as <see cref="SafeParse(JsonElement)"/>. Zod equivalent: <c>safeParse</c> on an existing value.
+    /// </summary>
+    /// <param name="instance">The object to check. It isn't changed.</param>
+    /// <returns>
+    /// On success, the value after the pipeline: normalizers such as <c>Trim</c> have run and defaults are filled in.
+    /// For a reference type that is a new instance, equal to <paramref name="instance"/> only when nothing was changed.
+    /// On failure, the issues, with locations as in the serialized JSON. A <see langword="null"/> is validated as
+    /// JSON <c>null</c>, so it fails unless the schema allows it. If the serializer can't write the object, the result is an
+    /// <see cref="IssueCodes.DeserializationFailed"/> issue with the exception text in <c>Parameters["detail"]</c>.
+    /// </returns>
+    /// <remarks>
+    /// Properties that are only written, such as computed ones, are removed from the JSON before it's checked, because
+    /// parsing never accepts them. Refinements run on the converted value. A schema with <c>RefineAsync</c> needs
+    /// <see cref="ValidateAsync"/>.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;Person&gt; result = PersonSchema.Validate(model);
+    ///
+    /// if (!result.IsSuccess)
+    /// {
+    ///     return ValidationProblem(result.Issues.ToDictionary());
+    /// }
+    /// </code>
+    /// </example>
+    public ParseResult<T> Validate(T instance)
+    {
+        JsonElement element;
+
+        try
+        {
+            element = Serialize(instance);
+        }
+        catch (Exception exception) when (Deserialization.Failed(exception))
+        {
+            return SerializationFailed(exception);
+        }
+
+        return SafeParse(element);
+    }
+
+    /// <summary>Validates an object you already have, running async refinements. See <see cref="Validate"/>.</summary>
+    /// <param name="instance">The object to check. It isn't changed.</param>
+    /// <param name="cancellationToken">Passed to the async refinements.</param>
+    /// <returns>The value after the pipeline, or the issues.</returns>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;Person&gt; result = await PersonSchema.ValidateAsync(model, cancellationToken);
+    /// </code>
+    /// </example>
+    public ValueTask<ParseResult<T>> ValidateAsync(T instance, CancellationToken cancellationToken = default)
+    {
+        JsonElement element;
+
+        try
+        {
+            element = Serialize(instance);
+        }
+        catch (Exception exception) when (Deserialization.Failed(exception))
+        {
+            return ValueTask.FromResult(SerializationFailed(exception));
+        }
+
+        return SafeParseAsync(element, cancellationToken);
+    }
+
+    /// <summary>
     /// Emits JSON Schema, by default Draft 2020-12 describing the input. Zod equivalent: <c>z.toJSONSchema</c>,
     /// except that Zod describes the output by default.
     /// </summary>
@@ -278,6 +350,25 @@ public abstract class Schema<T> : ISchema, ISampleTarget
             context.ReportDeserializationFailed(exception);
             return ParseResult<T>.Failure(context.ToIssues());
         }
+    }
+
+    private JsonElement Serialize(T instance)
+    {
+        if (instance is null)
+        {
+            return NullElement;
+        }
+
+        JsonElement element = ToElement(instance);
+        _hasOutputOnly ??= OutputOnlyProperties.Any(Node);
+        return _hasOutputOnly.Value ? OutputOnlyProperties.Remove(element, Node) : element;
+    }
+
+    private static ParseResult<T> SerializationFailed(Exception exception)
+    {
+        ValidationContext context = new();
+        context.ReportDeserializationFailed(exception);
+        return ParseResult<T>.Failure(context.ToIssues());
     }
 
     private static T ValueOrThrow(ParseResult<T> result) =>
