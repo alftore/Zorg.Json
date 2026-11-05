@@ -263,7 +263,8 @@ internal sealed class JsonSchemaEmitter
     private JsonObject EmitFields(SchemaNode source, string location)
     {
         List<string> notes = [];
-        SchemaNode node = IsInput ? RelocateCounts(Relocate(source, notes, location), notes, location) : source;
+        SchemaNode written = DropUnwritable(source, notes, location);
+        SchemaNode node = IsInput ? RelocateCounts(Relocate(written, notes, location), notes, location) : written;
         JsonObject schema = [];
 
         Add(schema, IsDraft07 ? "$id" : "$id", node.Id);
@@ -486,6 +487,47 @@ internal sealed class JsonSchemaEmitter
         return normalized ? result with { MinLength = null, MaxLength = null, Pattern = null, Format = null } : result;
     }
 
+    /// <summary>
+    /// JSON can't spell a string with an unpaired surrogate, which an imported schema may hold. A <c>const</c> or <c>enum</c>
+    /// like that is left out and reported, because writing it would fail later, in whoever serializes the schema. Annotations
+    /// are left out without a report.
+    /// </summary>
+    private SchemaNode DropUnwritable(SchemaNode node, List<string> notes, string location)
+    {
+        SchemaNode result = node;
+
+        if (node.Const is { } constant && SchemaExactness.IsUnwritable(constant))
+        {
+            notes.Add("Also applies a const that JSON can't spell.");
+            Unrepresentable("const", "The const has text with an unpaired surrogate, which JSON can't write.", location);
+            result = result with { Const = null };
+        }
+
+        if (node.Enum.Any(SchemaExactness.IsUnwritable))
+        {
+            notes.Add("Also applies an enum that JSON can't spell.");
+            Unrepresentable("enum", "The enum has text with an unpaired surrogate, which JSON can't write.", location);
+            result = result with { Enum = [] };
+        }
+
+        if (node.Default is { } fallback && SchemaExactness.IsUnwritable(fallback))
+        {
+            result = result with { Default = null };
+        }
+
+        if (node.Examples.Any(SchemaExactness.IsUnwritable))
+        {
+            result = result with { Examples = [.. node.Examples.Where(example => !SchemaExactness.IsUnwritable(example))] };
+        }
+
+        if (node.Extensions.Any(extension => SchemaExactness.IsUnwritable(extension.Value)))
+        {
+            result = result with { Extensions = [.. node.Extensions.Where(extension => !SchemaExactness.IsUnwritable(extension.Value))] };
+        }
+
+        return result;
+    }
+
     /// <summary>Property counts apply after Strip and Default, which the input schema can't see.</summary>
     private SchemaNode RelocateCounts(SchemaNode node, List<string> notes, string location)
     {
@@ -654,7 +696,7 @@ internal sealed class JsonSchemaEmitter
         {
             Add(schema, "minContains", node.MinContains);
 
-            if (node.MaxContains is not null && node.Contains is not null && IsInput && !SchemaExactness.IsExact(node.Contains))
+            if (node.MaxContains is not null && node.Contains is not null && IsInput && !SchemaExactness.IsExact(node.Contains, _profile.Dialect))
             {
                 Unsupported("maxContains", notes, location);
             }
@@ -793,7 +835,7 @@ internal sealed class JsonSchemaEmitter
 
         if (node.Not is not null)
         {
-            if (IsInput && !SchemaExactness.IsExact(node.Not))
+            if (IsInput && !SchemaExactness.IsExact(node.Not, _profile.Dialect))
             {
                 Unsupported("not", notes, location);
             }
@@ -805,7 +847,7 @@ internal sealed class JsonSchemaEmitter
 
         if (node.If is not null || node.Then is not null || node.Else is not null)
         {
-            if (IsOpenApi30 || (IsInput && node.If is not null && !SchemaExactness.IsExact(node.If)))
+            if (IsOpenApi30 || (IsInput && node.If is not null && !SchemaExactness.IsExact(node.If, _profile.Dialect)))
             {
                 Unsupported("if", notes, location);
             }
@@ -835,7 +877,7 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
-        if (!IsInput || node.OneOf.All(SchemaExactness.IsExact) || DiscriminatorKeys.TryBuild(node, out _))
+        if (!IsInput || node.OneOf.All(branch => SchemaExactness.IsExact(branch, _profile.Dialect)) || DiscriminatorKeys.TryBuild(node, out _))
         {
             WriteList(schema, "oneOf", node.OneOf, location);
         }

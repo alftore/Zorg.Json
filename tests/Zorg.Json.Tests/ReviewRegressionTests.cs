@@ -870,6 +870,106 @@ public sealed class ReviewRegressionTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
     }
 
+    [Theory]
+    [InlineData("1e-999999999")]
+    [InlineData("4.9e-325")]
+    [InlineData("-1e-400")]
+    public void A_number_that_underflows_a_double_is_refused(string json)
+    {
+        ParseResult<double> result = Z.Number().SafeParse(json);
+
+        Assert.Equal(IssueCodes.InvalidType, Assert.Single(result.Issues).Code);
+        Assert.False(Z.Number().Positive().SafeParse(json).IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("0.000")]
+    [InlineData("-0e5")]
+    [InlineData("5e-324")]
+    public void A_number_that_fits_a_double_is_accepted(string json)
+    {
+        Assert.True(Z.Number().SafeParse(json).IsSuccess);
+        Assert.True(Z.Number().Positive().SafeParse(json).IsSuccess == (json == "5e-324"));
+    }
+
+    [Fact]
+    public void An_imported_number_stays_exact()
+    {
+        Assert.True(Open("""{"type":"number","exclusiveMinimum":0}""").SafeParse("1e-999999999").IsSuccess);
+    }
+
+    [Fact]
+    public void A_negative_node_around_counts_that_strip_changes_is_not_emitted()
+    {
+        JsonObject emitted = Z.Not(Z.Object().Strip().MinProperties(1)).ToJsonSchema();
+
+        Assert.False(emitted.ContainsKey("not"));
+        Assert.True(Z.Not(Z.Object().Strip().MinProperties(1)).SafeParse("{}").IsSuccess);
+        Assert.True(Z.Not(Z.Object().Strip().MinProperties(1)).SafeParse("""{"a":1}""").IsSuccess);
+    }
+
+    [Fact]
+    public void A_negative_node_around_counts_that_default_changes_is_not_emitted()
+    {
+        ObjectSchema inner = Z.Object().Property("a", Z.Integer().Default(1)).MaxProperties(0);
+
+        Assert.False(Z.Not(inner).ToJsonSchema().ContainsKey("not"));
+        Assert.False(Z.If(inner, Z.String()).ToJsonSchema().ContainsKey("if"));
+    }
+
+    [Theory]
+    [InlineData(JsonSchemaDialect.Draft07)]
+    [InlineData(JsonSchemaDialect.OpenApi30)]
+    public void A_oneOf_branch_the_dialect_cannot_state_makes_oneOf_an_anyOf(JsonSchemaDialect dialect)
+    {
+        JsonValueSchema schema = Open("""{"oneOf":[{"type":"array","minItems":1},{"unevaluatedItems":false}]}""");
+        JsonSchemaProfile profile = dialect == JsonSchemaDialect.Draft07 ? JsonSchemaProfile.Draft07 : JsonSchemaProfile.OpenApi30;
+        JsonObject emitted = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile });
+
+        Assert.False(emitted.ContainsKey("oneOf"));
+        Assert.True(emitted.ContainsKey("anyOf"));
+        Assert.True(schema.SafeParse("[1]").IsSuccess);
+    }
+
+    [Fact]
+    public void A_negative_keyword_around_a_dropped_keyword_is_left_out_per_dialect()
+    {
+        JsonValueSchema schema = Open("""{"not":{"type":"array","unevaluatedItems":false}}""");
+
+        Assert.True(schema.ToJsonSchema().ContainsKey("not"));
+        Assert.False(schema.ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).ContainsKey("not"));
+        Assert.False(schema.ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.OpenApi30 }).ContainsKey("not"));
+    }
+
+    [Fact]
+    public void An_imported_constant_with_a_lone_surrogate_is_reported_not_written()
+    {
+        JsonValueSchema schema = Open("""{"const":"\ud800"}""");
+
+        Assert.Throws<InvalidOperationException>(() => schema.ToJsonSchema(new JsonSchemaOptions { Unrepresentable = UnrepresentablePolicy.Throw }));
+        Assert.False(schema.ToJsonSchema().ContainsKey("const"));
+
+        EmitResult annotated = schema.Emit(new JsonSchemaOptions { Unrepresentable = UnrepresentablePolicy.Annotate });
+
+        Assert.False(annotated.Schema.ContainsKey("const"));
+        Assert.NotEmpty(annotated.Diagnostics);
+        Assert.NotNull(annotated.Schema.ToJsonString());
+        Assert.False(Open("""{"not":{"enum":["\ud800"]}}""").Emit(new JsonSchemaOptions { Unrepresentable = UnrepresentablePolicy.Annotate }).Schema.ContainsKey("not"));
+    }
+
+    [Fact]
+    public void A_schema_nested_far_too_deep_is_refused_quickly()
+    {
+        string schema = string.Concat(Enumerable.Repeat("{\"not\":", 100_000)) + "true" + new string('}', 100_000);
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Import.JsonSchemaImportException exception = Assert.Throws<Import.JsonSchemaImportException>(() => Z.FromJsonSchema(schema));
+
+        Assert.Equal(Import.JsonSchemaImportCodes.LimitExceeded, exception.Code);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
+    }
+
     private static class Ast
     {
         public static readonly ObjectSchema Schema = Z.Object()

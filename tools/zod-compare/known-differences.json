@@ -188,7 +188,7 @@
       "id": "decimal-vs-double",
       "category": "numbers",
       "status": "undocumented-design",
-      "reason": "Zorg reads numbers as exact decimals. Zod sees a JS double, where 1e400 is Infinity (rejected), 1e-400 is 0 and 5e-324 is the smallest double.",
+      "reason": "Zorg reads numbers as exact decimals, and a typed number refuses one that doesn't fit its type: an overflow, or a non-zero value that rounds to 0. Zod sees a JS double, where 1e400 is Infinity (rejected), 1e-400 is 0 (accepted) and 5e-324 is the smallest double.",
       "link": "docs/guide.md#what-a-typed-schema-includes",
       "cases": [
         "*"
@@ -466,13 +466,14 @@
       "part": "interop-in|openapi-read",
       "category": "numbers",
       "status": "undocumented-design",
-      "reason": "A number schema read from JSON Schema is exact, so 1e400 passes type: number. Zod sees Infinity and rejects it.",
+      "reason": "A number schema read from JSON Schema is exact, so 1e400 passes type: number and 1e-400 is greater than 0. Zod sees Infinity and 0, and rejects both.",
       "link": "docs/import.md",
       "cases": [
         "*"
       ],
       "docTags": [
-        "overflow"
+        "overflow",
+        "underflow"
       ],
       "kinds": [
         "verdict"
