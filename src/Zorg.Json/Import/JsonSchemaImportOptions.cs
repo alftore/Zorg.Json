@@ -15,7 +15,11 @@ namespace Zorg.Json.Import;
 /// </example>
 public sealed record JsonSchemaImportOptions
 {
-    /// <summary>The dialect of a document with no <c>$schema</c> keyword. Default: <see cref="JsonSchemaImportDialect.Draft202012"/>.</summary>
+    /// <summary>
+    /// The dialect of a document with no <c>$schema</c> keyword. Default: <see cref="JsonSchemaImportDialect.Draft202012"/>.
+    /// An OpenAPI 3.0 schema has no <c>$schema</c>, so it's chosen here with <see cref="JsonSchemaImportDialect.OpenApi30"/>. While the default is
+    /// left alone, a boolean <c>nullable</c> fails with <see cref="JsonSchemaImportCodes.UnsupportedDialect"/> rather than being ignored.
+    /// </summary>
     public JsonSchemaImportDialect DefaultDialect { get; init; } = JsonSchemaImportDialect.Draft202012;
 
     /// <summary>What to do with keywords no dialect defines. Default: <see cref="UnknownKeywordHandling.Preserve"/>.</summary>
@@ -44,6 +48,13 @@ public sealed record JsonSchemaImportOptions
     /// Exceeding it fails with <see cref="JsonSchemaImportCodes.LimitExceeded"/>. Default: 1,024.
     /// </summary>
     public int MaxPatternLength { get; init; } = 1_024;
+
+    /// <summary>
+    /// The total length of all distinct <c>pattern</c> texts and <c>patternProperties</c> keys, in UTF-16 units. A pattern that
+    /// appears more than once counts once, because it is compiled once. Exceeding it fails with
+    /// <see cref="JsonSchemaImportCodes.LimitExceeded"/>. Default: 65,536.
+    /// </summary>
+    public int MaxTotalPatternLength { get; init; } = 65_536;
 }
 
 /// <summary>The JSON Schema dialects that can be imported, chosen by <c>$schema</c>. Zod equivalent: the dialect detection in <c>z.fromJSONSchema</c>.</summary>
@@ -65,6 +76,13 @@ public enum JsonSchemaImportDialect
 
     /// <summary>JSON Schema Draft-04, as written by Zod for <c>target: "draft-04"</c>.</summary>
     Draft04,
+
+    /// <summary>
+    /// The OpenAPI 3.0 schema object, as Zod writes it for <c>target: "openapi-3.0"</c>. It has no <c>$schema</c>, so it can only
+    /// be chosen through <see cref="JsonSchemaImportOptions.DefaultDialect"/>. It reads <c>nullable</c> and <c>example</c>,
+    /// boolean <c>exclusiveMinimum</c> and <c>exclusiveMaximum</c>, and <c>$ref</c> into the document's own <c>components/schemas</c>.
+    /// </summary>
+    OpenApi30,
 }
 
 /// <summary>What to do with keywords no dialect defines. Zod keeps them as metadata, as <see cref="Preserve"/> does.</summary>
