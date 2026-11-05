@@ -42,6 +42,9 @@ public sealed record SchemaBehavior
     /// <summary>What <see cref="SchemaNode.Ref"/> points at. Evaluated on first use, so that schemas can be recursive.</summary>
     public Func<SchemaNode>? Target { get; init; }
 
+    /// <summary>Where an imported node sits in its document, as a JSON Pointer. Null for fluent schemas.</summary>
+    internal string? Location { get; init; }
+
     internal bool FormatIsAnnotation { get; init; }
 
     /// <summary>Set by the fluent API, where Zorg enforces a format that other validators may only annotate.</summary>

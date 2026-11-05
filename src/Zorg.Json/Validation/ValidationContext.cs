@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -18,19 +19,21 @@ internal sealed class ValidationContext
     private const int MaxSpeculativeSteps = 20_000_000;
 
     private readonly List<PathSegment> _path;
+    private readonly List<Step> _steps;
     private readonly Limits _limits;
     private readonly bool _isFork;
     private List<ParseIssue>? _issues;
     private List<PendingRefinement>? _pending;
 
     public ValidationContext()
-        : this([], new Limits(), isFork: false)
+        : this([], [], new Limits(), isFork: false)
     {
     }
 
-    private ValidationContext(List<PathSegment> path, Limits limits, bool isFork)
+    private ValidationContext(List<PathSegment> path, List<Step> steps, Limits limits, bool isFork)
     {
         _path = path;
+        _steps = steps;
         _limits = limits;
         _isFork = isFork;
     }
@@ -81,8 +84,22 @@ internal sealed class ValidationContext
 
     public void Pop() => _path.RemoveAt(_path.Count - 1);
 
+    /// <summary>Enters a keyword with no name or index under it, such as <c>items</c>.</summary>
+    public void Walk(string keyword) => _steps.Add(new Step(keyword, null, -1, null));
+
+    /// <summary>Enters a keyword's named entry, such as <c>properties</c> and <c>a</c>.</summary>
+    public void Walk(string keyword, string name) => _steps.Add(new Step(keyword, name, -1, null));
+
+    /// <summary>Enters a keyword's indexed entry, such as <c>allOf</c> and <c>0</c>.</summary>
+    public void Walk(string keyword, int index) => _steps.Add(new Step(keyword, null, index, null));
+
+    /// <summary>Enters a <c>$ref</c>. Schema locations continue from <paramref name="target"/>.</summary>
+    public void WalkReference(string target) => _steps.Add(new Step("$ref", null, -1, target));
+
+    public void Unwalk() => _steps.RemoveAt(_steps.Count - 1);
+
     /// <summary>Evaluates a branch whose issues only count if the caller says so. Shares the path.</summary>
-    public ValidationContext Fork() => new(_path, _limits, isFork: true) { Depth = Depth };
+    public ValidationContext Fork() => new(_path, _steps, _limits, isFork: true) { Depth = Depth };
 
     public void Adopt(ValidationContext fork)
     {
@@ -108,12 +125,27 @@ internal sealed class ValidationContext
             Code = code,
             Message = Messages.Get(messageKey, messageArguments),
             InstanceLocation = Pointer(),
+            EvaluationPath = EvaluationPath(keyword),
+            SchemaLocation = SchemaLocation(keyword),
             Keyword = keyword,
             Parameters = ImmutableDictionary<string, object?>.Empty.Add(parameter, value),
         });
 
+    /// <summary>The <c>false</c> schema is the failing schema itself, so no keyword is added to the paths.</summary>
+    public void ReportFalse() =>
+        Add(new ParseIssue
+        {
+            Code = IssueCodes.InvalidValue,
+            Message = Messages.Get("invalid_value.false"),
+            InstanceLocation = Pointer(),
+            EvaluationPath = EvaluationPath(null),
+            SchemaLocation = SchemaLocation(null),
+            Keyword = "false",
+            Parameters = ImmutableDictionary<string, object?>.Empty.Add("expected", null),
+        });
+
     public void ReportRefinement(SchemaRefinement refinement) =>
-        ReportRefinement(refinement, Pointer());
+        ReportRefinement(refinement, Pointer(), EvaluationPath(null), SchemaLocation(null));
 
     public void ReportInvalidJson(Exception exception) =>
         Add(new ParseIssue
@@ -124,10 +156,11 @@ internal sealed class ValidationContext
             Parameters = Detail(exception),
         });
 
-    public void ReportDeserializationFailed(Exception exception) => ReportDeserializationFailed(exception, Pointer());
+    public void ReportDeserializationFailed(Exception exception) =>
+        ReportDeserializationFailed(exception, Pointer(), EvaluationPath(null), SchemaLocation(null));
 
     public void Defer(SchemaRefinement refinement, JsonElement value) =>
-        (_pending ??= []).Add(new PendingRefinement(refinement, value.Clone(), Pointer()));
+        (_pending ??= []).Add(new PendingRefinement(refinement, value.Clone(), Pointer(), EvaluationPath(null), SchemaLocation(null)));
 
     public async ValueTask RunPendingAsync(CancellationToken cancellationToken)
     {
@@ -142,27 +175,36 @@ internal sealed class ValidationContext
             {
                 if (!await pending.Refinement.CheckAsync(pending.Value, cancellationToken).ConfigureAwait(false))
                 {
-                    ReportRefinement(pending.Refinement, pending.Location);
+                    ReportRefinement(pending.Refinement, pending.Location, pending.EvaluationPath, pending.SchemaLocation);
                 }
             }
             catch (JsonException exception)
             {
-                ReportDeserializationFailed(exception, pending.Location);
+                ReportDeserializationFailed(exception, pending.Location, pending.EvaluationPath, pending.SchemaLocation);
             }
         }
     }
 
-    private void ReportDeserializationFailed(Exception exception, string location) =>
+    private void ReportDeserializationFailed(Exception exception, string location, string evaluationPath, string schemaLocation) =>
         Add(new ParseIssue
         {
             Code = IssueCodes.DeserializationFailed,
             Message = Messages.Get(IssueCodes.DeserializationFailed),
             InstanceLocation = location,
+            EvaluationPath = evaluationPath,
+            SchemaLocation = schemaLocation,
             Parameters = Detail(exception),
         });
 
-    private void ReportRefinement(SchemaRefinement refinement, string location) =>
-        Add(new ParseIssue { Code = IssueCodes.Custom, Message = refinement.Message, InstanceLocation = location + refinement.Path });
+    private void ReportRefinement(SchemaRefinement refinement, string location, string evaluationPath, string schemaLocation) =>
+        Add(new ParseIssue
+        {
+            Code = IssueCodes.Custom,
+            Message = refinement.Message,
+            InstanceLocation = location + refinement.Path,
+            EvaluationPath = evaluationPath,
+            SchemaLocation = schemaLocation,
+        });
 
     /// <summary>Exception text can name CLR types, so it's kept out of messages, which reach API clients.</summary>
     private static ImmutableDictionary<string, object?> Detail(Exception exception) =>
@@ -196,14 +238,136 @@ internal sealed class ValidationContext
         return pointer.ToString();
     }
 
+    private string EvaluationPath(string? keyword)
+    {
+        if ((_steps.Count == 0 && keyword is null) || !CanSpend(_steps.Count))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder path = new();
+
+        foreach (Step step in _steps)
+        {
+            step.AppendTo(path, fragment: false);
+        }
+
+        Append(path, keyword, fragment: false);
+        return path.ToString();
+    }
+
+    private string SchemaLocation(string? keyword)
+    {
+        int start = _steps.Count - 1;
+
+        while (start >= 0 && _steps[start].Target is null)
+        {
+            start--;
+        }
+
+        if (!CanSpend(_steps.Count - start))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder location = new(start < 0 ? "#" : _steps[start].Target);
+
+        for (int index = start + 1; index < _steps.Count; index++)
+        {
+            _steps[index].AppendTo(location, fragment: true);
+        }
+
+        Append(location, keyword, fragment: true);
+        return location.ToString();
+    }
+
+    /// <summary>Turns a JSON Pointer, already escaped with <c>~</c>, into a URI fragment.</summary>
+    internal static string Fragment(string pointer)
+    {
+        StringBuilder fragment = new("#");
+
+        foreach (string token in pointer.Split('/').Skip(1))
+        {
+            Append(fragment, token.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal), fragment: true);
+        }
+
+        return fragment.ToString();
+    }
+
+    /// <summary>Escapes a token for a JSON Pointer, and for a URI fragment when <paramref name="fragment"/> is set.</summary>
+    internal static void Append(StringBuilder path, string? token, bool fragment)
+    {
+        if (token is null)
+        {
+            return;
+        }
+
+        path.Append('/');
+
+        foreach (char character in token)
+        {
+            switch (character)
+            {
+                case '~':
+                    path.Append("~0");
+                    break;
+
+                case '/':
+                    path.Append("~1");
+                    break;
+
+                case >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '.' or '_' or '$' or '!' or '&' or '\'' or '(' or ')' or '*' or '+' or ',' or ';' or '=' or ':' or '@':
+                    path.Append(character);
+                    break;
+
+                default:
+                    if (fragment)
+                    {
+                        foreach (byte value in Encoding.UTF8.GetBytes(character.ToString()))
+                        {
+                            path.Append('%').Append(value.ToString("X2", CultureInfo.InvariantCulture));
+                        }
+                    }
+                    else
+                    {
+                        path.Append(character);
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private readonly record struct Step(string Keyword, string? Name, int Index, string? Target)
+    {
+        public void AppendTo(StringBuilder path, bool fragment)
+        {
+            Append(path, Keyword, fragment);
+
+            if (Name is not null)
+            {
+                Append(path, Name, fragment);
+            }
+            else if (Index >= 0)
+            {
+                path.Append('/').Append(Index.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+    }
+
+    /// <summary>Speculative branches can report millions of issues that are never shown, so their paths are built within a budget.</summary>
+    private bool CanSpend(int segments) => !_isFork || (_limits.PathBudget -= segments + 1) >= 0;
+
     private sealed class Limits
     {
         public int SpeculativeSteps { get; set; }
 
         public bool Exceeded { get; set; }
+
+        public long PathBudget { get; set; } = 2_000_000;
     }
 
     private readonly record struct PathSegment(string? Name, int Index);
 
-    private sealed record PendingRefinement(SchemaRefinement Refinement, JsonElement Value, string Location);
+    private sealed record PendingRefinement(SchemaRefinement Refinement, JsonElement Value, string Location, string EvaluationPath, string SchemaLocation);
 }
