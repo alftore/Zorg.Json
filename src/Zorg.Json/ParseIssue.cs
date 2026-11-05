@@ -14,6 +14,31 @@ public sealed record ParseIssue
     /// <summary>A JSON Pointer to the failing value. Empty for the document root.</summary>
     public required string InstanceLocation { get; init; }
 
+    /// <summary>
+    /// A JSON Pointer of the keywords walked to reach the failing keyword, including through <c>$ref</c>, such as
+    /// <c>/properties/a/$ref/minLength</c>. JSON Schema 2020-12 output format: <c>keywordLocation</c>. Empty for <c>invalid_json</c>.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;JsonElement&gt; result = Z.Object().Property("a", Z.String().MinLength(3)).SafeParse("{\"a\":\"x\"}");
+    /// string path = result.Issues[0].EvaluationPath; // "/properties/a/minLength"
+    /// </code>
+    /// </example>
+    public string EvaluationPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Where the failing keyword is in the schema document, as a URI fragment such as <c>#/$defs/a/minLength</c>. For a
+    /// <c>$ref</c> target that is where the target lives, not the path walked to it. JSON Schema 2020-12 output format:
+    /// <c>absoluteKeywordLocation</c>, without the base URI. Empty for <c>invalid_json</c>.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;JsonElement&gt; result = Z.Object().Property("a", Z.String().MinLength(3)).SafeParse("{\"a\":\"x\"}");
+    /// string location = result.Issues[0].SchemaLocation; // "#/properties/a/minLength"
+    /// </code>
+    /// </example>
+    public string SchemaLocation { get; init; } = string.Empty;
+
     /// <summary>The JSON Schema keyword that failed, such as <c>minLength</c>. Null when no keyword applies.</summary>
     public string? Keyword { get; init; }
 

@@ -5,6 +5,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Zorg.Json.Model;
 
 namespace Zorg.Json.Validation;
@@ -30,15 +31,17 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _contains;
     private readonly FrozenDictionary<string, ValidationPlan> _properties;
     private readonly FrozenSet<string>? _namesIgnoringCase;
-    private readonly ImmutableArray<(Regex Pattern, ValidationPlan Plan)> _patternProperties;
+    private readonly ImmutableArray<(string Name, Regex Pattern, ValidationPlan Plan)> _patternProperties;
     private readonly ValidationPlan? _additionalProperties;
+    private readonly string _itemsKeyword;
+    private readonly string _additionalKeyword;
     private readonly string? _closedBy;
     private readonly ValidationPlan? _propertyNames;
     private readonly ImmutableArray<(string Name, ValidationPlan Plan)> _dependentSchemas;
     private readonly ImmutableArray<ValidationPlan> _allOf;
     private readonly ImmutableArray<ValidationPlan> _anyOf;
     private readonly ImmutableArray<ValidationPlan> _oneOf;
-    private readonly FrozenDictionary<string, ValidationPlan>? _discriminated;
+    private readonly FrozenDictionary<string, (ValidationPlan Plan, int Index)>? _discriminated;
     private readonly ValidationPlan? _not;
     private readonly ValidationPlan? _if;
     private readonly ValidationPlan? _then;
@@ -46,6 +49,7 @@ internal sealed class ValidationPlan
     private readonly Dictionary<SchemaNode, ValidationPlan> _plans;
     private readonly ImmutableArray<(string Name, SchemaNode Node)> _defaults;
     private ValidationPlan? _target;
+    private string? _targetLocation;
 
     private ValidationPlan(SchemaNode node, Dictionary<SchemaNode, ValidationPlan> plans)
     {
@@ -69,13 +73,15 @@ internal sealed class ValidationPlan
             || node.MaxLength is not null || !node.Behavior.Normalizers.IsEmpty;
         _prefixItems = List(node.PrefixItems);
         _items = Single(node.Items ?? node.UnevaluatedItems);
+        _itemsKeyword = node.Items is null ? "unevaluatedItems" : "items";
         _contains = Single(node.Contains);
         _properties = node.Properties.Where(property => !property.OutputOnly).ToFrozenDictionary(property => property.Name, property => Get(property.Schema, plans), StringComparer.Ordinal);
         _namesIgnoringCase = node.Behavior.IgnoresNameCase
             ? node.Properties.Select(property => property.Name).ToFrozenSet(StringComparer.OrdinalIgnoreCase)
             : null;
-        _patternProperties = [.. node.PatternProperties.Select(property => (PatternCompiler.Compile(property.Name), Get(property.Schema, plans)))];
+        _patternProperties = [.. node.PatternProperties.Select(property => (property.Name, PatternCompiler.Compile(property.Name), Get(property.Schema, plans)))];
         _additionalProperties = Single(node.AdditionalProperties ?? node.UnevaluatedProperties);
+        _additionalKeyword = node.AdditionalProperties is null ? "unevaluatedProperties" : "additionalProperties";
         _closedBy = node.AdditionalProperties?.BooleanValue == false ? "additionalProperties"
             : node.AdditionalProperties is null && node.UnevaluatedProperties?.BooleanValue == false ? "unevaluatedProperties"
             : null;
@@ -85,7 +91,7 @@ internal sealed class ValidationPlan
         _anyOf = List(node.AnyOf);
         _oneOf = List(node.OneOf);
         _discriminated = DiscriminatorKeys.TryBuild(node, out Dictionary<string, SchemaNode> branches)
-            ? branches.ToFrozenDictionary(branch => branch.Key, branch => Get(branch.Value, plans), StringComparer.Ordinal)
+            ? branches.ToFrozenDictionary(branch => branch.Key, branch => (Get(branch.Value, plans), IndexOf(node.OneOf, branch.Value)), StringComparer.Ordinal)
             : null;
         _not = Single(node.Not);
         _if = Single(node.If);
@@ -96,6 +102,19 @@ internal sealed class ValidationPlan
             .Select(property => (property.Name, property.Schema))];
     }
 
+    private static int IndexOf(ImmutableArray<SchemaNode> nodes, SchemaNode node)
+    {
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            if (ReferenceEquals(nodes[index], node))
+            {
+                return index;
+            }
+        }
+
+        return 0;
+    }
+
     public static ValidationPlan Create(SchemaNode node) => Get(node, new(ReferenceEqualityComparer.Instance));
 
     public JsonElement Run(JsonElement input, ValidationContext context)
@@ -104,7 +123,7 @@ internal sealed class ValidationPlan
         {
             if (!allowed)
             {
-                context.Report(IssueCodes.InvalidValue, "false", "invalid_value.false", "expected", null);
+                context.ReportFalse();
             }
 
             return input;
@@ -121,6 +140,8 @@ internal sealed class ValidationPlan
 
         if (CheckType(value, context))
         {
+            bool settled = false;
+
             CheckValue(value, context);
 
             switch (value.ValueKind)
@@ -134,19 +155,23 @@ internal sealed class ValidationPlan
                     break;
 
                 case JsonValueKind.Array:
-                    value = RunArray(value, context);
+                    value = RunArray(value, context, out settled);
                     break;
 
                 case JsonValueKind.Object:
-                    value = RunObject(value, context);
+                    value = RunObject(value, context, out settled);
                     break;
             }
 
-            value = RunApplicators(value, context);
-
-            if (context.IssueCount == issues)
+            // A size bound that failed has already made this value invalid, and nothing below can undo that.
+            if (!settled)
             {
-                RunRefinements(value, context);
+                value = RunApplicators(value, context);
+
+                if (context.IssueCount == issues)
+                {
+                    RunRefinements(value, context);
+                }
             }
         }
 
@@ -393,9 +418,10 @@ internal sealed class ValidationPlan
         }
     }
 
-    private JsonElement RunArray(JsonElement value, ValidationContext context)
+    private JsonElement RunArray(JsonElement value, ValidationContext context, out bool settled)
     {
         int length = value.GetArrayLength();
+        settled = false;
 
         if (length < _node.MinItems)
         {
@@ -405,6 +431,10 @@ internal sealed class ValidationPlan
         if (length > _node.MaxItems)
         {
             context.Report(IssueCodes.TooBig, "maxItems", "too_big.array", "maximum", _node.MaxItems, _node.MaxItems);
+
+            // Items can't be removed, so the length is final. Walking a huge array would only add issues to a lost cause.
+            settled = true;
+            return value;
         }
 
         if (_contains is not null)
@@ -424,7 +454,18 @@ internal sealed class ValidationPlan
             {
                 int rewrites = context.RewriteCount;
                 context.Push(index);
+
+                if (index < _prefixItems.Length)
+                {
+                    context.Walk("prefixItems", index);
+                }
+                else
+                {
+                    context.Walk(_itemsKeyword);
+                }
+
                 result = plan.Run(item, context);
+                context.Unwalk();
                 context.Pop();
 
                 if (context.RewriteCount != rewrites)
@@ -447,23 +488,53 @@ internal sealed class ValidationPlan
         return finished;
     }
 
+    /// <summary>
+    /// Equal items share a bucket, so each item is only compared with the earlier items of its bucket. The hash is coarse
+    /// on purpose: it must agree with <see cref="JsonEquality"/> (<c>1</c> equals <c>1.0</c>, object order doesn't matter),
+    /// so objects and arrays only hash by kind. A long array of those is still quadratic.
+    /// </summary>
     private static void CheckUnique(JsonElement value, ValidationContext context)
     {
-        List<JsonElement> seen = [];
+        JsonElement[] items = new JsonElement[value.GetArrayLength()];
+        int[] previous = new int[items.Length];
+        Dictionary<int, int> latest = new(items.Length);
         int index = 0;
 
         foreach (JsonElement item in value.EnumerateArray())
         {
-            int first = seen.FindIndex(other => JsonEquality.AreEqual(other, item));
+            items[index] = item;
+            int bucket = Bucket(item);
+            int candidate = latest.GetValueOrDefault(bucket, -1);
+            previous[index] = candidate;
 
-            if (first >= 0)
+            for (; candidate >= 0; candidate = previous[candidate])
             {
-                context.Report(IssueCodes.InvalidValue, "uniqueItems", "invalid_value.unique", "indexes", new[] { first, index }, first, index);
-                return;
+                if (JsonEquality.AreEqual(items[candidate], item))
+                {
+                    context.Report(IssueCodes.InvalidValue, "uniqueItems", "invalid_value.unique", "indexes", new[] { candidate, index }, candidate, index);
+                    return;
+                }
             }
 
-            seen.Add(item);
+            latest[bucket] = index;
             index++;
+        }
+    }
+
+    private static int Bucket(JsonElement item)
+    {
+        try
+        {
+            return item.ValueKind switch
+            {
+                JsonValueKind.String => item.GetString()!.GetHashCode(StringComparison.Ordinal),
+                JsonValueKind.Number => (double.Parse(item.GetRawText(), System.Globalization.CultureInfo.InvariantCulture) + 0.0).GetHashCode(),
+                _ => (int)item.ValueKind,
+            };
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or FormatException or OverflowException)
+        {
+            return 0;
         }
     }
 
@@ -495,8 +566,18 @@ internal sealed class ValidationPlan
         }
     }
 
-    private JsonElement RunObject(JsonElement value, ValidationContext context)
+    private JsonElement RunObject(JsonElement value, ValidationContext context, out bool settled)
     {
+        settled = false;
+
+        // Only Strip removes properties, so without it the final count can't be smaller than the raw one.
+        if (_node.MaxProperties is { } maximum && _node.Behavior.UnknownProperties != UnknownProperties.Strip && value.GetPropertyCount() > maximum)
+        {
+            context.Report(IssueCodes.TooBig, "maxProperties", "too_big.object", "maximum", maximum, maximum);
+            settled = true;
+            return value;
+        }
+
         int count = 0;
         List<string>? unknown = null;
         List<KeyValuePair<string, JsonElement>>? rewritten = null;
@@ -525,18 +606,22 @@ internal sealed class ValidationPlan
 
             if (_properties.TryGetValue(name, out ValidationPlan? plan))
             {
+                context.Walk("properties", name);
                 result = plan.Run(original, context);
+                context.Unwalk();
                 covered = true;
             }
 
-            foreach ((Regex pattern, ValidationPlan patternPlan) in _patternProperties)
+            foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in _patternProperties)
             {
                 try
                 {
                     if (pattern.IsMatch(name))
                     {
                         int before = context.RewriteCount;
+                        context.Walk("patternProperties", patternName);
                         JsonElement candidate = patternPlan.Run(original, context);
+                        context.Unwalk();
                         result = context.RewriteCount != before ? candidate : result;
                         covered = true;
                     }
@@ -562,7 +647,9 @@ internal sealed class ValidationPlan
                 }
                 else if (_additionalProperties is not null)
                 {
+                    context.Walk(_additionalKeyword);
                     result = _additionalProperties.Run(original, context);
+                    context.Unwalk();
                 }
                 else if (_node.Behavior.UnknownProperties == UnknownProperties.Reject)
                 {
@@ -579,7 +666,9 @@ internal sealed class ValidationPlan
 
             if (_propertyNames is not null)
             {
+                context.Walk("propertyNames");
                 _propertyNames.Run(JsonStrings.ToElement(name), context);
+                context.Unwalk();
             }
 
             if (context.RewriteCount != rewrites)
@@ -604,7 +693,9 @@ internal sealed class ValidationPlan
         {
             if (value.TryGetProperty(name, out _))
             {
+                context.Walk("dependentSchemas", name);
                 plan.Run(value, context);
+                context.Unwalk();
             }
         }
 
@@ -700,12 +791,17 @@ internal sealed class ValidationPlan
 
         if (_node.Behavior.Target is not null)
         {
-            Keep(Target().Run(value, context));
+            ValidationPlan target = Target();
+            context.WalkReference(_targetLocation!);
+            Keep(target.Run(value, context));
+            context.Unwalk();
         }
 
-        foreach (ValidationPlan plan in _allOf)
+        for (int index = 0; index < _allOf.Length; index++)
         {
-            Keep(plan.Run(value, context));
+            context.Walk("allOf", index);
+            Keep(_allOf[index].Run(value, context));
+            context.Unwalk();
         }
 
         if (!_anyOf.IsEmpty)
@@ -737,7 +833,9 @@ internal sealed class ValidationPlan
 
             if (branch is not null)
             {
+                context.Walk(fork.HasIssues ? "else" : "then");
                 Keep(branch.Run(value, context));
+                context.Unwalk();
             }
         }
 
@@ -747,14 +845,21 @@ internal sealed class ValidationPlan
     /// <summary>Built on first use: a long chain of references built up front could exhaust the stack.</summary>
     private ValidationPlan Target()
     {
-        if (_target is { } plan)
+        if (Volatile.Read(ref _target) is { } plan)
         {
             return plan;
         }
 
         lock (_plans)
         {
-            return _target ??= Get(_node.Behavior.Target!(), _plans);
+            SchemaNode target = _node.Behavior.Target!();
+            _targetLocation = target.Behavior.Location is { } pointer ? ValidationContext.Fragment(pointer)
+                : _node.Ref is { } reference && reference.StartsWith('#') ? reference
+                : "#";
+
+            ValidationPlan created = Get(target, _plans);
+            Volatile.Write(ref _target, created);
+            return created;
         }
     }
 
@@ -762,10 +867,12 @@ internal sealed class ValidationPlan
     {
         List<ImmutableArray<ParseIssue>> failures = [];
 
-        foreach (ValidationPlan plan in _anyOf)
+        for (int index = 0; index < _anyOf.Length; index++)
         {
             ValidationContext fork = context.Fork();
-            JsonElement result = plan.Run(value, fork);
+            context.Walk("anyOf", index);
+            JsonElement result = _anyOf[index].Run(value, fork);
+            context.Unwalk();
 
             if (!fork.HasIssues)
             {
@@ -787,10 +894,12 @@ internal sealed class ValidationPlan
         JsonElement result = value;
         int matches = 0;
 
-        foreach (ValidationPlan plan in _oneOf)
+        for (int index = 0; index < _oneOf.Length; index++)
         {
             ValidationContext fork = context.Fork();
-            JsonElement candidate = plan.Run(value, fork);
+            context.Walk("oneOf", index);
+            JsonElement candidate = _oneOf[index].Run(value, fork);
+            context.Unwalk();
 
             if (fork.HasIssues)
             {
@@ -828,9 +937,12 @@ internal sealed class ValidationPlan
         if (value.ValueKind == JsonValueKind.Object
             && value.TryGetProperty(discriminator, out JsonElement selected)
             && DiscriminatorKeys.Key(selected) is { } key
-            && _discriminated!.TryGetValue(key, out ValidationPlan? plan))
+            && _discriminated!.TryGetValue(key, out (ValidationPlan Plan, int Index) branch))
         {
-            return plan.Run(value, context);
+            context.Walk("oneOf", branch.Index);
+            JsonElement result = branch.Plan.Run(value, context);
+            context.Unwalk();
+            return result;
         }
 
         string[] options = [.. _discriminated!.Keys.Select(option => option[1..])];

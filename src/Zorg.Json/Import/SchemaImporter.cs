@@ -337,6 +337,11 @@ internal sealed class SchemaImporter
             _ => throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, isBooleanLegal ? "A schema must be an object or a boolean." : "A schema must be an object in draft-04."),
         };
 
+        if (node.BooleanValue is null)
+        {
+            node = node with { Behavior = node.Behavior with { Location = at.Pointer } };
+        }
+
         _nodes.TryAdd(at.Pointer, node);
         _locations.TryAdd(node, at.Pointer);
         return node;

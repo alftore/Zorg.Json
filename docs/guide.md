@@ -371,7 +371,15 @@ Messages are safe to show to clients. For `invalid_json` and `deserialization_fa
 
 `SafeParse` doesn't throw for any input. Exceptions from your own refinements pass through, and sync parsing of a schema with `RefineAsync` throws `InvalidOperationException`.
 
-`issues.ToDictionary()` gives the shape of `ValidationProblemDetails`, and `issues.ToPrettyString()` is for logs.
+`issues.ToDictionary()` gives the shape of `ValidationProblemDetails`, and `issues.ToPrettyString()` is for logs. `issues.ToTree()` nests the issues like the value (Zod's `z.treeifyError`): `tree.Children["items"].Children["0"].Errors`. Children are keyed by property name or array index, with pointer escapes undone.
+
+### Where in the schema
+
+Following the JSON Schema 2020-12 output format, `EvaluationPath` lists the keywords walked to reach the failing one, through `$ref` too, such as `/properties/a/$ref/minLength`. `SchemaLocation` is where that keyword is written in the schema document, as a fragment such as `#/$defs/a/minLength`. For a `$ref` target it is where the target lives, not the path walked. A fluent `Z.Lazy("tree", ...)` counts as `#/$defs/tree`. Both are empty for `invalid_json`. Neither costs anything on success: the strings are built only when an issue is reported.
+
+### Size bounds stop early
+
+An array longer than `maxItems`, or an object with more than `maxProperties` properties, reports `too_big` and its items or properties are not validated, so a huge document can't make the parser do work for a result that is already invalid. `contains`, `uniqueItems` and refinements are skipped for it too, so its issue list holds only the size issue. `maxProperties` counts the final object after `Strip` and `Default`, so a schema that strips unknown properties still checks them.
 
 ## Strings are measured in code points
 
