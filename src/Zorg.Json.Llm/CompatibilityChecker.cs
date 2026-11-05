@@ -43,9 +43,14 @@ internal sealed class CompatibilityChecker(SchemaCapabilities capabilities, stri
                 diagnostic.Location);
         }
 
-        foreach (EmitDiagnostic diagnostic in emitted.Diagnostics.Where(diagnostic => diagnostic.Keyword == "$ref"))
+        foreach (EmitDiagnostic diagnostic in emitted.Diagnostics.Where(diagnostic => diagnostic.Keyword == "$ref" && !LocalReferences.IsDangling(diagnostic)))
         {
             Add(CompatibilitySeverity.Error, CompatibilityIssueKind.Recursion, "$ref", diagnostic.Message);
+        }
+
+        foreach ((string location, string reference) in LocalReferences.Dangling(emitted.Schema))
+        {
+            Add(CompatibilitySeverity.Error, CompatibilityIssueKind.Reference, "$ref", LocalReferences.DanglingMessage(reference), location);
         }
 
         CheckRoot(emitted.Schema);
@@ -58,8 +63,8 @@ internal sealed class CompatibilityChecker(SchemaCapabilities capabilities, stri
 
     private static bool IsType(JsonObject node, string type) => node["type"] switch
     {
-        JsonValue value => string.Equals(value.GetValue<string>(), type, StringComparison.OrdinalIgnoreCase),
-        JsonArray values => values.Any(value => string.Equals(value?.GetValue<string>(), type, StringComparison.OrdinalIgnoreCase)),
+        JsonValue value => string.Equals(LocalReferences.AsString(value), type, StringComparison.OrdinalIgnoreCase),
+        JsonArray values => values.Any(value => string.Equals(LocalReferences.AsString(value), type, StringComparison.OrdinalIgnoreCase)),
         _ => false,
     };
 
@@ -93,7 +98,7 @@ internal sealed class CompatibilityChecker(SchemaCapabilities capabilities, stri
 
         if (capabilities.RequiresAllProperties && node["properties"] is JsonObject properties)
         {
-            HashSet<string?> required = node["required"] is JsonArray names ? [.. names.Select(name => name?.GetValue<string>())] : [];
+            HashSet<string?> required = node["required"] is JsonArray names ? [.. names.Select(LocalReferences.AsString)] : [];
 
             foreach (string name in properties.Select(property => property.Key).Where(name => !required.Contains(name)))
             {
@@ -152,8 +157,8 @@ internal sealed class CompatibilityChecker(SchemaCapabilities capabilities, stri
     private void CheckPattern(JsonObject node, string location)
     {
         if (capabilities.MaxQuantifierBound is { } limit
-            && node["pattern"] is JsonValue pattern
-            && RegexScanner.Scan(pattern.GetValue<string>()).LargestBound > limit)
+            && LocalReferences.AsString(node["pattern"]) is { } pattern
+            && RegexScanner.Scan(pattern).LargestBound > limit)
         {
             Add(CompatibilitySeverity.Warning, CompatibilityIssueKind.RegexComplexity, "pattern", $"A quantifier above {limit.ToString(CultureInfo.InvariantCulture)} may be too complex for {capabilities.Provider}.", location);
         }
@@ -163,7 +168,7 @@ internal sealed class CompatibilityChecker(SchemaCapabilities capabilities, stri
     {
         if (node["properties"] is JsonObject properties)
         {
-            HashSet<string?> required = node["required"] is JsonArray names ? [.. names.Select(name => name?.GetValue<string>())] : [];
+            HashSet<string?> required = node["required"] is JsonArray names ? [.. names.Select(LocalReferences.AsString)] : [];
             counters.Properties += properties.Count;
             counters.Optional += properties.Count(property => !required.Contains(property.Key));
             counters.Unions += properties.Count(property => IsUnion(property.Value));

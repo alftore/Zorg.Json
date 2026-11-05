@@ -44,8 +44,8 @@ internal static class CapabilityRules
         return keyword switch
         {
             "format" => CheckFormat(capabilities, value),
-            "minItems" when capabilities.MaxMinItems is { } limit && value?.GetValue<int>() > limit => KeywordVerdict.Relocate,
-            "pattern" when value is not null && (RegexScanner.Scan(value.GetValue<string>()).Features & capabilities.UnsupportedRegex) != RegexFeatures.None => KeywordVerdict.Relocate,
+            "minItems" when capabilities.MaxMinItems is { } limit && !(value is JsonValue count && count.TryGetValue(out int items) && items <= limit) => KeywordVerdict.Relocate,
+            "pattern" when value is not null && (LocalReferences.AsString(value) is not { } text || (RegexScanner.Scan(text).Features & capabilities.UnsupportedRegex) != RegexFeatures.None) => KeywordVerdict.Relocate,
             "enum" when capabilities.ScalarEnumsOnly && value is JsonArray values && values.Any(IsComplex) => KeywordVerdict.Relocate,
             _ => KeywordVerdict.Allowed,
         };
@@ -53,9 +53,9 @@ internal static class CapabilityRules
 
     private static KeywordVerdict CheckFormat(SchemaCapabilities capabilities, JsonNode? value)
     {
-        string? format = value?.GetValue<string>();
+        string? format = LocalReferences.AsString(value);
 
-        if (format is null || capabilities.Formats is null || capabilities.Formats.Contains(format))
+        if (value is null || capabilities.Formats is null || (format is not null && capabilities.Formats.Contains(format)))
         {
             return KeywordVerdict.Allowed;
         }

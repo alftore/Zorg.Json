@@ -351,7 +351,14 @@ public static class Rewriters
 
     private sealed class Inliner(SchemaNode root, RewriteContext context)
     {
+        // Inlining repeats a definition at every use, so definitions that each use the next twice double at every level.
+        private const int MaxExpansions = 5_000;
+
+        private const int MaxNesting = 200;
+
         private readonly HashSet<SchemaNode> _active = new(ReferenceEqualityComparer.Instance) { root };
+
+        private int _expansions;
 
         public SchemaNode Run() => Walk(root with { Defs = [] });
 
@@ -372,7 +379,13 @@ public static class Rewriters
 
             if (!_active.Add(target))
             {
-                return Reject(node);
+                return Reject(node, tooLarge: false);
+            }
+
+            if (++_expansions > MaxExpansions || _active.Count > MaxNesting)
+            {
+                _active.Remove(target);
+                return Reject(node, tooLarge: true);
             }
 
             SchemaNode expanded = Walk(target with { Defs = [] });
@@ -407,9 +420,13 @@ public static class Rewriters
         private static string Unescape(string name) =>
             name.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
 
-        private SchemaNode Reject(SchemaNode node)
+        private SchemaNode Reject(SchemaNode node, bool tooLarge)
         {
-            context.Report(new EmitDiagnostic("$ref", $"{context.Options.Target.Name} can't state the recursive reference {node.Ref}."));
+            context.Report(new EmitDiagnostic(
+                "$ref",
+                tooLarge
+                    ? $"{context.Options.Target.Name} can't state the reference {node.Ref}, because inlining it makes the schema too large."
+                    : $"{context.Options.Target.Name} can't state the recursive reference {node.Ref}."));
 
             SchemaNode open = SchemaNode.True with
             {
@@ -418,7 +435,7 @@ public static class Rewriters
                 Behavior = node.Behavior with { DefinitionName = null, Target = null },
             };
 
-            return Annotate(open, $"Recursive: must also satisfy {node.Ref}.", context);
+            return Annotate(open, $"{(tooLarge ? "Not inlined" : "Recursive")}: must also satisfy {node.Ref}.", context);
         }
     }
 
@@ -431,16 +448,36 @@ public static class Rewriters
                 return node;
             }
 
+            // The document root is now the wrapper, so a pointer into the original has to go through the property.
+            ImmutableArray<KeyValuePair<string, JsonElement>> lifted = [.. node.Extensions.Where(extension => extension.Key == "definitions")];
+            SchemaNode inner = Retarget(node with { Defs = [], Extensions = [.. node.Extensions.Except(lifted)] });
+
             return SchemaNode.True with
             {
                 BooleanValue = null,
                 Types = JsonTypes.Object,
-                Properties = [new SchemaProperty(RootWrapperProperty, node with { Defs = [] })],
+                Properties = [new SchemaProperty(RootWrapperProperty, inner)],
                 Required = [RootWrapperProperty],
-                Defs = node.Defs,
+                Defs = [.. node.Defs.Select(definition => definition with { Schema = Retarget(definition.Schema) })],
+                Extensions = lifted,
                 Behavior = SchemaBehavior.Empty with { UnknownProperties = UnknownProperties.Reject },
             };
         }
+
+        private static SchemaNode Retarget(SchemaNode node)
+        {
+            SchemaNode mapped = node.MapChildren(Retarget);
+
+            return mapped.Ref is { } reference && PointsIntoRoot(reference)
+                ? mapped with { Ref = $"#/properties/{RootWrapperProperty}{reference["#".Length..]}" }
+                : mapped;
+        }
+
+        private static bool PointsIntoRoot(string reference) =>
+            reference == "#"
+            || (reference.StartsWith("#/", StringComparison.Ordinal)
+                && !reference.StartsWith("#/$defs/", StringComparison.Ordinal)
+                && !reference.StartsWith("#/definitions/", StringComparison.Ordinal));
     }
 
     private sealed class BooleanSchemaRewriter : ISchemaRewriter
