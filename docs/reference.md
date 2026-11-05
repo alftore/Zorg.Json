@@ -130,6 +130,54 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | `Unrepresentable = Callback`, `UnrepresentableHandler` | none. The closest is a custom `override` on `z.toJSONSchema` |
 | `schema.GenerateSample()` (`Zorg.Json.Sampling`) | none. NJsonSchema: `SampleJsonDataGenerator` |
 
+## Differences from Zod
+
+Zorg.Json follows JSON Schema where Zod follows JavaScript, so the same schema can give a different verdict, a different issue or a different value. Each difference below was found by running both libraries over the same schemas and documents (see [tools/zod-compare](../tools/zod-compare/README.md)), and each is on purpose.
+
+### Issue codes
+
+Verdicts agree here. The issues differ, so don't match on Zod's codes.
+
+- **Literals and enums.** Zod reports `invalid_value` for any input that isn't the literal or an enum member. Zorg reports `invalid_type` first when the JSON type is already wrong, and `invalid_value` (`const` or `enum`) when the type is right.
+- **`Z.Never()`.** It is the JSON Schema `false` schema, so it reports `invalid_value`. Zod reports `invalid_type`.
+- **Tuples.** Items beyond a tuple are one `too_big` at the root in Zod. Zorg reports each as `invalid_value` at the item (`items: false`), and also the type errors of the items that are present. For a short tuple Zod reports only `too_small`, and Zorg adds those type errors as well.
+- **Unique items.** `UniqueItems` reports `invalid_value` with the keyword `uniqueItems` and the two indexes, and still checks items that have type errors. A Zod `refine` reports `custom` and runs only on valid items.
+- **Record keys.** A key that fails the key schema is `invalid_key` at the key in Zod. In Zorg it is a `propertyNames` failure, `invalid_format`, at the object.
+- **Unions.** When no branch matches, Zorg reports one `invalid_union` that holds the issues of every branch. Zod reports the issues of the closest branch.
+
+### Integers and exact decimals
+
+Zorg reads a JSON number as an exact decimal, and Zod as a JavaScript double.
+
+- `Z.Integer()` is a `long` and exact: it takes integers up to 2^63-1. `Z.Number<int>()` is an `int`. A value out of range is `invalid_type`. `z.int()` stops at 2^53-1, and `z.int32()` reports `too_big` or `too_small`.
+- `1e400` is infinity in Zod and is refused. A typed Zorg number refuses it too, because it doesn't fit the type. It refuses a non-zero value that rounds to zero as well, such as `1e-400` for a `double`, where Zod reads `0` and accepts it. Otherwise the value you get out would differ from the one that was checked: `Z.Number().Positive()` would accept a number that reads as `0`.
+- A schema imported from JSON Schema has no .NET type, so it stays exact: `1e400` passes `type: number` and `1e-400` is greater than `0`.
+- `MultipleOf` is exact. `1e308` is a multiple of `0.1`, which Zod's floating-point remainder says it isn't.
+
+### Formats
+
+Zod and Zorg accept different sets for the same format. Zod uses its own regular expressions, or the WHATWG URL parser. Zorg follows the RFCs.
+
+| Format | Zorg | Zod |
+|---|---|---|
+| `email` | RFC 5321, with a local part of at most 64 characters | its own pattern |
+| `uri`, `url` | RFC 3986 | `z.url()` uses the WHATWG parser, so it accepts non-ASCII hosts and surrounding spaces |
+| `uuid` | any UUID text | `z.uuid()` checks the version and the variant |
+| `date-time` | RFC 3339, with an offset | `z.iso.datetime()` is UTC only by default |
+| `time` | RFC 3339 `full-time`, with an offset | `z.iso.time()` has no offset |
+| `hostname` | RFC 1123 | its own pattern |
+
+A schema that Zorg emits and that Zod reads back is therefore stricter for `uuid` than the emitted document claims: Zod rejects UUIDs of an unknown version.
+
+### Trim and case mapping
+
+- `Trim` uses the .NET whitespace set, and Zod the JavaScript one. JavaScript trims U+FEFF and keeps U+0085, and .NET does the reverse.
+- `ToUpperInvariant` and `ToLowerInvariant` map one character to one. JavaScript `toUpperCase` and `toLowerCase` use the full mappings, so the German sharp s becomes `SS`, the `fi` ligature becomes `FI`, and a capital I with a dot above becomes `i` plus a combining dot.
+
+### Strip objects inside AllOf
+
+Don't put `Strip` objects in `Z.AllOf`. Every branch sees the original value and rewrites it on its own, so each branch removes the properties that only the other branches know, and the last rewrite wins. With one branch for `a` and another for `b`, `{"a":1,"b":"y"}` comes back as `{"b":"y"}`. Zod merges the outputs of the branches. The parse succeeds and drops data without a warning. Use `.Extend(other)` to put the properties in one object instead.
+
 ## Not in Zorg.Json
 
 `Transform<TOut>`, `Pipe`, `Preprocess` and codecs don't exist. Convert with `ParseResult<T>.Map`, and leave representation changes to System.Text.Json converters. `.brand()` isn't needed: use a `readonly record struct`.

@@ -41,9 +41,9 @@
     {
       "id": "literal-wrong-type-code",
       "category": "issue-codes",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zod reports invalid_value for any input that is not the literal or enum member. Zorg reports invalid_type when the JSON type is already wrong.",
-      "link": "docs/guide.md#issues",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "number-literal5",
         "number-enum",
@@ -59,9 +59,9 @@
     {
       "id": "never-code",
       "category": "issue-codes",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zod reports invalid_type for z.never(). Zorg's Z.Never() is the JSON Schema false schema and reports invalid_value.",
-      "link": "docs/reference.md#types",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "never"
       ],
@@ -104,9 +104,9 @@
     {
       "id": "format-strictness",
       "category": "formats",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zod and Zorg accept different sets for the same format. Zod uses its own regexes or the WHATWG URL parser (z.url accepts non-ASCII hosts and surrounding spaces, z.iso.datetime is UTC-only, z.iso.time has no offset, z.uuid checks version and variant). Zorg follows the RFCs (3986, 3339, 5321 with a 64-character local part, 1123).",
-      "link": "docs/reference.md#strings",
+      "link": "docs/reference.md#formats",
       "cases": [
         "string-email",
         "string-uuid",
@@ -147,9 +147,9 @@
     {
       "id": "integer-range",
       "category": "numbers",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Z.Integer() is a .NET long (Z.Number<int>() an int) and exact: it accepts integers up to 2^63-1 and reports out-of-range as invalid_type. Zod parses to a double, so z.int() stops at 2^53-1 and reports too_big or too_small.",
-      "link": "docs/reference.md#types",
+      "link": "docs/reference.md#integers-and-exact-decimals",
       "cases": [
         "integer",
         "integer-0-100",
@@ -173,9 +173,9 @@
     {
       "id": "int32-range-code",
       "category": "numbers",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Out of range for Z.Number<int>() is invalid_type in Zorg, and too_big or too_small for z.int32() in Zod.",
-      "link": "docs/reference.md#types",
+      "link": "docs/reference.md#integers-and-exact-decimals",
       "cases": [
         "integer-int32"
       ],
@@ -187,9 +187,9 @@
     {
       "id": "decimal-vs-double",
       "category": "numbers",
-      "status": "undocumented-design",
-      "reason": "Zorg reads numbers as exact decimals. Zod sees a JS double, where 1e400 is Infinity (rejected), 1e-400 is 0 and 5e-324 is the smallest double.",
-      "link": "docs/guide.md#what-a-typed-schema-includes",
+      "status": "design",
+      "reason": "Zorg reads numbers as exact decimals, and a typed number refuses one that doesn't fit its type: an overflow, or a non-zero value that rounds to 0. Zod sees a JS double, where 1e400 is Infinity (rejected), 1e-400 is 0 (accepted) and 5e-324 is the smallest double.",
+      "link": "docs/reference.md#integers-and-exact-decimals",
       "cases": [
         "*"
       ],
@@ -223,9 +223,9 @@
     {
       "id": "multipleof-huge-double",
       "category": "numbers",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "1e308 is a multiple of 0.1 to Zorg's exact decimal arithmetic, and not to Zod's float remainder.",
-      "link": "docs/guide.md#what-a-typed-schema-includes",
+      "link": "docs/reference.md#integers-and-exact-decimals",
       "cases": [
         "number-multipleof-tenth"
       ],
@@ -238,9 +238,9 @@
     {
       "id": "trim-whitespace-set",
       "category": "strings",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Trim uses the .NET whitespace set and Zod the JS one: JS trims U+FEFF and keeps U+0085, .NET the reverse.",
-      "link": "docs/reference.md#strings",
+      "link": "docs/reference.md#trim-and-case-mapping",
       "cases": [
         "string-trim-min1",
         "string-trim-max3",
@@ -256,9 +256,9 @@
     {
       "id": "case-mapping",
       "category": "strings",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "ToUpperInvariant and ToLowerInvariant map one character to one, while JS toUpperCase and toLowerCase use full mappings: the German sharp s becomes SS, the fi ligature becomes FI, and capital I with dot above becomes i plus a combining dot.",
-      "link": "docs/reference.md#strings",
+      "link": "docs/reference.md#trim-and-case-mapping",
       "cases": [
         "string-lowercase",
         "string-uppercase"
@@ -302,7 +302,7 @@
       "category": "intersection",
       "status": "design",
       "reason": "With Strip objects in Z.AllOf each branch strips the other branch's properties and the last change wins, so {\"a\":1,\"b\":\"y\"} comes back as {\"b\":\"y\"}. Zod merges the branch outputs. Documented, but it drops data without a warning.",
-      "link": "docs/guide.md#changing-values-while-parsing",
+      "link": "docs/reference.md#strip-objects-inside-allof",
       "cases": [
         "intersection-strip-objects"
       ],
@@ -392,9 +392,9 @@
     {
       "id": "tuple-extra-items-code",
       "category": "issue-codes",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Items beyond a tuple are one too_big at the root for Zod. Zorg reports each as invalid_value at the item (items: false), plus the type errors Zod leaves out.",
-      "link": "docs/reference.md#types",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "tuple-string-int",
         "tuple-three",
@@ -408,9 +408,9 @@
     {
       "id": "tuple-missing-items-reporting",
       "category": "issue-reporting",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zod reports only too_small for a short tuple. Zorg also reports the type errors of the items that are present.",
-      "link": "docs/guide.md#issues",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "tuple-string-int",
         "tuple-three"
@@ -423,9 +423,9 @@
     {
       "id": "unique-items-code",
       "category": "issue-codes",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zorg UniqueItems reports invalid_value (uniqueItems) and also checks it when items have type errors. The Zod side is a refine, which reports custom and runs only on valid items.",
-      "link": "docs/guide.md#issues",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "array-unique"
       ],
@@ -436,9 +436,9 @@
     {
       "id": "record-key-issue",
       "category": "issue-codes",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "A key that fails the key schema is invalid_key at the key for Zod. Zorg reports the propertyNames failure as invalid_format at the object.",
-      "link": "docs/reference.md#objects",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "record-lower-keys"
       ],
@@ -450,9 +450,9 @@
     {
       "id": "union-reporting",
       "category": "issue-reporting",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "When no union branch matches, Zorg reports invalid_union. Zod reports the issues of the closest branch.",
-      "link": "docs/guide.md#issues",
+      "link": "docs/reference.md#issue-codes",
       "cases": [
         "union-objects"
       ],
@@ -465,14 +465,15 @@
       "id": "in-exact-decimal-numbers",
       "part": "interop-in|openapi-read",
       "category": "numbers",
-      "status": "undocumented-design",
-      "reason": "A number schema read from JSON Schema is exact, so 1e400 passes type: number. Zod sees Infinity and rejects it.",
-      "link": "docs/import.md",
+      "status": "design",
+      "reason": "A number schema read from JSON Schema is exact, so 1e400 passes type: number and 1e-400 is greater than 0. Zod sees Infinity and 0, and rejects both.",
+      "link": "docs/reference.md#integers-and-exact-decimals",
       "cases": [
         "*"
       ],
       "docTags": [
-        "overflow"
+        "overflow",
+        "underflow"
       ],
       "kinds": [
         "verdict"
@@ -697,9 +698,9 @@
       "id": "out-zod-uuid-format-strict",
       "part": "interop-out",
       "category": "formats",
-      "status": "undocumented-design",
+      "status": "design",
       "reason": "Zod reads format: uuid as z.uuid(), which checks version and variant, so it rejects UUIDs that Zorg's Uuid() accepts and that the emitted document therefore claims are valid. The guide only warns about validators that ignore format.",
-      "link": "docs/guide.md#the-input-guarantee",
+      "link": "docs/reference.md#formats",
       "cases": [
         "string-guid"
       ],

@@ -86,6 +86,9 @@ internal sealed class ValidationContext
     /// <summary>Set once evaluation stopped early, whichever context hit the limit.</summary>
     public bool LimitExceeded => _limits.Exceeded;
 
+    /// <summary>The evaluation steps spent so far, whichever context spent them.</summary>
+    public long Steps => _limits.TotalSteps;
+
     public int RewriteCount { get; private set; }
 
     public int Depth { get; private set; }
@@ -137,6 +140,17 @@ internal sealed class ValidationContext
     /// <summary>A regular expression took too long. That ends the parse as a failure, like any other limit.</summary>
     public void ReportTimeout(string keyword, string pattern) =>
         Exceed(IssueCodes.InvalidFormat, keyword, "invalid_format.timeout", "pattern", pattern, pattern);
+
+    /// <summary>
+    /// A string or property name has a lone surrogate or bytes that aren't UTF-8, so a schema can't read it. That ends the
+    /// parse as a failure: a branch that reads it can't count as "not a string" under <c>not</c> or <c>oneOf</c>.
+    /// </summary>
+    public void ReportUndecodable(string keyword) =>
+        Exceed(IssueCodes.InvalidValue, keyword, "invalid_value.string", "expected", "string");
+
+    /// <summary>A value would cost too much to process, such as a text that Unicode normalization handles in quadratic time. That ends the parse as a failure.</summary>
+    public void ReportTooComplex(string keyword) =>
+        Exceed(IssueCodes.InvalidValue, keyword, "invalid_value.complex", "maximum", _limits.MaxTotalSteps);
 
     /// <summary>Spends steps on work that isn't a schema evaluation, such as compiling a pattern the input supplied.</summary>
     public bool Spend(long steps)

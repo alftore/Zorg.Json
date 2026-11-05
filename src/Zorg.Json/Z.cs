@@ -237,6 +237,7 @@ public static class Z
     public static JsonValueSchema DiscriminatedUnion(string discriminator, params ReadOnlySpan<ISchema> branches)
     {
         ArgumentNullException.ThrowIfNull(discriminator);
+        Validation.Arguments.WellFormed(discriminator);
         return new(new SchemaNode { OneOf = Nodes(branches), Behavior = new SchemaBehavior { Discriminator = discriminator } });
     }
 
@@ -257,6 +258,7 @@ public static class Z
     public static JsonValueSchema Lazy(string name, Func<ISchema> schema)
     {
         ArgumentNullException.ThrowIfNull(name);
+        Validation.Arguments.WellFormed(name);
         ArgumentNullException.ThrowIfNull(schema);
         Lazy<SchemaNode> target = new(() => schema().ToNode());
 

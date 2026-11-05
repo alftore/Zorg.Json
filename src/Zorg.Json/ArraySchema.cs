@@ -92,8 +92,8 @@ public sealed class ArraySchema<TItem> : Schema<IReadOnlyList<TItem>, ArraySchem
     /// when given.
     /// </summary>
     /// <param name="schema">The schema to match.</param>
-    /// <param name="minimum">How many items must match. Default: 1.</param>
-    /// <param name="maximum">How many items may match. Default: no limit.</param>
+    /// <param name="minimum">How many items must match, not negative. Default: 1.</param>
+    /// <param name="maximum">How many items may match, not negative. Default: no limit.</param>
     /// <returns>A new schema.</returns>
     /// <example>
     /// <code>
@@ -104,6 +104,17 @@ public sealed class ArraySchema<TItem> : Schema<IReadOnlyList<TItem>, ArraySchem
     public ArraySchema<TItem> Contains(ISchema schema, int? minimum = null, int? maximum = null)
     {
         ArgumentNullException.ThrowIfNull(schema);
+
+        if (minimum is { } least)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(least, nameof(minimum));
+        }
+
+        if (maximum is { } most)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(most, nameof(maximum));
+        }
+
         return With(Node with { Contains = schema.ToNode(), MinContains = minimum, MaxContains = maximum });
     }
 

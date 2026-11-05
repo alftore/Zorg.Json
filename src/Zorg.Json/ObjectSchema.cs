@@ -83,6 +83,7 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
     public TSelf PatternProperty(string pattern, ISchema schema)
     {
         ArgumentNullException.ThrowIfNull(pattern);
+        Validation.Arguments.WellFormed(pattern);
         ArgumentNullException.ThrowIfNull(schema);
         _ = Validation.PatternCompiler.Compile(pattern);
         return With(Node with { PatternProperties = Node.PatternProperties.Add(new SchemaProperty(pattern, schema.ToNode())) });
@@ -146,6 +147,13 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
     public TSelf DependentRequired(string property, params ReadOnlySpan<string> required)
     {
         ArgumentNullException.ThrowIfNull(property);
+        Validation.Arguments.WellFormed(property);
+
+        foreach (string name in required)
+        {
+            Validation.Arguments.WellFormed(name, nameof(required));
+        }
+
         return With(Node with { DependentRequired = Node.DependentRequired.Add(KeyValuePair.Create(property, ImmutableArray.Create(required))) });
     }
 
@@ -217,6 +225,7 @@ public sealed class ObjectSchema : ObjectSchemaBase<JsonElement, ObjectSchema>
     public ObjectSchema Property(string name, ISchema schema)
     {
         ArgumentNullException.ThrowIfNull(name);
+        Validation.Arguments.WellFormed(name);
         ArgumentNullException.ThrowIfNull(schema);
         return ReplaceProperty(name, schema.ToNode());
     }

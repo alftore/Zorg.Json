@@ -70,7 +70,7 @@ internal sealed class FluentGenerator(Random random)
 
     private static readonly string[] Strings =
     [
-        "", "a", "A", " a ", "ab", "abc", "web", "WEB", "x-a", "circle", "k", "😀", "é", "é", "ß", "İ", "\ud800", "a\udc00",
+        "", "a", "A", " a ", "ab", "abc", "web", "WEB", "x-a", "circle", "k", "😀", "é", "é", "ß", "İ",
         "ann@example.com", "2026-11-03", "2eb8aa08-aa98-11ea-b4aa-73b441d16380", "\u0000", "   ",
     ];
 
@@ -79,7 +79,7 @@ internal sealed class FluentGenerator(Random random)
         0, 1, -1, 0.1, 0.3, 2, 5, 10, 50, 100, 1e10, 2147483647, 255, 0.5, -0.0, 1e300, 3, 7,
     ];
 
-    private static readonly string[] Keys = ["a", "b", "name", "count", "k", "kind", "x-a", "x-b", "", "__proto__", "\ud800", "😀", "radius"];
+    private static readonly string[] Keys = ["a", "b", "name", "count", "k", "kind", "x-a", "x-b", "", "__proto__", "😀", "radius"];
 
     private readonly Random _random = random;
     private int _lazy;
@@ -122,8 +122,7 @@ internal sealed class FluentGenerator(Random random)
 
     private string Pick(string[] pool)
     {
-        string choice = pool[_random.Next(pool.Length)];
-        return KnownBugs.Included || !KnownBugs.HasLoneSurrogateChar(choice) ? choice : "a";
+        return pool[_random.Next(pool.Length)];
     }
 
     private T Pick<T>(IReadOnlyList<T> pool) => pool[_random.Next(pool.Count)];
@@ -418,8 +417,8 @@ internal sealed class FluentGenerator(Random random)
                         code += ".UniqueItems()";
                         break;
                     case 4:
-                        int? minimum = Chance(50) ? _random.Next(KnownBugs.Included ? -1 : 0, 3) : null;
-                        int? maximum = Chance(50) ? _random.Next(KnownBugs.Included ? -1 : 0, 3) : null;
+                        int? minimum = Chance(50) ? _random.Next(-1, 3) : null;
+                        int? maximum = Chance(50) ? _random.Next(-1, 3) : null;
                         schema = schema.Contains(item.Schema, minimum, maximum);
                         code += $".Contains({item.Code}, {minimum}, {maximum})";
                         break;

@@ -39,6 +39,13 @@ internal sealed class SampleGenerator
     /// <summary>After this many characters of JSON have been built, the search stops, so that nested minimums can't exhaust memory.</summary>
     private const long MaxProduced = 8_000_000;
 
+    /// <summary>
+    /// After this many evaluation steps over all the candidates that were rejected, the search stops. Each check has a budget
+    /// of its own, and a schema of nested unions can use it up in full. A rejection builds an issue for each step, which
+    /// costs memory, while a candidate that passes costs none.
+    /// </summary>
+    private const long MaxSteps = 50_000;
+
     private const int RootAttempts = 8;
 
     /// <summary>What a typed <see cref="DateTime"/>, <see cref="TimeOnly"/> or <see cref="TimeSpan"/> reads. Their nodes are plain strings.</summary>
@@ -58,6 +65,8 @@ internal sealed class SampleGenerator
     private int _checks;
     private int _rejected;
     private long _produced;
+    private long _steps;
+    private bool _exhausted;
 
     public SampleGenerator(ISchema schema, SampleOptions options)
     {
@@ -68,7 +77,7 @@ internal sealed class SampleGenerator
         _itemCount = Math.Clamp(options.ArrayItemCount, 0, MaxCollection);
     }
 
-    private bool OutOfWork => _rejected + _views.Merges > HardWorkLimit || _produced > MaxProduced;
+    private bool OutOfWork => _rejected + _views.Merges > HardWorkLimit || _produced > MaxProduced || _steps > MaxSteps || _exhausted;
 
     public SampleResult Run()
     {
@@ -204,6 +213,13 @@ internal sealed class SampleGenerator
         ValidationContext context = new(value);
         Plan(node).Run(value, context);
         issues = context.IssueCount;
+
+        if (issues > 0)
+        {
+            _steps += context.Steps;
+        }
+
+        _exhausted |= context.LimitExceeded;
         _rejected += Math.Min(issues, 1);
         return issues == 0;
     }

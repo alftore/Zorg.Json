@@ -126,6 +126,7 @@ internal sealed class SchemaImporter
 
         JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
         JsonElement root = schema.Clone();
+
         JsonSchemaImportDialect dialect = DetectDialect(root, effective);
         bool isAssumed = effective.DefaultDialect == JsonSchemaImportDialect.Draft202012 && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("$schema", out _));
         SchemaImporter importer = new(root, effective, dialect, isAssumed, homes: null);
@@ -165,7 +166,8 @@ internal sealed class SchemaImporter
         }
         catch (JsonException exception)
         {
-            string code = IsWellFormed(schema) ? JsonSchemaImportCodes.LimitExceeded : JsonSchemaImportCodes.InvalidSchema;
+            // Too deep is the only failure that a reader with no depth limit survives and one with the limit doesn't.
+            string code = Reads(schema, int.MaxValue) && !Reads(schema, depth) ? JsonSchemaImportCodes.LimitExceeded : JsonSchemaImportCodes.InvalidSchema;
             throw new JsonSchemaImportException(code, string.Empty, exception.Message, exception);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
@@ -175,11 +177,17 @@ internal sealed class SchemaImporter
         }
     }
 
-    private static bool IsWellFormed(string schema)
+    /// <summary>Reads tokens only, without building a document, so that a schema nested 100,000 levels deep is refused quickly.</summary>
+    private static bool Reads(string schema, int maxDepth)
     {
         try
         {
-            JsonElement.Parse(schema, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = int.MaxValue });
+            Utf8JsonReader reader = new(System.Text.Encoding.UTF8.GetBytes(schema), new JsonReaderOptions { MaxDepth = maxDepth });
+
+            while (reader.Read())
+            {
+            }
+
             return true;
         }
         catch (JsonException)
