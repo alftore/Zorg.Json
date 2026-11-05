@@ -970,6 +970,61 @@ public sealed class ReviewRegressionTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
     }
 
+    [Theory]
+    [InlineData(20)]
+    [InlineData(40)]
+    public void A_schema_that_uses_itself_twice_per_level_is_refused_by_emission(int levels)
+    {
+        ISchema schema = Z.String();
+
+        for (int level = 0; level < levels; level++)
+        {
+            schema = Z.AllOf(schema, schema);
+        }
+
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => ((JsonValueSchema)schema).Emit());
+
+        Assert.Contains("Reused = ReusedSchemaHandling.Ref", exception.Message, StringComparison.Ordinal);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
+    }
+
+    [Fact]
+    public void A_shared_schema_that_is_named_is_emitted_once()
+    {
+        ISchema schema = Z.String().Named("leaf");
+
+        for (int level = 0; level < 40; level++)
+        {
+            schema = Z.AllOf(schema, schema).Named($"level{level}");
+        }
+
+        JsonObject emitted = ((JsonValueSchema)schema).ToJsonSchema(new JsonSchemaOptions { Reused = ReusedSchemaHandling.Ref });
+
+        Assert.True(emitted.ToJsonString().Length < 20_000);
+    }
+
+    [Fact]
+    public void Sampling_nested_unsatisfiable_branches_is_cheap()
+    {
+        ISchema schema = Z.String().MinLength(5).MaxLength(2);
+
+        for (int level = 0; level < 25; level++)
+        {
+            schema = Z.AnyOf(schema, schema);
+        }
+
+        long before = GC.GetTotalAllocatedBytes(precise: true);
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        SampleResult sample = ((JsonValueSchema)schema).GenerateSample();
+
+        Assert.False(sample.IsValid);
+        Assert.True(GC.GetTotalAllocatedBytes(precise: true) - before < 600_000_000, $"{(GC.GetTotalAllocatedBytes(precise: true) - before) / 1_000_000} MB");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), watch.Elapsed.ToString());
+    }
+
     private static class Ast
     {
         public static readonly ObjectSchema Schema = Z.Object()

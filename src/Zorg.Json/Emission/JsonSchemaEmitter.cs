@@ -28,7 +28,14 @@ internal sealed class JsonSchemaEmitter
         _profile = options.Target;
     }
 
+    /// <summary>
+    /// The most subschemas one emission writes. A schema that uses the same schema twice, twenty times over, would write
+    /// a million copies of it, so the walk stops long before that.
+    /// </summary>
+    private const int MaxEmitted = 100_000;
+
     private List<JsonObject>? _fragments;
+    private int _emitted;
 
     private bool IsInput => _options.Direction == SchemaDirection.Input;
 
@@ -262,6 +269,13 @@ internal sealed class JsonSchemaEmitter
 
     private JsonObject EmitFields(SchemaNode source, string location)
     {
+        if (++_emitted > MaxEmitted)
+        {
+            throw new InvalidOperationException(
+                $"The schema writes more than {MaxEmitted} subschemas, usually because a schema is used twice inside itself, again and again. "
+                + "Name the shared schema with .Named(\"...\") and set JsonSchemaOptions.Reused = ReusedSchemaHandling.Ref, so that it's written once and referred to.");
+        }
+
         List<string> notes = [];
         SchemaNode written = DropUnwritable(source, notes, location);
         SchemaNode node = IsInput ? RelocateCounts(Relocate(written, notes, location), notes, location) : written;

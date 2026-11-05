@@ -86,6 +86,9 @@ internal sealed class ValidationContext
     /// <summary>Set once evaluation stopped early, whichever context hit the limit.</summary>
     public bool LimitExceeded => _limits.Exceeded;
 
+    /// <summary>The evaluation steps spent so far, whichever context spent them.</summary>
+    public long Steps => _limits.TotalSteps;
+
     public int RewriteCount { get; private set; }
 
     public int Depth { get; private set; }
