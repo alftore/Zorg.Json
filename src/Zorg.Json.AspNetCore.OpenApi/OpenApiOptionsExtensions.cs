@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,6 +51,9 @@ public static class OpenApiOptionsExtensions
         private const string JsonContentType = "application/json";
         private const string ComponentPrefix = "#/components/schemas/";
         private const string OutputPrefix = "Output.";
+
+        // The text of each component by id, per document, to tell a shared name from a clash.
+        private static readonly ConditionalWeakTable<OpenApiDocument, Dictionary<string, string>> Components = new();
 
         public Task TransformAsync(OpenApiOperation operation, OpenApiOperationTransformerContext context, CancellationToken cancellationToken)
         {
@@ -110,9 +114,20 @@ public static class OpenApiOptionsExtensions
             foreach ((string name, JsonObject definition) in emitted.Definitions)
             {
                 string id = namePrefix + name;
+                string text = definition.ToJsonString();
+                Dictionary<string, string> known = Components.GetOrCreateValue(document);
 
-                if (document.Components?.Schemas?.ContainsKey(id) != true)
+                if (known.TryGetValue(id, out string? existing))
                 {
+                    if (existing != text)
+                    {
+                        throw new InvalidOperationException(
+                            $"Two different schemas are named '{name}'. Give one a different Named() so the OpenAPI components don't collide.");
+                    }
+                }
+                else if (document.Components?.Schemas?.ContainsKey(id) != true)
+                {
+                    known[id] = text;
                     document.AddComponent<IOpenApiSchema>(id, Parse(definition, document));
                 }
             }
