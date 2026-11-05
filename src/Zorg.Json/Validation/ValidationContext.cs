@@ -352,6 +352,22 @@ internal sealed class ValidationContext
             return string.Empty;
         }
 
+        if (_isFork)
+        {
+            // A long name or a deep path is copied into every issue, so a fork pays for the text it builds.
+            long cost = _path.Count + 1;
+
+            foreach (PathSegment segment in _path)
+            {
+                cost += segment.Name?.Length ?? 10;
+            }
+
+            if ((_limits.PathBudget -= cost) < 0)
+            {
+                return string.Empty;
+            }
+        }
+
         StringBuilder pointer = new();
 
         foreach (PathSegment segment in _path)

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace Zorg.Json.Validation;
@@ -21,37 +22,58 @@ internal static class JsonStrings
         return JsonElement.Parse(text.ToString(), ReaderOptions);
     }
 
-    /// <summary>Copies raw text, because <see cref="JsonElement.WriteTo"/> throws on a lone surrogate.</summary>
+    /// <summary>
+    /// Copies the raw UTF-8, because <see cref="JsonElement.WriteTo"/> throws on a lone surrogate and
+    /// <see cref="JsonElement.GetRawText"/> throws on bytes that aren't UTF-8.
+    /// </summary>
     public static JsonElement ToArray(IEnumerable<JsonElement> items)
     {
-        StringBuilder text = new("[");
+        List<byte> bytes = [(byte)'['];
         bool first = true;
 
         foreach (JsonElement item in items)
         {
-            text.Append(first ? "" : ",").Append(item.GetRawText());
+            if (!first)
+            {
+                bytes.Add((byte)',');
+            }
+
+            bytes.AddRange(JsonMarshal.GetRawUtf8Value(item));
             first = false;
         }
 
-        return JsonElement.Parse(text.Append(']').ToString(), ReaderOptions);
+        bytes.Add((byte)']');
+        return Parse(bytes);
     }
 
-    /// <summary>Copies raw text, because <see cref="JsonElement.WriteTo"/> throws on a lone surrogate.</summary>
+    /// <summary>Copies the raw UTF-8, like <see cref="ToArray"/>.</summary>
     public static JsonElement ToObject(IEnumerable<KeyValuePair<string, JsonElement>> properties)
     {
-        StringBuilder text = new("{");
+        List<byte> bytes = [(byte)'{'];
+        StringBuilder name = new();
         bool first = true;
 
-        foreach ((string name, JsonElement value) in properties)
+        foreach ((string key, JsonElement value) in properties)
         {
-            text.Append(first ? "" : ",");
-            JsonText.AppendLiteral(text, name);
-            text.Append(':').Append(value.GetRawText());
+            if (!first)
+            {
+                bytes.Add((byte)',');
+            }
+
+            name.Clear();
+            JsonText.AppendLiteral(name, key);
+            bytes.AddRange(Encoding.UTF8.GetBytes(name.ToString()));
+            bytes.Add((byte)':');
+            bytes.AddRange(JsonMarshal.GetRawUtf8Value(value));
             first = false;
         }
 
-        return JsonElement.Parse(text.Append('}').ToString(), ReaderOptions);
+        bytes.Add((byte)'}');
+        return Parse(bytes);
     }
+
+    private static JsonElement Parse(List<byte> bytes) =>
+        JsonElement.Parse(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes), ReaderOptions);
 
     /// <summary>JSON Schema measures strings in Unicode code points, not UTF-16 units.</summary>
     public static int CodePointCount(string value)

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -9,12 +8,14 @@ namespace Zorg.Json.Validation;
 /// <summary>
 /// Works out whether a <c>oneOf</c> can be selected by one property. It can when every branch requires the property
 /// with its own values, so that at most one branch can ever match. Otherwise the union behaves like a plain <c>oneOf</c>.
+/// Values are compared as JSON values, so <c>1</c> and <c>1.0</c> are the same value, as they are for <c>oneOf</c>.
 /// </summary>
 internal static class DiscriminatorKeys
 {
-    public static bool TryBuild(SchemaNode node, out Dictionary<string, SchemaNode> branches)
+    public static bool TryBuild(SchemaNode node, out List<(JsonElement Value, SchemaNode Branch)> entries)
     {
-        branches = new(StringComparer.Ordinal);
+        entries = [];
+        Dictionary<int, List<JsonElement>> seen = [];
 
         if (node.Behavior.Discriminator is not { } discriminator || node.OneOf.IsEmpty)
         {
@@ -41,26 +42,29 @@ internal static class DiscriminatorKeys
 
             foreach (JsonElement value in values)
             {
-                if (Key(value) is not { } key || !branches.TryAdd(key, branch))
+                int hash = JsonEquality.Hash(value);
+
+                if (!seen.TryGetValue(hash, out List<JsonElement>? bucket))
+                {
+                    seen[hash] = bucket = [];
+                }
+
+                if (bucket.Exists(other => JsonEquality.AreEqual(other, value)))
                 {
                     return false;
                 }
+
+                bucket.Add(value);
+                entries.Add((value, branch));
             }
         }
 
         return true;
     }
 
-    /// <summary>Strings are prefixed, so that the string <c>"1"</c> and the number <c>1</c> stay apart.</summary>
-    public static string? Key(JsonElement value)
-    {
-        if (value.ValueKind != JsonValueKind.String)
-        {
-            return $"#{value.GetRawText()}";
-        }
-
-        return $"${JsonText.GetString(value)}";
-    }
+    /// <summary>The text of a discriminator value for a message: a string as itself, anything else as JSON.</summary>
+    public static string Describe(JsonElement value) =>
+        value.ValueKind == JsonValueKind.String ? JsonText.GetString(value) : value.GetRawText();
 
     private static SchemaNode Resolve(SchemaNode node)
     {
