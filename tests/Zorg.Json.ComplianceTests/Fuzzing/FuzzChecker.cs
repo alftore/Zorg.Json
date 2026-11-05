@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Json.Schema;
 using Zorg.Json.Emission;
 using Zorg.Json.Sampling;
@@ -82,11 +83,14 @@ internal sealed class FuzzFindings
     }
 }
 
-internal readonly record struct OracleSchema(string Name, JsonSchema? Schema, bool UsesRegex, bool UsesLength);
+internal readonly record struct OracleSchema(string Name, JsonSchema? Schema, bool UsesRegex, bool UsesLength, bool UsesFormat, bool Unevaluated, bool UsesMultipleOf, bool UsesBackreference);
 
 /// <summary>Runs every check on one schema against a set of documents.</summary>
-internal sealed class FuzzChecker(FuzzFindings findings)
+internal sealed partial class FuzzChecker(FuzzFindings findings)
 {
+    [GeneratedRegex(@"\\\\[1-9]|\\\\k<")]
+    private static partial Regex Backreference();
+
     public FuzzFindings Findings => findings;
 
     private static readonly (JsonSchemaProfile Profile, string Name)[] Targets =
@@ -139,7 +143,15 @@ internal sealed class FuzzChecker(FuzzFindings findings)
 
                         if (text is not null && direction == SchemaDirection.Input && policy == UnrepresentablePolicy.Annotate && profile != JsonSchemaProfile.OpenApi30)
                         {
-                            oracles.Add(new(name, Oracle.TryBuild((JsonObject)JsonNode.Parse(text)!), Uncertain(text, built), text.Contains("Length\"", StringComparison.Ordinal)));
+                            oracles.Add(new(
+                                name,
+                                Oracle.TryBuild((JsonObject)JsonNode.Parse(text)!),
+                                text.Contains("\"pattern\"", StringComparison.Ordinal) || text.Contains("\"patternProperties\"", StringComparison.Ordinal),
+                                text.Contains("Length\"", StringComparison.Ordinal),
+                                IsImport(built) && text.Contains("\"format\"", StringComparison.Ordinal),
+                                IsImport(built) && built.Code.Contains("unevaluated", StringComparison.Ordinal),
+                                text.Contains("\"multipleOf\"", StringComparison.Ordinal),
+                                Backreference().IsMatch(text)));
                         }
                     }
                     catch (Exception exception)
@@ -304,18 +316,20 @@ internal sealed class FuzzChecker(FuzzFindings findings)
 
     private void CheckOracles(List<OracleSchema> oracles, JsonElement instance, string kind, string document, string where)
     {
-        foreach ((string name, JsonSchema? schema, bool usesRegex, bool usesLength) in oracles)
+        bool plainText = document.All(char.IsAscii) && !document.Contains("\\u", StringComparison.Ordinal);
+
+        foreach ((string name, JsonSchema? schema, bool usesRegex, bool usesLength, bool usesFormat, bool unevaluated, bool usesMultipleOf, bool usesBackreference) in oracles)
         {
             if (schema is null)
             {
                 continue;
             }
 
-            bool? verdict = Oracle.Accepts(schema, instance);
+            bool? verdict = Oracle.Accepts(schema, instance, usesMultipleOf);
 
             if (verdict is null)
             {
-                findings.Count(Oracle.IsSafeForOracle(instance.GetRawText()) ? "oracle threw on an instance" : "oracle skipped an unsafe number");
+                findings.Count(Oracle.IsSafeForOracle(instance.GetRawText(), usesMultipleOf) ? "oracle threw on an instance" : "oracle skipped an unsafe number");
             }
             else if (verdict.Value)
             {
@@ -323,9 +337,19 @@ internal sealed class FuzzChecker(FuzzFindings findings)
             }
             else
             {
-                if (usesRegex || (usesLength && !document.All(char.IsAscii)) || (usesLength && document.Contains("\\u", StringComparison.Ordinal)))
+                // Regex and length counting differ only outside plain text, and in backreferences: in ECMA-262 a forward one
+                // matches empty, and .NET's fails. Zorg enforces format, so ask again with format enforced.
+                if (Oracle.IsBeyondItsPrecision(instance.GetRawText()))
+                {
+                    findings.Count("oracle rejected a number beyond its precision");
+                }
+                else if (((usesRegex || usesLength) && !plainText) || usesBackreference || unevaluated)
                 {
                     findings.Note(kind, $"{name} rejects {document} | {where}");
+                }
+                else if (usesFormat && Oracle.Accepts(schema, instance, usesMultipleOf, assertFormat: true) != false)
+                {
+                    findings.Count("format enforced on both sides settled a rejection");
                 }
                 else
                 {
@@ -339,10 +363,7 @@ internal sealed class FuzzChecker(FuzzFindings findings)
     /// JsonSchema.Net uses .NET regexes, not ECMA-262, and treats format as a note. Imported schemas keep their own format
     /// keywords in places the fluent API drops them from, so both can disagree without a bug in Zorg.
     /// </summary>
-    private static bool Uncertain(string emitted, Built built) =>
-        emitted.Contains("\"pattern\"", StringComparison.Ordinal)
-        || emitted.Contains("\"patternProperties\"", StringComparison.Ordinal)
-        || (built.Code.StartsWith("import", StringComparison.Ordinal) && (emitted.Contains("\"format\"", StringComparison.Ordinal) || built.Code.Contains("unevaluated", StringComparison.Ordinal)));
+    private static bool IsImport(Built built) => built.Code.StartsWith("import", StringComparison.Ordinal);
 
     private static JsonElement? TryElement(string text)
     {

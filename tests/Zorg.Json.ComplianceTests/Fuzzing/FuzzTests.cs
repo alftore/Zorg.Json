@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,6 +47,25 @@ public sealed class FuzzTests
         JsonObject document = generator.Root();
         ImportAndCheck(document.ToJsonString(), generator.Dialect, random, checker, $"import:{iteration}");
     });
+
+    /// <summary>
+    /// A long run reported this once, at seed 20261105, import iteration 189485: the emitted schema rejected the sample.
+    /// It never came back, under replay, the old source, the old global registry or 300,000 parallel runs, and the cause is unknown.
+    /// </summary>
+    [Fact]
+    public void The_document_from_the_unexplained_fuzz_report_keeps_its_sample()
+    {
+        const string Document = """
+            {"x-unknown":1e999,"oneOf":[{}],"$ref":"#/$defs/d0","type":["array","array"],"$schema":"http://json-schema.org/draft-04/schema#",
+             "$defs":{"d0":{"const":1,"$defs":{"d0":{}},"required":["a/b","~"],"type":"object","prefixItems":[{"maxItems":0},{"uniqueItems":false}]},"d1":{}}}
+            """;
+        const string Sample = """{"a/b":{},"~":{}}""";
+        JsonValueSchema schema = Z.FromJsonSchema(Document, new JsonSchemaImportOptions { DefaultDialect = JsonSchemaImportDialect.Draft06 });
+        using JsonDocument instance = JsonDocument.Parse(Sample);
+
+        Assert.True(schema.SafeParse(Sample).IsSuccess);
+        Assert.True(Oracle.Accepts(Oracle.TryBuild(schema.ToJsonSchema())!, instance.RootElement, usesMultipleOf: false));
+    }
 
     [Fact]
     public void Hostile_schema_documents_import_cleanly()
