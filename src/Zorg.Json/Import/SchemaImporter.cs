@@ -72,14 +72,18 @@ internal sealed class SchemaImporter
     private readonly Dictionary<(string Resource, string Name), string> _anchors = [];
     private readonly List<PendingReference> _references = [];
     private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
+    private readonly HashSet<(string Resource, string Pointer)> _offTree = [];
+    private readonly Dictionary<(string Resource, string Pointer), string>? _homes;
     private int _count;
     private long _patternLength;
 
-    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect)
+    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, Dictionary<(string Resource, string Pointer), string>? homes)
     {
         _root = root;
         _options = options;
         _dialect = dialect;
+        _homes = homes;
     }
 
     private enum Position
@@ -103,11 +107,24 @@ internal sealed class SchemaImporter
 
         JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
         JsonElement root = schema.Clone();
-        SchemaImporter importer = new(root, effective, DetectDialect(root, effective));
+        JsonSchemaImportDialect dialect = DetectDialect(root, effective);
+        SchemaImporter importer = new(root, effective, dialect, homes: null);
+        SchemaNode node = importer.Run();
 
-        SchemaNode node = importer.Build(root, new Scope(string.Empty, string.Empty, 0, IsWalked: true));
-        importer.ResolveReferences();
-        importer.CheckInPlaceGraph();
+        if (importer._offTree.Count == 0)
+        {
+            return node;
+        }
+
+        // A second pass, now that it's known which targets lie outside the walked tree. Each gets a home under $defs.
+        return new SchemaImporter(root, effective, dialect, importer.NameHomes()).Run();
+    }
+
+    private SchemaNode Run()
+    {
+        SchemaNode node = Build(_root, new Scope(string.Empty, string.Empty, 0, IsWalked: true));
+        ResolveReferences();
+        CheckInPlaceGraph();
         return node;
     }
 
@@ -383,6 +400,12 @@ internal sealed class SchemaImporter
 
         _nodes.TryAdd(at.Pointer, node);
         _locations.TryAdd(node, at.Pointer);
+
+        if (at.IsWalked)
+        {
+            _walked.Add(at.Pointer);
+        }
+
         return node;
     }
 
@@ -426,7 +449,7 @@ internal sealed class SchemaImporter
             behavior = _options.Formats == FormatHandling.AnnotateOnly ? behavior with { FormatIsAnnotation = true } : behavior;
         }
 
-        ImmutableArray<SchemaProperty> defs = keywords.Named(IsLegacy ? "definitions" : "$defs", scope);
+        ImmutableArray<SchemaProperty> defs = WithHomes(keywords.Named(IsLegacy ? "definitions" : "$defs", scope), scope, at);
         (ImmutableArray<SchemaNode> prefixItems, SchemaNode? items) = ReadItems(keywords, scope);
         (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> dependentRequired, ImmutableArray<SchemaProperty> dependentSchemas) = ReadDependencies(keywords, scope);
         bool rejectsEverything = keywords.Peek("enum", out JsonElement declared) && declared.ValueKind == JsonValueKind.Array && declared.GetArrayLength() == 0;
@@ -500,12 +523,13 @@ internal sealed class SchemaImporter
             Behavior = behavior,
         };
 
-        return node with { Extensions = ReadExtensions(values, at, keywords.IgnoresSiblings, hasDefinitions: !defs.IsEmpty) };
+        return node with { Extensions = ReadExtensions(values, at, keywords.IgnoresSiblings) };
     }
 
     private (string? Id, string? Anchor, Scope Scope) ReadIdentity(Keywords keywords, Scope at)
     {
-        string? id = keywords.String(IsDraft04 ? "id" : "$id");
+        string keyword = IsDraft04 ? "id" : "$id";
+        string? id = keywords.String(keyword);
         string? anchor = keywords.String("$anchor");
         Scope scope = at;
 
@@ -524,18 +548,31 @@ internal sealed class SchemaImporter
                 throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword("$id"), "$id can't have a non-empty fragment. Use $anchor.");
             }
 
-            if (fragment == 0 && hasFragment)
+            // Before 2019-09 a fragment names the schema, and the rest is its base. 2020-12 spells the two separately.
+            if (hasFragment)
             {
-                anchor = id[1..];
-                id = null;
+                anchor = id[(fragment + 1)..];
+
+                if (!IsAnchorName(anchor))
+                {
+                    throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(keyword), $"\"{id}\" has a fragment that isn't a plain name.");
+                }
             }
-            else if (fragment != 0 && at.Pointer.Length > 0)
+
+            if (fragment != 0 && at.Pointer.Length > 0)
             {
                 scope = at with { Resource = at.Pointer };
             }
+
+            id = fragment == 0 && hasFragment ? null : hasFragment ? id[..fragment] : id;
         }
 
-        if (anchor is not null && at.IsWalked && !_anchors.TryAdd((scope.Resource, anchor), at.Pointer))
+        // Only the walked tree has anchors to refer to, and a second one of the same name would clash when read again.
+        if (!at.IsWalked)
+        {
+            anchor = null;
+        }
+        else if (anchor is not null && !_anchors.TryAdd((scope.Resource, anchor), at.Pointer))
         {
             throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, $"The anchor \"{anchor}\" is declared twice.");
         }
@@ -653,7 +690,7 @@ internal sealed class SchemaImporter
         return (required.ToImmutable(), schemas.ToImmutable());
     }
 
-    private ImmutableArray<KeyValuePair<string, JsonElement>> ReadExtensions(Dictionary<string, JsonElement> remaining, Scope at, bool ignoresSiblings, bool hasDefinitions)
+    private ImmutableArray<KeyValuePair<string, JsonElement>> ReadExtensions(Dictionary<string, JsonElement> remaining, Scope at, bool ignoresSiblings)
     {
         ImmutableArray<KeyValuePair<string, JsonElement>>.Builder extensions = ImmutableArray.CreateBuilder<KeyValuePair<string, JsonElement>>(remaining.Count);
 
@@ -677,7 +714,7 @@ internal sealed class SchemaImporter
                 throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"The keyword {keyword} is unknown.");
             }
 
-            extensions.Add(KeyValuePair.Create(IsInert(keyword, ignoresSiblings, hasDefinitions) ? InertPrefix + keyword : keyword, value));
+            extensions.Add(KeyValuePair.Create(IsInert(keyword, ignoresSiblings) ? InertPrefix + keyword : keyword, value));
         }
 
         return extensions.ToImmutable();
@@ -691,19 +728,14 @@ internal sealed class SchemaImporter
         }
     }
 
-    private bool IsInert(string keyword, bool ignoresSiblings, bool hasDefinitions)
+    private bool IsInert(string keyword, bool ignoresSiblings)
     {
         if (!IsLegacy)
         {
             return false;
         }
 
-        // Documents often point into $defs under draft-07, so the name stays unless definitions takes its place.
-        if (keyword == "$defs")
-        {
-            return hasDefinitions;
-        }
-
+        // $defs is among the 2020-12 keywords, so it stays inert here. A $ref into it gets a home of its own.
         return keyword == "$schema"
             || Only202012.Contains(keyword)
             || (_dialect is JsonSchemaImportDialect.Draft06 or JsonSchemaImportDialect.Draft04 && SinceDraft07.Contains(keyword))
@@ -753,12 +785,18 @@ internal sealed class SchemaImporter
     /// <summary>
     /// Before 2019-09 a pointer can spell keywords the model doesn't keep, such as <c>definitions</c>. The node's
     /// <c>$ref</c> has to name the location the emitter will write, so each token is translated by its position.
+    /// A target that isn't in the walked tree has no such location, so it's named by its home under <c>$defs</c> instead.
     /// </summary>
     private string NormalizeReference(string reference, Scope scope)
     {
         if (!IsLegacy || !reference.StartsWith("#/", StringComparison.Ordinal))
         {
             return reference;
+        }
+
+        if (_homes is not null && _homes.TryGetValue((scope.Resource, PointerOf(reference, scope.Resource)!), out string? home))
+        {
+            return "#/$defs/" + Uri.EscapeDataString(Escape(home));
         }
 
         JsonElement? current = Walk(scope.Resource);
@@ -775,13 +813,91 @@ internal sealed class SchemaImporter
                 _ => (token, Position.Opaque),
             };
 
-            // The keyword moves under the prefix when it's emitted, so a pointer into it has to follow.
-            written.Add(position == Position.Schema && IsInert(name, ignoresSiblings: false, hasDefinitions: false) ? InertPrefix + spelled : spelled);
+            written.Add(spelled);
             position = next;
             current = current is { } element ? Step(element, name) : null;
         }
 
         return string.Join('/', written);
+    }
+
+    /// <summary>The pointer from the document root that a <c>$ref</c> names, or null for an anchor.</summary>
+    private static string? PointerOf(string reference, string resource)
+    {
+        string fragment = Uri.UnescapeDataString(reference[1..]);
+        return fragment.Length == 0 || fragment[0] == '/' ? resource + fragment : null;
+    }
+
+    /// <summary>Adds the homes of the targets that lie outside the walked tree, to the <c>$defs</c> of the resource they were named from.</summary>
+    private ImmutableArray<SchemaProperty> WithHomes(ImmutableArray<SchemaProperty> defs, Scope scope, Scope at)
+    {
+        if (_homes is null || scope.Resource != at.Pointer)
+        {
+            return defs;
+        }
+
+        ImmutableArray<SchemaProperty>.Builder all = defs.ToBuilder();
+
+        foreach (((string resource, string pointer), string name) in _homes.Where(home => home.Key.Resource == at.Pointer).OrderBy(home => home.Key.Pointer, StringComparer.Ordinal))
+        {
+            all.Add(new SchemaProperty(name, Build(Walk(pointer)!.Value, new Scope(pointer, resource, 0, IsWalked: false))));
+        }
+
+        return all.ToImmutable();
+    }
+
+    private Dictionary<(string Resource, string Pointer), string> NameHomes()
+    {
+        Dictionary<(string Resource, string Pointer), string> homes = [];
+
+        foreach (IGrouping<string, string> group in _offTree.GroupBy(target => target.Resource, target => target.Pointer))
+        {
+            HashSet<string> taken = DefinitionNames(group.Key);
+            int number = 0;
+
+            foreach (string pointer in group.Order(StringComparer.Ordinal))
+            {
+                string name = Candidate(group.Key, pointer) ?? $"target-{++number}";
+                string unique = name;
+
+                for (int suffix = 2; !taken.Add(unique); suffix++)
+                {
+                    unique = $"{name}-{suffix.ToString(CultureInfo.InvariantCulture)}";
+                }
+
+                homes[(group.Key, pointer)] = unique;
+            }
+        }
+
+        return homes;
+    }
+
+    /// <summary>A name for <c>/$defs/x</c> or <c>/components/schemas/x</c>, which is where documents usually keep their targets.</summary>
+    private static string? Candidate(string resource, string pointer)
+    {
+        string[] tokens = pointer[resource.Length..].Split('/');
+
+        return tokens switch
+        {
+            ["", "$defs", var name] => Unescape(name),
+            ["", "components", "schemas", var name] => Unescape(name),
+            _ => null,
+        };
+    }
+
+    private HashSet<string> DefinitionNames(string resource)
+    {
+        HashSet<string> names = new(StringComparer.Ordinal);
+
+        if (Walk(resource) is { ValueKind: JsonValueKind.Object } element && element.TryGetProperty("definitions", out JsonElement definitions) && definitions.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty property in definitions.EnumerateObject())
+            {
+                names.Add(Name(property, resource));
+            }
+        }
+
+        return names;
     }
 
     private JsonElement? Walk(string pointer)
@@ -815,15 +931,21 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" isn't local. Only #, JSON Pointers and $anchor names can be resolved, and nothing is fetched.");
         }
 
-        string fragment = Uri.UnescapeDataString(reference.Text[1..]);
         string resource = reference.At.Resource;
-        string? pointer = fragment.Length == 0 || fragment[0] == '/'
-            ? resource + fragment
-            : _anchors.GetValueOrDefault((resource, fragment));
+        string? pointer = PointerOf(reference.Text, resource);
 
         if (pointer is null)
         {
-            throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"No $anchor is named \"{fragment}\".");
+            string name = Uri.UnescapeDataString(reference.Text[1..]);
+
+            pointer = _anchors.GetValueOrDefault((resource, name))
+                ?? throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"No $anchor is named \"{name}\".");
+        }
+
+        // Not a keyword Zorg walks, but a pointer may still lead there. The text there is written again under $defs.
+        if (IsLegacy && !_walked.Contains(pointer) && Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False })
+        {
+            _offTree.Add((resource, pointer));
         }
 
         if (_nodes.TryGetValue(pointer, out SchemaNode? node))
@@ -831,7 +953,6 @@ internal sealed class SchemaImporter
             return node;
         }
 
-        // Not a keyword Zorg walks, but a pointer may still lead there.
         if (Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False } target)
         {
             return Build(target, new Scope(pointer, resource, 0, IsWalked: false));
