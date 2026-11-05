@@ -103,7 +103,7 @@ public abstract class Schema<T> : ISchema, ISampleTarget
             return InvalidJson(new JsonException("The element has no value."));
         }
 
-        ValidationContext context = new();
+        ValidationContext context = new(json);
         JsonElement value = Plan.Run(json, context);
 
         if (context.HasPendingRefinements)
@@ -160,7 +160,7 @@ public abstract class Schema<T> : ISchema, ISampleTarget
             return InvalidJson(new JsonException("The element has no value."));
         }
 
-        ValidationContext context = new();
+        ValidationContext context = new(json);
         JsonElement value = Plan.Run(json, context);
 
         if (!context.HasIssues)

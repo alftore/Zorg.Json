@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,8 +16,12 @@ internal sealed class ValidationContext
 {
     private const int MaxDepth = 512;
 
-    /// <summary>Union branches re-evaluate the same value, which is exponential for a recursive schema.</summary>
-    private const int MaxSpeculativeSteps = 20_000_000;
+    /// <summary>
+    /// Union branches re-evaluate the same value, which is exponential for a recursive schema. The budget
+    /// grows with the document, so that a small hostile one stops quickly and a large honest one has room.
+    /// </summary>
+    private const long BaseSpeculativeSteps = 100_000;
+    private const long SpeculativeStepsPerByte = 16;
 
     private readonly List<PathSegment> _path;
     private readonly List<Step> _steps;
@@ -26,7 +31,12 @@ internal sealed class ValidationContext
     private List<PendingRefinement>? _pending;
 
     public ValidationContext()
-        : this([], [], new Limits(), isFork: false)
+        : this([], [], new Limits { MaxSpeculativeSteps = BaseSpeculativeSteps }, isFork: false)
+    {
+    }
+
+    public ValidationContext(JsonElement document)
+        : this([], [], new Limits { MaxSpeculativeSteps = BaseSpeculativeSteps + (SpeculativeStepsPerByte * JsonMarshal.GetRawUtf8Value(document).Length) }, isFork: false)
     {
     }
 
@@ -65,11 +75,11 @@ internal sealed class ValidationContext
             return false;
         }
 
-        if (_isFork && ++_limits.SpeculativeSteps > MaxSpeculativeSteps)
+        if (_isFork && ++_limits.SpeculativeSteps > _limits.MaxSpeculativeSteps)
         {
             Depth--;
             _limits.Exceeded = true;
-            Report(IssueCodes.InvalidValue, "anyOf", "invalid_value.complex", "maximum", MaxSpeculativeSteps);
+            Report(IssueCodes.InvalidValue, "anyOf", "invalid_value.complex", "maximum", _limits.MaxSpeculativeSteps);
             return false;
         }
 
@@ -360,7 +370,9 @@ internal sealed class ValidationContext
 
     private sealed class Limits
     {
-        public int SpeculativeSteps { get; set; }
+        public required long MaxSpeculativeSteps { get; init; }
+
+        public long SpeculativeSteps { get; set; }
 
         public bool Exceeded { get; set; }
 

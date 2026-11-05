@@ -229,6 +229,25 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void Union_budget_stops_a_small_hostile_document_quickly()
+    {
+        string json = string.Concat(Enumerable.Repeat("""{ "n": """, 60)) + "1" + new string('}', 60);
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(Ast.Schema.SafeParse(json).IsSuccess);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Union_budget_leaves_room_for_a_large_honest_document()
+    {
+        string json = $"[{string.Join(',', Enumerable.Range(0, 200_000))}]";
+
+        Assert.True(Z.Array(Z.AnyOf(Z.String(), Z.Boolean(), Z.Integer())).SafeParse(json).IsSuccess);
+    }
+
+    [Fact]
     public void Case_variants_of_a_property_cannot_bypass_its_rules()
     {
         ObjectSchema<Plain> schema = Schema.Object<Plain>().Passthrough().Property(p => p.Age, s => s.Maximum(5));
