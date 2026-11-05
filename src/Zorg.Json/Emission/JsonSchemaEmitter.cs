@@ -530,8 +530,8 @@ internal sealed class JsonSchemaEmitter
 
     /// <summary>int32 and friends are OpenAPI's formats. JSON Schema doesn't define them.</summary>
     private string? NumberFormat(SchemaNode node) =>
-        _profile.Dialect is JsonSchemaDialect.OpenApi30 or JsonSchemaDialect.OpenApi31 && node.Behavior.NumberType is { Length: > 0 } format
-            ? format
+        _profile.Dialect is JsonSchemaDialect.OpenApi30 or JsonSchemaDialect.OpenApi31 && node.Behavior.NumberType is "int32" or "int64" or "float" or "double"
+            ? node.Behavior.NumberType
             : null;
 
     private string? CoercionPattern(SchemaNode node)

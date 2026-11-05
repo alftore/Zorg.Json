@@ -127,6 +127,14 @@ public sealed class DialectOutputTests
     }
 
     [Fact]
+    public void Imported_draft04_integers_have_no_openapi_format()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{ "$schema": "http://json-schema.org/draft-04/schema#", "type": "integer" }""");
+
+        Assert.False(schema.ToJsonSchema(new() { Target = JsonSchemaProfile.OpenApi31 }).ContainsKey("format"));
+    }
+
+    [Fact]
     public void Default_value_attribute_becomes_the_default_keyword()
     {
         JsonObject properties = Schema.Object<Configured>(WebWithStringEnums()).ToJsonSchema()["properties"]!.AsObject();

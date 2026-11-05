@@ -169,7 +169,35 @@ public sealed class StructuredGuaranteeTests
         _ => throw new NotSupportedException(schema.GetType().Name),
     };
 
-    private static JsonSchema FromText(System.Text.Json.Nodes.JsonObject schema) => JsonSchema.FromText(schema.ToJsonString());
+    private static JsonSchema FromText(System.Text.Json.Nodes.JsonObject schema)
+    {
+        RemoveInertKeywords(schema);
+        return JsonSchema.FromText(schema.ToJsonString());
+    }
+
+    /// <summary>JsonSchema.Net's Draft-07 dialect refuses unknown keywords, which the draft says to ignore.</summary>
+    private static void RemoveInertKeywords(System.Text.Json.Nodes.JsonNode? node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject schema)
+        {
+            foreach (string keyword in schema.Select(entry => entry.Key).Where(key => key.StartsWith("x-inert-", StringComparison.Ordinal)).ToArray())
+            {
+                schema.Remove(keyword);
+            }
+
+            foreach ((string _, System.Text.Json.Nodes.JsonNode? child) in schema)
+            {
+                RemoveInertKeywords(child);
+            }
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray list)
+        {
+            foreach (System.Text.Json.Nodes.JsonNode? child in list)
+            {
+                RemoveInertKeywords(child);
+            }
+        }
+    }
 
     /// <summary>The seed is fixed, so a failure reproduces.</summary>
     private static IEnumerable<string> Documents()
