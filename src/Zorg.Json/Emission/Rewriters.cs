@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Zorg.Json.Model;
@@ -598,13 +599,55 @@ public static class Rewriters
         /// <summary>Whether a keyword this rewriter moves is anywhere in the subschema, which is then left as it is.</summary>
         private bool Holds(SchemaNode subschema)
         {
-            HashSet<SchemaNode> seen = new(ReferenceEqualityComparer.Instance);
+            if (_held.TryGetValue(subschema, out object? known))
+            {
+                return (bool)known;
+            }
+
+            bool result = Walk(subschema, out HashSet<SchemaNode> walked);
+
+            // A walk that found nothing has judged everything it reached; one that found something has judged only where it began.
+            if (result)
+            {
+                _held.TryAdd(subschema, true);
+            }
+            else
+            {
+                foreach (SchemaNode node in walked)
+                {
+                    _held.TryAdd(node, false);
+                }
+            }
+
+            return result;
+        }
+
+        private readonly ConditionalWeakTable<SchemaNode, object> _held = new();
+
+        private bool Walk(SchemaNode subschema, out HashSet<SchemaNode> seen)
+        {
+            seen = new(ReferenceEqualityComparer.Instance);
             Stack<SchemaNode> pending = new([subschema]);
 
             while (pending.TryPop(out SchemaNode? next))
             {
                 if (!seen.Add(next))
                 {
+                    continue;
+                }
+
+                if (seen.Count > SchemaExactness.MaxWalked)
+                {
+                    throw SchemaExactness.TooLarge();
+                }
+
+                if (_held.TryGetValue(next, out object? judged))
+                {
+                    if ((bool)judged)
+                    {
+                        return true;
+                    }
+
                     continue;
                 }
 

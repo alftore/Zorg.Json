@@ -212,11 +212,17 @@ internal readonly struct ExactNumber
         long cost = dividendChunks * divisorChunks;
         long shift = _exponent - divisor._exponent;
 
-        // Reading the divisor, and raising ten to the shift modulo the divisor: one multiplication and reduction per bit of the shift,
-        // each about the square of the divisor's size. An eighth of a step is roughly what one chunk product takes.
+        // A shift below zero is refused before the divisor is read. Otherwise reading it costs about the square of its size, and so
+        // does each of the multiplications that raise ten to the shift modulo the divisor, one per bit of the shift, an eighth of a
+        // step being roughly what one chunk product takes.
+        if (shift >= 0)
+        {
+            cost += divisorChunks * divisorChunks;
+        }
+
         if (shift > 0)
         {
-            cost += ((System.Numerics.BitOperations.Log2((ulong)shift) + 2) * divisorChunks * divisorChunks / 8) + (divisorChunks * divisorChunks);
+            cost += (System.Numerics.BitOperations.Log2((ulong)shift) + 2) * divisorChunks * divisorChunks / 8;
         }
 
         return cost;

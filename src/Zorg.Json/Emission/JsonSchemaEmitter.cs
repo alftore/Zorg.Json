@@ -301,6 +301,12 @@ internal sealed class JsonSchemaEmitter
             _resource = outerResource;
             _definitions[name] = definition;
 
+            // The schema this copies is still written, inside the list-and-schema dependency, and a second id would name two schemas alike.
+            if (definition is JsonObject copy && IsMerged(record.Reference, record.Resource))
+            {
+                copy.Remove("$id");
+            }
+
             definitions[name] = definition;
             owner[_profile.DefinitionsKeyword] = definitions;
             places[record.Reference] = $"#/{_profile.DefinitionsKeyword}/{FragmentEscape(Escape(name))}";
@@ -563,6 +569,12 @@ internal sealed class JsonSchemaEmitter
 
         // A reference inside a resource with an id of its own is read from that resource, not from the document.
         Resource? outerResource = _resource;
+        // OpenAPI 3.0 has no $id, so an imported root that sits in another schema loses its id and is moved like any other.
+        if (IsOpenApi30 && source.Id is { } own && !own.StartsWith('#') && source.Behavior.Location is { Length: 0 } && (location.Length > 0 || _options.ReferencePrefix is not null))
+        {
+            source = source with { Id = null };
+        }
+
         Resource? opened = source.Id is { } id && !id.StartsWith('#') ? new Resource(location) : null;
 
         if (opened is not null)

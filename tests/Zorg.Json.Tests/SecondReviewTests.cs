@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Xunit;
 using Zorg.Json.Sampling;
@@ -125,5 +126,38 @@ public sealed class SecondReviewTests
 
         Assert.True(result.IsValid, string.Join("; ", result.Issues.Select(issue => issue.Message)));
         Assert.Equal(System.Text.Json.JsonValueKind.String, result.Value.ValueKind);
+    }
+
+    // Last round: work a hostile document can ask for is charged to the parse.
+
+    [Fact]
+    public void A_number_beyond_range_is_not_scanned_against_an_enum_that_holds_no_numbers()
+    {
+        string values = string.Join(',', Enumerable.Range(0, 20_000).Select(index => $"\"v{index}\""));
+        JsonValueSchema schema = Import("{\"items\":{\"anyOf\":[{\"enum\":[" + values + "]},{\"type\":\"number\"}]}}");
+        string document = "[" + string.Join(',', Enumerable.Repeat("1e99999999999999999999", 20_000)) + "]";
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.True(schema.SafeParse(document).IsSuccess);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void A_number_beyond_range_scanned_against_a_large_enum_of_numbers_is_charged()
+    {
+        string values = string.Join(',', Enumerable.Range(0, 20_000));
+        JsonValueSchema schema = Import("{\"items\":{\"enum\":[" + values + "]}}");
+        string document = "[" + string.Join(',', Enumerable.Repeat("1e99999999999999999999", 20_000)) + "]";
+
+        Assert.Contains(schema.SafeParse(document).Issues, issue => issue.Code == IssueCodes.InvalidValue);
+    }
+
+    [Fact]
+    public void A_very_long_divisor_that_is_read_for_every_number_is_charged()
+    {
+        JsonValueSchema schema = Import("{\"items\":{\"multipleOf\":" + new string('7', 20_000) + "}}");
+        string document = "[" + string.Join(',', Enumerable.Repeat("7", 40_000)) + "]";
+
+        Assert.Contains(schema.SafeParse(document).Issues, issue => issue.Code == IssueCodes.InvalidValue);
     }
 }

@@ -31,6 +31,7 @@
   - A number with an exponent of more than 18 digits can't be hashed to find an equal number, so `uniqueItems` (with two items or more), a large `enum` and a discriminated union now fail the parse when they hold or are given one, where before `[1e999999999999999999, 0.1e1000000000000000000]` passed `uniqueItems` and `Z.Not(...)` over a large `enum` accepted such a number.
   - `multipleOf` charges for raising ten to a long exponent modulo the divisor. A 1,001-digit divisor under `not` used to take seconds over a 105 KB array and now fails the parse with the limit.
   - `GenerateSample` no longer ends the process on a schema nested 100,000 levels deep.
+  - A number beyond the range of the hash is no longer compared with every value of an `enum` that holds no numbers, and the comparison is charged where it holds some. Reading a divisor that has as many digits as the number it divides is charged to `multipleOf` as well.
 - More emission fixes:
   - An imported schema with an `$id` of its own is a resource again when it sits in another schema: its `$defs` and references are left as they are, instead of being moved to the document, which left the references dangling. A reference inside such a resource to a place the dialect doesn't write (`#/if` in OpenAPI 3.0) is written again under the definitions of that resource.
   - A moved target is named `target-1` and so on, but never after a definition the document has, which it used to replace.
@@ -38,6 +39,9 @@
   - A draft-07 dependency written as a list and a schema together is one value, so a reference to its schema alone is written again instead of pointing at both.
   - A `definitions` keyword and a `$defs` keyword with one name no longer share a pointer in draft-07.
   - `RelocateToDescription` follows `$ref` and `Z.Lazy` when it decides whether a `not`, `if`, `oneOf` or `contains` with `maxContains` holds a keyword it moves, so a definition used under `not` is not loosened.
+  - The search for a keyword to move, and the one for a subschema that isn't exact, stop at 100,000 subschemas and throw `InvalidOperationException`, where a `Z.Lazy` that builds a new schema each time it is read never ended. The first also remembers what it found, so a schema used by thousands of definitions is walked once.
+  - OpenAPI 3.0 has no `$id`, so an import with one that sits in another schema loses it there and its references and `$defs` are moved like any other. A copy of a draft-07 dependency that was written as a list and a schema together no longer repeats the `$id` of the schema it copies.
+  - Known limits, listed in the import guide: references into the `allOf` of a schema with a `$ref` in draft-07, a root with an `$id` moved into another schema's properties, and references to unwritten places with `ReferencePrefix`.
 - Docs: "Differences from Zod" in the reference lists the differences that are on purpose, including the loss of data from `Strip` objects in `Z.AllOf`.
 - Packages now link to the repository.
 - Exceeding an evaluation limit now fails the whole parse. Before, a branch under `if`, `oneOf` or `contains` that ran out of budget, or a regex that timed out under `not` or `if`, counted as "didn't match" and could turn into acceptance. There is now a budget over all steps as well as the speculative one, and the guide lists the limits.

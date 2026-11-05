@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Zorg.Json.Model;
@@ -13,6 +14,13 @@ namespace Zorg.Json.Emission;
 /// </summary>
 internal static class SchemaExactness
 {
+    /// <summary>The most subschemas one walk visits. A reference that builds a fresh schema each time it is followed never ends otherwise.</summary>
+    internal const int MaxWalked = 100_000;
+
+    internal static InvalidOperationException TooLarge() => new(
+        $"The schema reaches more than {MaxWalked} subschemas, usually because a Z.Lazy builds a new schema each time it is read. "
+        + "Build the schema once, store it in a field, and refer to that.");
+
     /// <summary>
     /// Tells whether every subschema reachable from <paramref name="node"/> is exact. The walk is iterative, because a chain of
     /// references can be longer than the stack allows, and it follows each subschema once, so a cycle ends the walk.
@@ -54,6 +62,11 @@ internal static class SchemaExactness
                 if (!visited.Add(node))
                 {
                     continue;
+                }
+
+                if (visited.Count > MaxWalked)
+                {
+                    throw TooLarge();
                 }
 
                 if (!IsLocallyExact(node, dialect))

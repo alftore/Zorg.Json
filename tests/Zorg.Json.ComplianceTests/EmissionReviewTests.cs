@@ -650,4 +650,68 @@ public sealed class EmissionReviewTests
 
         AssertAgrees(Document, Import(Document), """{"a":1,"r":{"b":"s"}}""", """{"a":"s"}""", """{"r":{"b":1}}""");
     }
+
+    // Last round: the walks that look for a keyword to move, or for an inexact subschema, are bounded and remember what they found.
+
+    private static JsonValueSchema FreshLazy() => Z.Lazy("n", () => Z.Object().Property("next", FreshLazy()));
+
+    [Theory]
+    [InlineData(SchemaDirection.Input)]
+    [InlineData(SchemaDirection.Output)]
+    public void A_lazy_that_builds_a_new_schema_each_time_is_refused_instead_of_walked_forever(SchemaDirection direction)
+    {
+        JsonSchemaOptions options = new()
+        {
+            Direction = direction,
+            Target = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("minLength")),
+        };
+
+        Assert.Throws<InvalidOperationException>(() => Z.Not(FreshLazy()).ToJsonSchema(options));
+    }
+
+    [Fact]
+    public void A_keyword_search_remembers_what_it_found_in_a_schema_that_many_others_refer_to()
+    {
+        const int Count = 3000;
+        StringBuilder builder = new("{\"$ref\":\"#/$defs/big\",\"$defs\":{\"big\":{\"properties\":{");
+        builder.Append(string.Join(',', Enumerable.Range(0, Count).Select(index => $"\"p{index}\":{{\"$ref\":\"#/$defs/d{index}\"}}")));
+        builder.Append("}}");
+
+        for (int index = 0; index < Count; index++)
+        {
+            builder.Append($",\"d{index}\":{{\"not\":{{\"$ref\":\"#/$defs/big\"}}}}");
+        }
+
+        builder.Append("}}");
+        JsonSchemaOptions options = new() { Target = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("minLength")) };
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.NotNull(Import(builder.ToString()).ToJsonSchema(options));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void A_copy_of_a_merged_dependency_does_not_repeat_its_id()
+    {
+        const string Document = """{"dependentRequired":{"a":["b"]},"dependentSchemas":{"a":{"$id":"http://e.com/n","type":"object"}},"properties":{"p":{"$ref":"#/dependentSchemas/a"}}}""";
+        string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).ToJsonString();
+
+        Assert.Equal(1, text.Split("\"$id\"").Length - 1);
+        Assert.True(Accepts(text, JsonSchemaProfile.Draft07, """{"p":{}}"""), text);
+        Assert.False(Accepts(text, JsonSchemaProfile.Draft07, """{"p":1}"""), text);
+    }
+
+    [Fact]
+    public void An_imported_id_does_not_make_a_resource_in_open_api_30()
+    {
+        const string Document = """{"$id":"http://e.com/a","$defs":{"s":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/s"}}}""";
+        EmitResult result = Z.Object().Property("x", Import(Document)).Emit(new JsonSchemaOptions { Target = JsonSchemaProfile.OpenApi30 });
+        string text = result.Schema.ToJsonString();
+
+        // Every reference points at a definition that is there, so the schema reads back.
+        Assert.Contains("\"$ref\":\"#/$defs/", text, StringComparison.Ordinal);
+        Assert.NotNull(Import(text, new JsonSchemaImportOptions { DefaultDialect = JsonSchemaImportDialect.OpenApi30 }));
+        Assert.True(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":"s"}}"""), text);
+        Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":1}}"""), text);
+    }
 }

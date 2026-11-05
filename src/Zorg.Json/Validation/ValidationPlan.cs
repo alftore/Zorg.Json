@@ -425,6 +425,7 @@ internal sealed class ValidationPlan
         private EnumTable(ImmutableArray<JsonElement> values)
         {
             _values = values;
+            HoldsNumbers = values.Any(allowed => allowed.ValueKind is JsonValueKind.Number or JsonValueKind.Array or JsonValueKind.Object);
             HoldsText = values.Any(allowed => allowed.ValueKind is JsonValueKind.String or JsonValueKind.Array or JsonValueKind.Object);
             Texts = [.. values.Select(allowed => allowed.GetRawText())];
             Message = string.Join(", ", Texts.Take(MaxListedValues)) + (Texts.Length > MaxListedValues ? $", and {Texts.Length - MaxListedValues} more" : string.Empty);
@@ -461,6 +462,9 @@ internal sealed class ValidationPlan
 
         public string Message { get; }
 
+        /// <summary>True when a value might be equal to one of the numbers, or to a container that may hold numbers.</summary>
+        private bool HoldsNumbers { get; }
+
         public bool Contains(JsonElement value, ValidationContext context)
         {
             if (_index is null)
@@ -473,7 +477,8 @@ internal sealed class ValidationPlan
             // A number the hash can't place may equal any allowed number, so it is compared with all of them.
             if (outOfRange)
             {
-                return Scan(_values, value, context);
+                // Only a number or a container can be equal to it, and comparing it with every value is charged to the parse.
+                return HoldsNumbers && context.Spend((_values.Length / 16) + 1) && Scan(_values, value, context);
             }
 
             return (_index.TryGetValue(hash, out List<JsonElement>? bucket) && Scan(bucket, value, context))
