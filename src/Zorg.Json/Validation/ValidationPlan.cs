@@ -56,7 +56,7 @@ internal sealed class ValidationPlan
         ImmutableArray<ValidationPlan> List(ImmutableArray<SchemaNode> children) => [.. children.Select(child => Get(child, plans))];
 
         _node = node;
-        _pattern = node.Pattern is null ? null : PatternCompiler.Compile(node.Pattern);
+        _pattern = node.Behavior.PatternRegex ?? (node.Pattern is null ? null : PatternCompiler.Compile(node.Pattern));
         _format = node.Behavior.FormatIsAnnotation ? null : StringFormats.Find(node.Format);
         _minimum = Number(node.Minimum);
         _maximum = Number(node.Maximum);

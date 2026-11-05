@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Immutable;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -49,6 +50,12 @@ public sealed record SchemaBehavior
 
     /// <summary>Set when the serializer matches names ignoring case, so <c>AGE</c> would bind to the property <c>age</c>.</summary>
     internal bool IgnoresNameCase { get; init; }
+
+    /// <summary>The regular expression a caller supplied to <c>Pattern(Regex)</c>. Validation uses it as given.</summary>
+    internal Regex? PatternRegex { get; init; }
+
+    /// <summary>Set when <see cref="PatternRegex"/> has no ECMA-262 spelling, so <c>pattern</c> can't be emitted.</summary>
+    internal bool PatternIsUnstated { get; init; }
 
     internal Func<string, bool>? NumberCheck { get; init; }
 

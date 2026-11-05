@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Json.Schema;
@@ -11,7 +12,22 @@ namespace Zorg.Json.ComplianceTests;
 
 public sealed record Item(string Name, int Count, string? Note = null);
 
+public sealed class Patch
+{
+    [JsonConverter(typeof(OptionalJsonConverter<string>))]
+    public Optional<string> Name { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<string?>))]
+    public Optional<string?> Nick { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<int>))]
+    public Optional<int> Count { get; init; }
+}
+
 [JsonSerializable(typeof(Item))]
+[JsonSerializable(typeof(Patch))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 public sealed partial class ComplianceJson : JsonSerializerContext;
 
@@ -91,6 +107,22 @@ public sealed class StructuredGuaranteeTests
                 Z.Object().Property("kind", Z.String().Const("square")))
         },
         { "typed", Schema.Object(ComplianceJson.Default.Item).Property(item => item.Count, s => s.Minimum(0)) },
+        {
+            "optional properties",
+            Schema.Object(ComplianceJson.Default.Patch)
+                .Property(p => p.Name, s => s.MinLength(1))
+                .Property(p => p.Nick, s => s.Trim().MaxLength(3))
+                .Property(p => p.Count, s => s.Minimum(0))
+        },
+        { "given regex", Z.String().Pattern(new Regex("^[a-z]+$")) },
+        { "given regex with ecma text", Z.String().Pattern(new Regex("^[a-z]+$"), "^[a-z]+$") },
+        { "given regex without ecma text", Z.String().Pattern(new Regex("^(?>a+)b$")) },
+        { "given regex with options", Z.String().Pattern(new Regex("^[a-z]+$", RegexOptions.IgnoreCase)) },
+        { "not given regex", Z.Not(Z.String().Pattern(new Regex("^[a-z]+$"))) },
+        { "not unstated regex", Z.Not(Z.String().Pattern(new Regex("^(?>a+)b$"))) },
+        { "oneOf given regex", Z.OneOf(Z.String().Pattern(new Regex("^[a-z]+$")), Z.String().MaxLength(1)) },
+        { "if given regex", Z.If(Z.String().Pattern(new Regex("^[a-z]+$")), Z.String().MinLength(2), Z.Any()) },
+        { "trimmed given regex", Z.String().Trim().Pattern(new Regex("^[a-z]+$")) },
         { "not normalized", Z.Not(Z.String().Trim().MinLength(1)) },
         { "not refined", Z.Not(Z.String().Refine(text => text == "a", "x")) },
         { "not integer", Z.Not(Z.Integer()) },
@@ -146,6 +178,7 @@ public sealed class StructuredGuaranteeTests
         Schema<byte> number => document => number.SafeParse(document).IsSuccess,
         Schema<bool> boolean => document => boolean.SafeParse(document).IsSuccess,
         Schema<Item> item => document => item.SafeParse(document).IsSuccess,
+        Schema<Patch> patch => document => patch.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<string>> list => document => list.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<JsonElement>> list => document => list.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<long>> list => document => list.SafeParse(document).IsSuccess,
@@ -163,6 +196,7 @@ public sealed class StructuredGuaranteeTests
         Schema<byte> number => FromText(number.Emit(options).Schema),
         Schema<bool> boolean => FromText(boolean.Emit(options).Schema),
         Schema<Item> item => FromText(item.Emit(options).Schema),
+        Schema<Patch> patch => FromText(patch.Emit(options).Schema),
         Schema<IReadOnlyList<string>> list => FromText(list.Emit(options).Schema),
         Schema<IReadOnlyList<JsonElement>> list => FromText(list.Emit(options).Schema),
         Schema<IReadOnlyList<long>> list => FromText(list.Emit(options).Schema),
@@ -276,6 +310,27 @@ public sealed class StructuredGuaranteeTests
 
             Assert.True(draft07.Evaluate(element).IsValid, $"{name} in Draft-07 is stricter than parsing on {document}");
             Assert.True(openApi31.Evaluate(element).IsValid, $"{name} in OpenAPI 3.1 is stricter than parsing on {document}");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Exact))]
+    [MemberData(nameof(Looser))]
+    public void A_callback_handler_that_adds_notes_is_never_stricter_than_parsing(string name, ISchema schema)
+    {
+        Func<string, bool> parse = Parser(schema);
+
+        JsonSchemaOptions options = new()
+        {
+            Unrepresentable = UnrepresentablePolicy.Callback,
+            UnrepresentableHandler = context => new System.Text.Json.Nodes.JsonObject { ["x-inert-note"] = context.Keyword ?? "refinement" },
+        };
+
+        JsonSchema emitted = Emitted(schema, options);
+
+        foreach (string document in Documents().Where(parse))
+        {
+            Assert.True(emitted.Evaluate(JsonElement.Parse(document)).IsValid, $"{name} with a handler is stricter than parsing on {document}");
         }
     }
 

@@ -25,7 +25,7 @@ Method names follow JSON Schema keywords first. Coming from Zod, look up the nam
 |---|---|---|
 | `minLength` | `.MinLength(n)` | `.min(n)` |
 | `maxLength` | `.MaxLength(n)` | `.max(n)` |
-| `pattern` | `.Pattern(regex)` | `.regex()` |
+| `pattern` | `.Pattern(text)`, `.Pattern(regex, ecmaPattern)` | `.regex()` |
 | `format` | `.Format(name)` | |
 | `format: email` | `.Email()` | `z.email()` |
 | `format: uuid` | `.Uuid()` | `z.uuid()` |
@@ -78,7 +78,11 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | `dependentRequired` | `.DependentRequired(name, others)` | |
 | | `.Pick(names)`, `.Omit(names)`, `.Partial()`, `.Extend(other)` | same names |
 
-`ObjectSchema<T>` adds `.Property(p => p.Name, s => ...)`, `.Property(p => p.Home, schema)`, `.Optional(p => p.X)`, `.Omit(p => p.X)` and `.Refine(predicate, message, p => p.X)`.
+`ObjectSchema<T>` adds `.Property(p => p.Name, s => ...)`, `.Property(p => p.Home, schema)`, `.Optional(p => p.X)`, `.Omit(p => p.X)` and `.Refine(predicate, message, p => p.X)`. Both `Property` forms also take an `Optional<T>` property.
+
+| JSON Schema | Zorg.Json | Zod |
+|---|---|---|
+| not in `required` | `Optional<T>` property, `[JsonConverter(typeof(OptionalJsonConverter<T>))]` | `.optional()`, which also separates absent from `null` |
 
 ## Composition
 
@@ -114,6 +118,7 @@ Booleans have `.Const(value)` and `.Coerce()`.
 |---|---|
 | `schema.SafeParse(json)` | `schema.safeParse(value)` |
 | `schema.SafeParseAsync(stream)` | `schema.safeParseAsync(value)` |
+| `schema.Validate(instance)`, `ValidateAsync` | `schema.safeParse(value)` on a value you hold |
 | `schema.Parse(json)` | `schema.parse(value)` |
 | `result.Value`, `result.Issues` | `result.data`, `result.error.issues` |
 | `issues.ToDictionary()` | `z.flattenError()` |
@@ -122,6 +127,7 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | `Direction = Input` (default) | `io: "input"` (Zod's default is output) |
 | `Target = JsonSchemaProfile.Draft07` | `target: "draft-07"` |
 | `Unrepresentable = Throw` | `unrepresentable: "throw"` |
+| `Unrepresentable = Callback`, `UnrepresentableHandler` | none. The closest is a custom `override` on `z.toJSONSchema` |
 | `schema.GenerateSample()` (`Zorg.Json.Sampling`) | none. NJsonSchema: `SampleJsonDataGenerator` |
 
 ## Not in Zorg.Json

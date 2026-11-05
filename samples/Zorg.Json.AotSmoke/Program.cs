@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Zorg.Json;
 using Zorg.Json.Emission;
 using Zorg.Json.Llm;
@@ -100,6 +101,32 @@ Check("sampled pattern", Z.String().Pattern("^[a-z]{3}-\\d+$").GenerateSample().
 Check("sampled number", Z.FromJsonSchema("""{ "minimum": 0.15, "multipleOf": 0.1 }""").GenerateSample().Value.GetRawText() == "0.2");
 Check("sampled unsatisfiable", !Z.Never().GenerateSample().IsValid);
 
+ObjectSchema<PersonPatch> patch = Schema.Object(SmokeJson.Default.PersonPatch)
+    .Property(p => p.Name, s => s.MinLength(1))
+    .Property(p => p.Nick, s => s.MaxLength(5))
+    .Property(p => p.Age, s => s.Minimum(0));
+
+PersonPatch cleared = patch.Parse("""{ "nick": null, "age": 3 }""");
+Check("optional absent", !cleared.Name.IsSet);
+Check("optional null", cleared.Nick.IsSet && cleared.Nick.Value is null);
+Check("optional value", cleared.Age.IsSet && cleared.Age.Value == 3);
+Check("optional rule", !patch.SafeParse("""{ "name": "" }""").IsSuccess);
+Check("optional null rejected", !patch.SafeParse("""{ "name": null }""").IsSuccess);
+Check("optional not required", !patch.ToJsonSchema().ContainsKey("required"));
+Check("optional omitted", JsonSerializer.Serialize(cleared, SmokeJson.Default.PersonPatch) == """{"nick":null,"age":3}""");
+Check("validate instance", patch.Validate(new PersonPatch { Name = "Ada" }).IsSuccess && !patch.Validate(new PersonPatch { Name = "" }).IsSuccess);
+Check("validate trimmed", Z.String().Trim().Validate("  a  ").Value == "a");
+
+StringSchema generated = Z.String().Pattern(Patterns.Lower());
+Check("regex valid", generated.SafeParse("\"abc\"").IsSuccess && !generated.SafeParse("\"ABC\"").IsSuccess);
+Check("regex emitted", generated.ToJsonSchema()["pattern"]?.GetValue<string>() == "^[a-z]+$");
+EmitResult callback = Z.String().Refine(_ => true, "x").Emit(new JsonSchemaOptions
+{
+    Unrepresentable = UnrepresentablePolicy.Callback,
+    UnrepresentableHandler = context => new JsonObject { ["x-refined"] = context.Value?.DeepClone() },
+});
+Check("unrepresentable callback", callback.Schema["x-refined"]?.GetValue<string>() == "x" && callback.Diagnostics.Length == 1);
+
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 
@@ -127,7 +154,31 @@ internal sealed record Person(string Name, int Age, IReadOnlyList<string> Tags, 
 
 internal sealed record Point(int X);
 
+internal sealed class PersonPatch
+{
+    [JsonConverter(typeof(OptionalJsonConverter<string>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<string> Name { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<string?>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<string?> Nick { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<int>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<int> Age { get; init; }
+}
+
+internal static partial class Patterns
+{
+    [GeneratedRegex("^[a-z]+$")]
+    public static partial Regex Lower();
+}
+
 [JsonSerializable(typeof(Person))]
 [JsonSerializable(typeof(Point))]
+[JsonSerializable(typeof(PersonPatch))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, Converters = [typeof(JsonStringEnumConverter<Kind>)])]
 internal sealed partial class SmokeJson : JsonSerializerContext;

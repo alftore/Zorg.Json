@@ -27,6 +27,7 @@ internal static class SchemaExactness
             && behavior.Refinements.IsEmpty
             && behavior.Coercion == SchemaCoercion.None
             && behavior.NumberCheck is null
+            && behavior.PatternRegex is null
             && !behavior.IgnoresNameCase
             && !(behavior.FormatIsFluent && node.Format is not null && StringFormats.IsKnown(node.Format));
 

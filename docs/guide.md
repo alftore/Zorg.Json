@@ -79,6 +79,95 @@ A `required` member can't be made optional with `.Optional` or `.Omit`, because 
 
 A number bound to an `int` property rejects `1.0`, because System.Text.Json can't read it. `Z.Integer()` accepts `1.0`, as JSON Schema says.
 
+## Validating an object you already have
+
+`Validate` checks an instance, such as an MVC model or bound options, by converting it with the type's serializer and running the same pipeline as `SafeParse`.
+
+```csharp
+ParseResult<Person> result = PersonSchema.Validate(model);
+
+if (!result.IsSuccess)
+{
+    return ValidationProblem(result.Issues.ToDictionary());
+}
+```
+
+- **The result is the validated value**, after normalizers and defaults: `Z.String().Trim().Validate("  a ")` is `"a"`. For a reference type it's a new instance, and the one you passed in isn't changed.
+- **Issue locations** are paths in the serialized JSON, so they follow `[JsonPropertyName]` and naming policies.
+- **`null`** is checked as JSON `null`, so it fails unless the schema is nullable.
+- **A serializer failure** (a cycle, a converter that throws) is a `deserialization_failed` issue, with the exception text in `Parameters["detail"]`. Exceptions from your own refinements still pass through.
+- **Computed properties** are serialized but never accepted as input, so `Validate` drops them before checking.
+- A schema with `RefineAsync` needs `ValidateAsync`.
+
+## Patch bodies: absent versus null
+
+A PATCH body has to tell a property that was left out from one set to `null`. `Optional<T>` does:
+
+```csharp
+public sealed class PersonPatch
+{
+    [JsonConverter(typeof(OptionalJsonConverter<string>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<string> Name { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<string?>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<string?> Nickname { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<int>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<int> Age { get; init; }
+
+    [JsonConverter(typeof(OptionalJsonConverter<Address>))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public Optional<Address> Home { get; init; }
+}
+
+[JsonSerializable(typeof(PersonPatch))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(Address))]
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+public sealed partial class AppJson : JsonSerializerContext;
+
+public static readonly ObjectSchema<PersonPatch> PatchSchema = Schema.Object(AppJson.Default.PersonPatch)
+    .Property(p => p.Name, s => s.MinLength(1).MaxLength(100))
+    .Property(p => p.Nickname, s => s.MaxLength(20))
+    .Property(p => p.Age, s => s.Minimum(0).Maximum(150))
+    .Property(p => p.Home, AddressSchema);
+
+app.MapPatch("/people/{id}", async (int id, HttpRequest request) =>
+{
+    ParseResult<PersonPatch> result = await PatchSchema.SafeParseAsync(request.Body);
+
+    if (!result.IsSuccess)
+    {
+        return Results.ValidationProblem(result.Issues.ToDictionary());
+    }
+
+    PersonPatch patch = result.Value;
+    Person person = people.Find(id);
+
+    if (patch.Name.IsSet)
+    {
+        person.Name = patch.Name.Value;
+    }
+
+    if (patch.Nickname.IsSet)
+    {
+        person.Nickname = patch.Nickname.Value;   // may be null: the client cleared it
+    }
+
+    return Results.Ok(person);
+});
+```
+
+- A property that's missing stays unset. `{"nickname": null}` sets it to `null`, which only `Optional<string?>` accepts: the schema rejects `null` for `Optional<string>`, `Optional<int>` and `Optional<Address>`.
+- A typed schema treats an `Optional<T>` property as not required, with the schema of `T`. Nothing about it is in the JSON Schema except the missing `required` entry.
+- **Writing:** System.Text.Json writes the property name before it asks the converter for the value, so a converter can't leave an unset value out; it would write `null`. Put `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]` on the property as above: an unset value is `default` and a set one never is, even when it holds `0` or `null`. With reflection-based options you can instead add `OptionalJson.OmitUnset` to the resolver's `Modifiers`.
+- **Source generation and Native AOT:** annotate each property with `OptionalJsonConverter<T>` and list `T` in the context, as above. `OptionalJsonConverterFactory` creates converters by reflection for options-based registration, so it is marked as not trim or AOT safe.
+- `Property` overloads exist for `Optional<string>`, `Optional<bool>`, `Optional<TNumber>`, `Optional<TNumber?>` and, with a schema, any `Optional<T>`. For a property declared `Optional<Address?>`, cast the schema, `(Schema<Address?>)AddressSchema!`, or the compiler warns about the nullability.
+
 ## Changing values while parsing
 
 Each value goes through a fixed pipeline:
@@ -200,7 +289,8 @@ JsonObject schema = PersonSchema.ToJsonSchema();
 |---|---|
 | `Target` | `JsonSchemaProfile.Draft202012` (default), `Draft07`, `OpenApi30`, `OpenApi31` |
 | `Direction` | `Input` (default), `Output` |
-| `Unrepresentable` | `Annotate` (default), `Omit`, `Throw` |
+| `Unrepresentable` | `Annotate` (default), `Omit`, `Throw`, `Callback` |
+| `UnrepresentableHandler` | With `Callback`: called for each rule that can't be stated |
 | `Reused` | `Inline` (default), `Ref`, which writes schemas marked `.Named("x")` under `$defs` |
 | `ReferencePrefix` | For example `#/components/schemas/`. Definitions then go in `EmitResult.Definitions` |
 
@@ -224,6 +314,39 @@ ImmutableArray<EmitDiagnostic> leftOut = result.Diagnostics;
 ```
 
 The compliance tests check this guarantee against JsonSchema.Net, an independent validator.
+
+### Patterns from `[GeneratedRegex]`
+
+`Pattern(Regex regex, string? ecmaPattern = null)` validates with the regex you give it, options and timeout included, and states it as `pattern`.
+
+```csharp
+[GeneratedRegex("^[a-z]+$")]
+private static partial Regex Slug();
+
+Z.String().Pattern(Slug());                                   // pattern: "^[a-z]+$"
+Z.String().Pattern(Atomic(), "^a+b$");                        // the regex validates, the text is emitted
+```
+
+`pattern` is `ecmaPattern` when you pass it, and otherwise `regex.ToString()` when that is valid ECMA-262 and the regex has no options that change matching, such as `IgnoreCase`. If neither holds, the rule can't be stated: `pattern` is left out with a diagnostic, like any other unrepresentable rule. A .NET regex can also differ from its ECMA-262 text, so a schema with a given `Regex` is treated as inexact: under `not`, `if`, `maxContains` and `oneOf` it is handled like a refinement. An `ecmaPattern` must not match fewer strings than the regex does, or the emitted schema would reject what parsing accepts.
+
+### Stating what Zorg can't
+
+With `Unrepresentable = UnrepresentablePolicy.Callback`, `UnrepresentableHandler` is called for each rule that can't be stated, with its keyword (null for a refinement), message, location and value. It returns a fragment to merge into that subschema, or `null` to leave the rule out. Diagnostics are reported either way, and nothing is added to `description`.
+
+```csharp
+JsonSchemaOptions options = new()
+{
+    Unrepresentable = UnrepresentablePolicy.Callback,
+    UnrepresentableHandler = context => context.Keyword switch
+    {
+        "pattern" => new JsonObject { ["x-pattern-dotnet"] = context.Value?.DeepClone() },
+        null => new JsonObject { ["x-rule"] = context.Value?.DeepClone() },
+        _ => null,
+    },
+};
+```
+
+**A handler must only state what is already true.** Whatever it returns is part of the input schema, so a fragment that is stricter than parsing, such as a `const` or a smaller `maxLength`, breaks the input guarantee. Annotations and `x-*` keywords are safe. A keyword that the subschema already has is kept as written. Whether a subschema may sit under `not`, `if`, `maxContains` or `oneOf` depends on the schema alone: a node with a refinement stays inexact, whatever the handler returns. The handler isn't called for diagnostics from profile rewriters and post-processors, which have no single subschema, but they are still reported. Exceptions from the handler pass through.
 
 ## Issues
 
