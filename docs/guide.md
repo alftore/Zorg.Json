@@ -149,6 +149,45 @@ Combine objects with `.Extend(other)`, not `Z.AllOf`: a closed object rejects th
 
 `Z.DiscriminatedUnion` selects a branch by the property when every branch requires it with its own values. Otherwise, for example when two branches share a value, it behaves like `Z.OneOf`.
 
+## Sample data
+
+`GenerateSample` writes a JSON document that conforms to a schema, for fluent, typed and imported schemas alike. It replaces NJsonSchema's `SampleJsonDataGenerator`, and it also tells you whether a schema is satisfiable.
+
+```csharp
+using Zorg.Json.Sampling;
+
+ObjectSchema schema = Z.Object()
+    .Property("id", Z.String().Uuid())
+    .Property("age", Z.Integer().Minimum(18))
+    .Property("tags", Z.Array(Z.String().Pattern("^[a-z]{3}$")).MinItems(2).UniqueItems())
+    .Property("nick", Z.String().Optional());
+
+SampleResult sample = schema.GenerateSample();
+// {"id":"123e4567-e89b-42d3-a456-000000000000","age":18,"tags":["aaa","bbb"],"nick":"string"}
+
+if (!sample.IsValid)
+{
+    Console.WriteLine(sample.Issues.ToPrettyString());
+}
+```
+
+Every sample is validated against the schema, and typed schemas also convert it. If no conforming document was found, `Value` is the closest attempt, `IsValid` is false and `Issues` says why. It doesn't throw for a valid schema, and the same schema always gives the same output: nothing is random or read from the clock.
+
+| `SampleOptions` | Default | NJsonSchema | Meaning |
+|---|---|---|---|
+| `IncludeOptionalProperties` | `true` | `GenerateOptionalProperties` | Fill in properties outside `required` |
+| `MaxRecursionDepth` | 3 | `MaxRecursionLevel` | How often a reference repeats before recursion stops |
+| `ArrayItemCount` | 1 | | Items per array, bounded by `minItems` and `maxItems` |
+
+A value comes from `const`, `default`, `examples` or `enum`, in that order, and then from its type. A candidate that doesn't validate is skipped. Numbers prefer 0, and bounds and `multipleOf` are met exactly. Unions take the first branch that works, and nullable values prefer the other type. Recursion stops by omitting optional properties, leaving arrays at `minItems`, and taking `null` where that's allowed.
+
+`IsValid = false` doesn't prove that a schema is unsatisfiable, because the search has limits:
+
+- `pattern` is generated for literals, classes, `.`, quantifiers, groups, alternation and anchors. A pattern with a lookaround or a backreference only passes if a plain string happens to match.
+- A `Refine` that rejects every candidate gives issues, while an exception from a refinement passes through, as with `SafeParse`.
+- `RefineAsync` can't run here, so a schema with one is never reported as valid. Check the sample with `SafeParseAsync`.
+- Documents stop at 64 levels, `minItems` and `minProperties` at 10,000, and `minLength` at about a million.
+
 ## Emitting JSON Schema
 
 ```csharp

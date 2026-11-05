@@ -25,6 +25,10 @@ internal readonly struct ExactNumber
 
     public bool IsInteger => _mantissa.IsZero || _exponent >= 0;
 
+    public BigInteger Mantissa => _mantissa;
+
+    public int Exponent => _exponent;
+
     public static ExactNumber Parse(string text) =>
         TryParse(text, out ExactNumber number) ? number : throw new FormatException($"Not a JSON number: {text}");
 
