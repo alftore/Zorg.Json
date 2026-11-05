@@ -212,6 +212,8 @@ PersonSchema.Refine(p => p.Age >= 18 || p.Nickname is null, "Minors cannot have 
 Z.String().RefineAsync(users.IsFreeAsync, "This name is taken");   // needs SafeParseAsync
 ```
 
+Don't put `RefineAsync` inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`. These decide before async checks run, and they count an async check as passed. So `Contains` can accept a value the check would refuse, and `AnyOf` can reject a value another branch would accept. Put `RefineAsync` on the outer schema instead.
+
 ## Unions and recursion
 
 ```csharp
