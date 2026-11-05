@@ -532,4 +532,122 @@ public sealed class EmissionReviewTests
 
         CompletesWithin(TimeSpan.FromSeconds(15), () => Z.AllOf(branches).Emit(options));
     }
+    // Second review.
+
+    [Theory]
+    [InlineData("""{"$id":"http://e.com/a","$defs":{"s":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/s"}}}""", new[] { """{"x":{"p":"v"}}""", """{"x":{"p":1}}""" })]
+    [InlineData("""{"$id":"http://e.com/a","properties":{"p":{"type":"string"},"q":{"$ref":"#/properties/p"}}}""", new[] { """{"x":{"q":"v"}}""", """{"x":{"q":1}}""" })]
+    [InlineData("""{"$id":"http://e.com/a","type":"object","properties":{"n":{"$ref":"#"}}}""", new[] { """{"x":{"n":{"n":{}}}}""", """{"x":{"n":1}}""" })]
+    public void An_imported_schema_with_an_id_of_its_own_keeps_its_references(string document, string[] instances) =>
+        AssertAgrees(document, Z.Object().Property("x", Import(document)), instances);
+
+    [Fact]
+    public void A_name_made_for_a_moved_target_does_not_replace_a_definition_of_the_document()
+    {
+        const string Document = """{"$defs":{"target-1":{"type":"string"}},"properties":{"a":{"$ref":"#/$defs/target-1"},"b":{"$ref":"#/if"}},"if":{"type":"number"}}""";
+
+        AssertNeverStricter(Document, Import(Document), """{"a":"x"}""", """{"b":1}""", """{"a":"x","b":2}""");
+        AssertAgrees(Document, Import(Document), Profiles.Where(profile => profile == JsonSchemaProfile.OpenApi30), """{"a":"x"}""", """{"a":1}""");
+    }
+
+    [Fact]
+    public void Redirecting_a_reference_leaves_the_data_of_the_schema_alone()
+    {
+        const string Document = """{"properties":{"k":{"const":{"$ref":"#/if"}},"e":{"enum":[{"$ref":"#/if"}]},"d":{"default":{"$ref":"#/if"}},"b":{"$ref":"#/if"}},"if":{"type":"number"}}""";
+
+        AssertNeverStricter(Document, Import(Document), """{"k":{"$ref":"#/if"}}""", """{"e":{"$ref":"#/if"}}""", """{"d":{"$ref":"#/if"}}""", """{"b":1}""");
+    }
+
+    [Fact]
+    public void A_property_named_like_data_still_has_its_references_redirected()
+    {
+        const string Document = """{"properties":{"const":{"$ref":"#/if"},"enum":{"$ref":"#/if"}},"if":{"type":"number"}}""";
+
+        AssertNeverStricter(Document, Import(Document), """{"const":1}""", """{"enum":2}""", """{}""");
+    }
+
+    [Fact]
+    public void A_dependent_required_and_a_dependent_schema_do_not_make_a_reference_to_the_schema_stricter()
+    {
+        const string Document = """{"dependentRequired":{"a":["b"]},"dependentSchemas":{"a":{"type":"object"}},"properties":{"c":{"$ref":"#/dependentSchemas/a"}}}""";
+
+        AssertNeverStricter(Document, Import(Document), """{"c":{}}""", """{"c":{"a":1}}""", """{"a":1,"b":2,"c":{}}""");
+    }
+
+    [Fact]
+    public void A_definitions_keyword_and_a_defs_keyword_with_one_name_stay_apart_in_draft_07()
+    {
+        const string Document = """{"$defs":{"x":{"type":"number"}},"definitions":{"x":{"type":"string"}},"properties":{"p":{"$ref":"#/definitions/x"},"q":{"$ref":"#/$defs/x"}}}""";
+
+        AssertNeverStricter(Document, Import(Document), """{"p":"s","q":1}""", """{"p":"s"}""", """{"q":1}""");
+    }
+
+    [Theory]
+    [InlineData("""{"$defs":{"s":{"maxLength":3}},"properties":{"a":{"not":{"$ref":"#/$defs/s"}}}}""", new[] { """{"a":"hello"}""", """{"a":"he"}""", """{"a":1}""" })]
+    [InlineData("""{"$defs":{"s":{"maxLength":3}},"properties":{"a":{"if":{"$ref":"#/$defs/s"},"then":{"type":"string"},"else":{"minLength":5}}}}""", new[] { """{"a":"hello"}""", """{"a":"he"}""", """{"a":"hellos"}""" })]
+    [InlineData("""{"$defs":{"s":{"maxLength":3}},"properties":{"a":{"oneOf":[{"$ref":"#/$defs/s"},{"minLength":2}]}}}""", new[] { """{"a":"hello"}""", """{"a":"h"}""", """{"a":"he"}""" })]
+    [InlineData("""{"$defs":{"s":{"maxLength":3}},"properties":{"a":{"contains":{"$ref":"#/$defs/s"},"maxContains":1}}}""", new[] { """{"a":["hello"]}""", """{"a":["he","hello"]}""", """{"a":["he","hi"]}""" })]
+    [InlineData("""{"$defs":{"s":{"allOf":[{"maxLength":3}]}},"properties":{"a":{"not":{"$ref":"#/$defs/s"}}}}""", new[] { """{"a":"hello"}""" })]
+    [InlineData("""{"$defs":{"s":{"maxLength":3}},"properties":{"a":{"$ref":"#/$defs/s"},"b":{"not":{"$ref":"#/$defs/s"}}}}""", new[] { """{"a":"he","b":"hello"}""", """{"a":"hi"}""" })]
+    public void Relocating_a_keyword_does_not_loosen_what_a_reference_is_negated_through(string document, string[] instances)
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("maxLength"));
+
+        AssertNeverStricter(document, Import(document), [profile], instances);
+    }
+
+    [Fact]
+    public void Relocating_a_keyword_does_not_loosen_what_a_lazy_schema_is_negated_through()
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("maxLength"));
+        ObjectSchema schema = Z.Object().Property("a", Z.Not(Z.Lazy("short", () => Z.String().MaxLength(3))));
+
+        AssertNeverStricter("lazy", schema, [profile], """{"a":"hello"}""", """{"a":1}""");
+    }
+
+    [Fact]
+    public void A_reference_inside_an_id_resource_to_a_keyword_the_dialect_drops_is_still_resolved()
+    {
+        const string Document = """{"$id":"http://e.com/a","properties":{"a":{"$ref":"#/if"}},"if":{"type":"number"}}""";
+
+        AssertNeverStricter(Document, Z.Object().Property("x", Import(Document)), """{"x":{"a":1}}""", """{"x":{}}""");
+    }
+
+    [Fact]
+    public void A_reference_inside_an_id_resource_agrees_with_parsing_where_the_dialect_drops_the_target()
+    {
+        const string Document = """{"$id":"http://e.com/a","properties":{"a":{"$ref":"#/if"}},"if":{"type":"number"}}""";
+
+        AssertAgrees(Document, Z.Object().Property("x", Import(Document)), """{"x":{"a":1}}""", """{"x":{"a":"s"}}""", """{"x":{}}""");
+        AssertAgrees(Document, Import(Document), """{"a":1}""", """{"a":"s"}""");
+    }
+
+    [Fact]
+    public void An_id_resource_inside_an_imported_schema_is_not_rebased_with_it() =>
+        AssertAgrees(
+            "resource in import",
+            Z.Array(Import("""{"$defs":{"a":{"type":"number"}},"items":{"$id":"http://e.com/n","$defs":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/a"}}}}""")),
+            """[{"p":"s"}]""",
+            """[{"p":1}]""");
+
+    [Fact]
+    public void A_root_with_an_id_keeps_its_definitions_beside_a_reference_prefix()
+    {
+        JsonValueSchema schema = Import("""{"$id":"http://e.com/a","$defs":{"a":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/a"}}""");
+        EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+        string text = result.Schema.ToJsonString();
+
+        Assert.Empty(result.Definitions);
+        Assert.Contains("\"$ref\":\"#/$defs/a\"", text, StringComparison.Ordinal);
+        Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, "[\"x\"]"), text);
+        Assert.False(Accepts(text, JsonSchemaProfile.Draft202012, "[1]"), text);
+    }
+
+    [Fact]
+    public void A_moved_target_in_one_resource_does_not_take_the_name_of_one_in_another()
+    {
+        const string Document = """{"properties":{"a":{"$ref":"#/if"},"r":{"$id":"http://e.com/r","properties":{"b":{"$ref":"#/if"}},"if":{"type":"string"}}},"if":{"type":"number"}}""";
+
+        AssertAgrees(Document, Import(Document), """{"a":1,"r":{"b":"s"}}""", """{"a":"s"}""", """{"r":{"b":1}}""");
+    }
 }

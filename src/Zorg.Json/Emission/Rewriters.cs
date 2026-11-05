@@ -618,6 +618,12 @@ public static class Rewriters
                 {
                     pending.Push(child);
                 }
+
+                // A reference is written as a definition that is loosened like any other, wherever it is used, so what it names counts too.
+                if (next.Behavior.Target is { } target)
+                {
+                    pending.Push(target());
+                }
             }
 
             return false;

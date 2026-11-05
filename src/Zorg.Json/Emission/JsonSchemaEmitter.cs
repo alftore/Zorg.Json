@@ -51,7 +51,8 @@ internal sealed class JsonSchemaEmitter
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
     private readonly List<ReferenceRecord> _references = [];
-    private int _resources;
+    private readonly HashSet<string> _merged = new(StringComparer.Ordinal);
+    private Resource? _resource;
     private int _emitted;
     private int _depth;
 
@@ -270,37 +271,61 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private void WriteMissingTargets(JsonObject root)
     {
-        Dictionary<string, string> moved = new(StringComparer.Ordinal);
-        HashSet<string> seen = new(StringComparer.Ordinal);
+        // A resource with an id of its own reads its references from itself, so each is looked for, and its target written, there.
+        Dictionary<JsonObject, Dictionary<string, string>> moved = new(ReferenceEqualityComparer.Instance);
+        HashSet<(JsonObject, string)> seen = [];
 
         // Writing a target can add references of its own.
         for (int index = 0; index < _references.Count; index++)
         {
             ReferenceRecord record = _references[index];
+            JsonObject owner = record.Resource is null ? root : record.Resource.Root!;
 
-            if (!seen.Add(record.Reference) || record.Reference.Length < 2 || Resolves(root, record.Reference))
+            if (!seen.Add((owner, record.Reference)) || record.Reference.Length < 2 || (Resolves(owner, record.Reference) && !IsMerged(record.Reference, record.Resource)))
             {
                 continue;
             }
 
-            string name = UniqueName("target-" + (moved.Count + 1).ToString(CultureInfo.InvariantCulture));
+            JsonObject definitions = owner[_profile.DefinitionsKeyword] as JsonObject ?? [];
+            Dictionary<string, string> places = moved.TryGetValue(owner, out Dictionary<string, string>? known) ? known : moved[owner] = new(StringComparer.Ordinal);
+
+            // The document may hold a definition by this name already, which a reference of its own is reading.
+            string name = UniqueName("target-" + (places.Count + 1).ToString(CultureInfo.InvariantCulture), definitions);
             ImportScope? outer = _import;
+            Resource? outerResource = _resource;
             _import = record.Scope;
+            _resource = record.Resource;
             _definitions[name] = new JsonObject();
             JsonNode definition = EmitNode(Rewrite(record.Target(), isRoot: false), $"/{_profile.DefinitionsKeyword}/{Escape(name)}");
             _import = outer;
+            _resource = outerResource;
             _definitions[name] = definition;
 
-            JsonObject definitions = root[_profile.DefinitionsKeyword] as JsonObject ?? [];
             definitions[name] = definition;
-            root[_profile.DefinitionsKeyword] = definitions;
-            moved[record.Reference] = $"#/{_profile.DefinitionsKeyword}/{FragmentEscape(Escape(name))}";
+            owner[_profile.DefinitionsKeyword] = definitions;
+            places[record.Reference] = $"#/{_profile.DefinitionsKeyword}/{FragmentEscape(Escape(name))}";
         }
 
-        if (moved.Count > 0)
+        foreach ((JsonObject owner, Dictionary<string, string> places) in moved)
         {
-            Redirect(root, moved, isRoot: true);
+            Redirect(owner, places, isRoot: true);
         }
+    }
+
+    /// <summary>Whether a reference names, or goes into, a draft-07 dependency that was written as a list and a schema together.</summary>
+    private bool IsMerged(string reference, Resource? resource)
+    {
+        if (_merged.Count == 0 || !reference.StartsWith("#/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // The places are pointers from the document, and a resource reads its own from where it starts.
+        string start = resource?.Location ?? string.Empty;
+        string pointer = string.Join('/', reference[1..].Split('/').Select(Uri.UnescapeDataString));
+
+        return _merged.Any(place => place.StartsWith(start, StringComparison.Ordinal)
+            && (pointer == place[start.Length..] || pointer.StartsWith(place[start.Length..] + "/", StringComparison.Ordinal)));
     }
 
     private static bool Resolves(JsonNode root, string reference)
@@ -315,6 +340,12 @@ internal sealed class JsonSchemaEmitter
         foreach (string token in reference[2..].Split('/'))
         {
             string name = Uri.UnescapeDataString(token).Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
+
+            // What a dialect ignores is written under a name of its own, which a validator reads as data, not as the schema it was.
+            if (name.StartsWith("x-inert-", StringComparison.Ordinal))
+            {
+                return false;
+            }
 
             current = current switch
             {
@@ -347,29 +378,64 @@ internal sealed class JsonSchemaEmitter
 
             foreach ((string keyword, JsonNode? child) in members.ToArray())
             {
-                if (keyword == "$ref" && child is JsonValue value && value.TryGetValue(out string? reference) && moved.TryGetValue(reference, out string? target))
+                if (keyword == "$ref")
                 {
-                    members[keyword] = target;
+                    if (child is JsonValue value && value.TryGetValue(out string? reference) && moved.TryGetValue(reference, out string? target))
+                    {
+                        members[keyword] = target;
+                    }
                 }
-                else if (child is not null)
+                else if (SchemaKeywords.Contains(keyword) && child is JsonObject)
                 {
                     Redirect(child, moved, isRoot: false);
                 }
-            }
-        }
-        else if (node is JsonArray items)
-        {
-            foreach (JsonNode? child in items)
-            {
-                if (child is not null)
+                else if (SchemaListKeywords.Contains(keyword) && child is JsonArray items)
                 {
-                    Redirect(child, moved, isRoot: false);
+                    foreach (JsonNode? item in items)
+                    {
+                        if (item is not null)
+                        {
+                            Redirect(item, moved, isRoot: false);
+                        }
+                    }
+                }
+                else if (SchemaMapKeywords.Contains(keyword) && child is JsonObject named)
+                {
+                    foreach ((string _, JsonNode? entry) in named)
+                    {
+                        if (entry is not null)
+                        {
+                            Redirect(entry, moved, isRoot: false);
+                        }
+                    }
                 }
             }
         }
     }
 
-    private sealed record ReferenceRecord(string Reference, Func<SchemaNode> Target, ImportScope? Scope);
+    // Only schemas are read. A const, an enum, a default or an example holds data, which may spell a reference.
+    private static readonly HashSet<string> SchemaKeywords = new(StringComparer.Ordinal)
+    {
+        "items", "additionalItems", "contains", "additionalProperties", "propertyNames", "not", "if", "then", "else",
+        "unevaluatedItems", "unevaluatedProperties", "contentSchema",
+    };
+
+    private static readonly HashSet<string> SchemaListKeywords = new(StringComparer.Ordinal) { "allOf", "anyOf", "oneOf", "prefixItems", "items" };
+
+    private static readonly HashSet<string> SchemaMapKeywords = new(StringComparer.Ordinal)
+    {
+        "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies",
+    };
+
+    private sealed record ReferenceRecord(string Reference, Func<SchemaNode> Target, ImportScope? Scope, Resource? Resource);
+
+    /// <summary>A subschema with an id of its own, written once it's done, so that the references inside it can be checked against it.</summary>
+    private sealed class Resource(string location)
+    {
+        public string Location { get; } = location;
+
+        public JsonObject? Root { get; set; }
+    }
 
     /// <summary>Where the extensions start in what was written. Not every extension is written, and a reference is written without any.</summary>
     private static int FirstExtension(JsonObject schema, SchemaNode node)
@@ -434,11 +500,11 @@ internal sealed class JsonSchemaEmitter
         return EmitObject(node, location);
     }
 
-    private string UniqueName(string requested)
+    private string UniqueName(string requested, JsonObject? written = null)
     {
         string name = requested;
 
-        for (int suffix = 2; _definitions.ContainsKey(name); suffix++)
+        for (int suffix = 2; _definitions.ContainsKey(name) || written?.ContainsKey(name) == true; suffix++)
         {
             name = requested + suffix.ToString(CultureInfo.InvariantCulture);
         }
@@ -496,18 +562,33 @@ internal sealed class JsonSchemaEmitter
         _fragments = null;
 
         // A reference inside a resource with an id of its own is read from that resource, not from the document.
-        bool opensResource = location.Length > 0 && source.Id is { } id && !id.StartsWith('#');
-        _resources += opensResource ? 1 : 0;
+        Resource? outerResource = _resource;
+        Resource? opened = source.Id is { } id && !id.StartsWith('#') ? new Resource(location) : null;
+
+        if (opened is not null)
+        {
+            _resource = opened;
+
+            // What an imported document rebases is its own, and the resource is a document of its own.
+            _import = null;
+        }
 
         try
         {
-            return EmitFields(IsEmbeddedImport(source, location) ? EnterImport(source, location) : source, location);
+            JsonObject written = EmitFields(IsEmbeddedImport(source, location) ? EnterImport(source, location) : source, location);
+
+            if (opened is not null)
+            {
+                opened.Root = written;
+            }
+
+            return written;
         }
         finally
         {
             _fragments = outer;
             _import = outerImport;
-            _resources -= opensResource ? 1 : 0;
+            _resource = outerResource;
         }
     }
 
@@ -516,7 +597,11 @@ internal sealed class JsonSchemaEmitter
     /// <see cref="JsonSchemaOptions.ReferencePrefix"/> that keeps definitions elsewhere, it no longer is, so its references are moved.
     /// </summary>
     private bool IsEmbeddedImport(SchemaNode node, string location) =>
-        node.Behavior.Location is { Length: 0 } && (location.Length > 0 || _options.ReferencePrefix is not null);
+        node.Behavior.Location is { Length: 0 }
+        && (location.Length > 0 || _options.ReferencePrefix is not null)
+
+        // With an id of its own the root is a resource, and its references are read from it wherever it is written.
+        && !(node.Id is { } id && !id.StartsWith('#'));
 
     /// <summary>
     /// Moves the definitions of an imported root to the definitions of the whole document, under names that are free there,
@@ -575,9 +660,9 @@ internal sealed class JsonSchemaEmitter
         string? reference = WrittenReference(node.Ref);
         Add(schema, "$ref", reference);
 
-        if (reference is not null && node.Behavior.Target is { } referent && _resources == 0 && _options.ReferencePrefix is null)
+        if (reference is not null && node.Behavior.Target is { } referent && _options.ReferencePrefix is null)
         {
-            _references.Add(new ReferenceRecord(reference, referent, _import));
+            _references.Add(new ReferenceRecord(reference, referent, _import, _resource));
         }
 
         Add(schema, "title", node.Title);
@@ -693,8 +778,11 @@ internal sealed class JsonSchemaEmitter
         return schema;
     }
 
-    /// <summary>Respells a pointer for draft-07, token by token, because a property may be named like a keyword.</summary>
-    private static string ToDraft07Pointer(string reference)
+    /// <summary>
+    /// Respells a pointer for draft-07, token by token, because a property may be named like a keyword. With <paramref name="extensionOnly"/>
+    /// the only change is to <c>definitions</c>, which a 2020-12 document ignores and draft-07 would read, so it is written under another name.
+    /// </summary>
+    private static string ToDraft07Pointer(string reference, bool extensionOnly = false)
     {
         if (!reference.StartsWith("#/", StringComparison.Ordinal))
         {
@@ -710,15 +798,18 @@ internal sealed class JsonSchemaEmitter
             {
                 // %24defs is $defs.
                 string keyword = Uri.UnescapeDataString(tokens[index]);
-                (tokens[index], position) = keyword switch
+                (string spelled, position) = keyword switch
                 {
-                    "$defs" or "definitions" => ("definitions", PointerPosition.Name),
+                    "$defs" => ("definitions", PointerPosition.Name),
+                    "definitions" => extensionOnly ? ("x-inert-definitions", PointerPosition.Opaque) : ("definitions", PointerPosition.Name),
                     "dependentSchemas" => ("dependencies", PointerPosition.Name),
                     "prefixItems" => ("items", PointerPosition.Name),
                     "properties" or "patternProperties" or "allOf" or "anyOf" or "oneOf" => (keyword, PointerPosition.Name),
                     "items" or "contains" or "additionalProperties" or "propertyNames" or "not" or "if" or "then" or "else" => (keyword, PointerPosition.Schema),
                     _ => (tokens[index], PointerPosition.Opaque),
                 };
+
+                tokens[index] = extensionOnly && keyword != "definitions" ? tokens[index] : spelled;
             }
             else if (position == PointerPosition.Name)
             {
@@ -736,7 +827,10 @@ internal sealed class JsonSchemaEmitter
             return Rebase(reference, scope);
         }
 
-        string? written = reference?.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal);
+        // The definitions keyword of a 2020-12 document is not where definitions are written, so a pointer into it is set apart first.
+        string? source = IsDraft07 && reference is not null ? ToDraft07Pointer(reference, extensionOnly: true) : reference;
+        // A resource keeps its own definitions, so a prefix that names another place doesn't apply inside it.
+        string? written = _resource is null ? source?.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal) : source;
         return IsDraft07 && written is not null ? ToDraft07Pointer(written) : written;
     }
 
@@ -747,6 +841,12 @@ internal sealed class JsonSchemaEmitter
     private string Rebase(string reference, ImportScope scope)
     {
         const string Definitions = "/$defs/";
+
+        if (IsDraft07)
+        {
+            reference = ToDraft07Pointer(reference, extensionOnly: true);
+        }
+
         string pointer = reference[1..];
 
         // An anchor is found by name, wherever it was written.
@@ -1186,9 +1286,16 @@ internal sealed class JsonSchemaEmitter
                 dependentSchemas.Remove(name);
 
                 // Draft-07 has one value for a name, so a list and a schema both apply as the branches of an allOf.
-                dependentRequired[name] = dependentRequired.TryGetPropertyValue(name, out JsonNode? list) && list is not null
-                    ? new JsonObject { ["allOf"] = new JsonArray(new JsonObject { ["required"] = list.DeepClone() }, dependency) }
-                    : dependency;
+                // A reference to the schema alone can't be pointed at it any more, so it is written again.
+                if (dependentRequired.TryGetPropertyValue(name, out JsonNode? list) && list is not null)
+                {
+                    dependentRequired[name] = new JsonObject { ["allOf"] = new JsonArray(new JsonObject { ["required"] = list.DeepClone() }, dependency) };
+                    _merged.Add($"{location}/dependencies/{Escape(name)}");
+                }
+                else
+                {
+                    dependentRequired[name] = dependency;
+                }
             }
 
             schema["dependencies"] = dependentRequired;
