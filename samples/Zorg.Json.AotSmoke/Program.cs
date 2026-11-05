@@ -8,6 +8,7 @@ using Zorg.Json;
 using Zorg.Json.Emission;
 using Zorg.Json.Llm;
 using Zorg.Json.Import;
+using Zorg.Json.Sampling;
 
 // Runs the public API in a Native AOT binary. Any wrong result makes the exit code non-zero.
 int failures = 0;
@@ -91,6 +92,13 @@ catch (JsonSchemaImportException exception)
 {
     Check("ref cycle", exception.Code == JsonSchemaImportCodes.RefCycle);
 }
+
+Check("sampled string", schema.GenerateSample().IsValid);
+Check("sampled typed", person.SafeParse(person.GenerateSample().Value).IsSuccess);
+Check("sampled import", imported.GenerateSample(new SampleOptions { MaxRecursionDepth = 1 }).IsValid);
+Check("sampled pattern", Z.String().Pattern("^[a-z]{3}-\\d+$").GenerateSample().Value.GetString() == "aaa-0");
+Check("sampled number", Z.FromJsonSchema("""{ "minimum": 0.15, "multipleOf": 0.1 }""").GenerateSample().Value.GetRawText() == "0.2");
+Check("sampled unsatisfiable", !Z.Never().GenerateSample().IsValid);
 
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;

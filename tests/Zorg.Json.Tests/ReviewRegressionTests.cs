@@ -394,6 +394,13 @@ public sealed class ReviewRegressionTests
         Assert.Matches(pattern, "1e2");
     }
 
+    [Fact]
+    public void A_rewrite_keeps_a_lone_surrogate_beside_it()
+    {
+        Assert.True(Z.Tuple(Z.String().Trim(), Z.Any()).SafeParse("[\" a \", \"\\ud800\"]").IsSuccess);
+        Assert.True(Z.Object().Property("x", Z.String().Trim()).Property("y", Z.Any()).SafeParse("{ \"x\": \" a \", \"y\": \"\\ud800\" }").IsSuccess);
+    }
+
     private static class Ast
     {
         public static readonly ObjectSchema Schema = Z.Object()

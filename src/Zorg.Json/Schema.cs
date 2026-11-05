@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Zorg.Json.Emission;
 using Zorg.Json.Model;
+using Zorg.Json.Sampling;
 using Zorg.Json.Validation;
 
 namespace Zorg.Json;
@@ -19,7 +20,7 @@ namespace Zorg.Json;
 /// Store it in a <see langword="static readonly"/> field. Create one with <see cref="Z"/>.
 /// </summary>
 /// <typeparam name="T">The type of the parsed value.</typeparam>
-public abstract class Schema<T> : ISchema
+public abstract class Schema<T> : ISchema, ISampleTarget
 {
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
 
@@ -258,6 +259,8 @@ public abstract class Schema<T> : ISchema
     internal abstract T Materialize(JsonElement value);
 
     internal abstract JsonElement ToElement(T value);
+
+    ImmutableArray<ParseIssue> ISampleTarget.FinishSample(JsonElement value, ValidationContext context) => Finish(value, context).Issues;
 
     private ParseResult<T> Finish(JsonElement value, ValidationContext context)
     {

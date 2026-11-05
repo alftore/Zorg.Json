@@ -122,6 +122,7 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | `Direction = Input` (default) | `io: "input"` (Zod's default is output) |
 | `Target = JsonSchemaProfile.Draft07` | `target: "draft-07"` |
 | `Unrepresentable = Throw` | `unrepresentable: "throw"` |
+| `schema.GenerateSample()` (`Zorg.Json.Sampling`) | none. NJsonSchema: `SampleJsonDataGenerator` |
 
 ## Not in Zorg.Json
 

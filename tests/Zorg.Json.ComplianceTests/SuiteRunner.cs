@@ -69,6 +69,14 @@ internal static class SuiteRunner
         }
     }
 
+    public static JsonSchemaImportOptions ImportOptions(string draft, string file) => new()
+    {
+        DefaultDialect = Drafts.Single(entry => entry.Name == draft).Dialect,
+
+        // Without the optional format vocabulary the suite expects format to be an annotation.
+        Formats = file == "format.json" ? FormatHandling.AnnotateOnly : FormatHandling.AssertKnown,
+    };
+
     private static ImmutableArray<FileResult> RunAll() => [.. Files().Select(RunFile)];
 
     private static FileResult RunFile(string relative)
@@ -76,14 +84,7 @@ internal static class SuiteRunner
         string draft = relative[..relative.IndexOf('/', StringComparison.Ordinal)];
         string file = relative[(draft.Length + 1)..];
         FileResult result = new(draft, file);
-        JsonSchemaImportOptions options = new()
-        {
-            DefaultDialect = Drafts.Single(entry => entry.Name == draft).Dialect,
-
-            // Without the optional format vocabulary the suite expects format to be an annotation.
-            Formats = file == "format.json" ? FormatHandling.AnnotateOnly : FormatHandling.AssertKnown,
-        };
-
+        JsonSchemaImportOptions options = ImportOptions(draft, file);
         JsonElement groups = JsonElement.Parse(File.ReadAllText(Path.Combine(TestSuite.DraftPath(draft), file)));
 
         foreach (JsonElement group in groups.EnumerateArray())

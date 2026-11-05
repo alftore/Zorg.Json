@@ -13,18 +13,20 @@ internal static class JsonStrings
 
     public static JsonElement ToElement(string value) => Write(writer => writer.WriteStringValue(value));
 
+    /// <summary>Copies raw text, because <see cref="JsonElement.WriteTo"/> throws on a lone surrogate.</summary>
     public static JsonElement ToArray(IEnumerable<JsonElement> items) => Write(writer =>
     {
         writer.WriteStartArray();
 
         foreach (JsonElement item in items)
         {
-            item.WriteTo(writer);
+            writer.WriteRawValue(item.GetRawText(), skipInputValidation: true);
         }
 
         writer.WriteEndArray();
     });
 
+    /// <summary>Copies raw text, because <see cref="JsonElement.WriteTo"/> throws on a lone surrogate.</summary>
     public static JsonElement ToObject(IEnumerable<KeyValuePair<string, JsonElement>> properties) => Write(writer =>
     {
         writer.WriteStartObject();
@@ -32,7 +34,7 @@ internal static class JsonStrings
         foreach ((string name, JsonElement value) in properties)
         {
             writer.WritePropertyName(name);
-            value.WriteTo(writer);
+            writer.WriteRawValue(value.GetRawText(), skipInputValidation: true);
         }
 
         writer.WriteEndObject();
