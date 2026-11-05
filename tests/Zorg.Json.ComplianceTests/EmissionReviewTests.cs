@@ -696,9 +696,19 @@ public sealed class EmissionReviewTests
         const string Document = """{"dependentRequired":{"a":["b"]},"dependentSchemas":{"a":{"$id":"http://e.com/n","type":"object"}},"properties":{"p":{"$ref":"#/dependentSchemas/a"}}}""";
         string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).ToJsonString();
 
-        Assert.Equal(1, text.Split("\"$id\"").Length - 1);
         Assert.True(Accepts(text, JsonSchemaProfile.Draft07, """{"p":{}}"""), text);
         Assert.False(Accepts(text, JsonSchemaProfile.Draft07, """{"p":1}"""), text);
+    }
+
+    [Fact]
+    public void A_copy_of_a_merged_dependency_stays_a_resource_for_its_own_references()
+    {
+        const string Document = """{"required":["z"],"dependentRequired":{"a":["b"]},"dependentSchemas":{"a":{"$id":"http://e.com/n","properties":{"q":{"$ref":"#"}}}},"properties":{"p":{"$ref":"#/dependentSchemas/a"}}}""";
+        const string Instance = """{"z":1,"p":{"q":{}}}""";
+        string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).ToJsonString();
+
+        Assert.True(Import(Document).SafeParse(Instance).IsSuccess);
+        Assert.True(Accepts(text, JsonSchemaProfile.Draft07, Instance), text);
     }
 
     [Fact]

@@ -301,10 +301,11 @@ internal sealed class JsonSchemaEmitter
             _resource = outerResource;
             _definitions[name] = definition;
 
-            // The schema this copies is still written, inside the list-and-schema dependency, and a second id would name two schemas alike.
-            if (definition is JsonObject copy && IsMerged(record.Reference, record.Resource))
+            // The schema this copies is still written, inside the list-and-schema dependency, so the copy needs an id of its own.
+            // It stays a resource, because its references were written to read from it.
+            if (definition is JsonObject copy && IsMerged(record.Reference, record.Resource) && copy["$id"]?.GetValue<string>() is { } id)
             {
-                copy.Remove("$id");
+                copy["$id"] = $"{id}-{name}";
             }
 
             definitions[name] = definition;

@@ -40,7 +40,7 @@
   - A `definitions` keyword and a `$defs` keyword with one name no longer share a pointer in draft-07.
   - `RelocateToDescription` follows `$ref` and `Z.Lazy` when it decides whether a `not`, `if`, `oneOf` or `contains` with `maxContains` holds a keyword it moves, so a definition used under `not` is not loosened.
   - The search for a keyword to move, and the one for a subschema that isn't exact, stop at 100,000 subschemas and throw `InvalidOperationException`, where a `Z.Lazy` that builds a new schema each time it is read never ended. The first also remembers what it found, so a schema used by thousands of definitions is walked once.
-  - OpenAPI 3.0 has no `$id`, so an import with one that sits in another schema loses it there and its references and `$defs` are moved like any other. A copy of a draft-07 dependency that was written as a list and a schema together no longer repeats the `$id` of the schema it copies.
+  - OpenAPI 3.0 has no `$id`, so an import with one that sits in another schema loses it there and its references and `$defs` are moved like any other. A copy of a draft-07 dependency that was written as a list and a schema together gets an `$id` of its own, so the document has no duplicate and the references in the copy still read from it.
   - Known limits, listed in the import guide: references into the `allOf` of a schema with a `$ref` in draft-07, a root with an `$id` moved into another schema's properties, and references to unwritten places with `ReferencePrefix`.
 - Docs: "Differences from Zod" in the reference lists the differences that are on purpose, including the loss of data from `Strip` objects in `Z.AllOf`.
 - Packages now link to the repository.
