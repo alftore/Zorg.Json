@@ -36,6 +36,9 @@ internal sealed class SampleGenerator
     /// <summary>After this many rejected candidates and merges the search stops.</summary>
     private const int HardWorkLimit = 40_000;
 
+    /// <summary>After this many characters of JSON have been built, the search stops, so that nested minimums can't exhaust memory.</summary>
+    private const long MaxProduced = 8_000_000;
+
     private const int RootAttempts = 8;
 
     /// <summary>What a typed <see cref="DateTime"/>, <see cref="TimeOnly"/> or <see cref="TimeSpan"/> reads. Their nodes are plain strings.</summary>
@@ -54,6 +57,7 @@ internal sealed class SampleGenerator
     private readonly Dictionary<SchemaNode, JsonElement> _stopped = new(ReferenceEqualityComparer.Instance);
     private int _checks;
     private int _rejected;
+    private long _produced;
 
     public SampleGenerator(ISchema schema, SampleOptions options)
     {
@@ -64,7 +68,7 @@ internal sealed class SampleGenerator
         _itemCount = Math.Clamp(options.ArrayItemCount, 0, MaxCollection);
     }
 
-    private bool OutOfWork => _rejected + _views.Merges > HardWorkLimit;
+    private bool OutOfWork => _rejected + _views.Merges > HardWorkLimit || _produced > MaxProduced;
 
     public SampleResult Run()
     {
@@ -406,20 +410,22 @@ internal sealed class SampleGenerator
         }
 
         List<(SchemaNode Node, int Count)> wanted = Wanted(view);
-        int floor = Math.Max(minimum, wanted.Sum(want => want.Count));
+        long wide = Math.Max(minimum, wanted.Sum(want => (long)want.Count));
 
-        if (floor > maximum && wanted.Count > 1)
+        if (wide > maximum && wanted.Count > 1)
         {
             // Too few places for each contains to have its own, so that one item has to satisfy them all.
             int shared = wanted.Max(want => want.Count);
             wanted = [(SampleViews.All(wanted.Select(want => want.Node))!, shared)];
-            floor = Math.Max(minimum, shared);
+            wide = Math.Max(minimum, shared);
         }
 
-        if (floor > MaxCollection)
+        if (wide > MaxCollection)
         {
             yield break;
         }
+
+        int floor = (int)wide;
 
         int preferred = floor;
 
@@ -460,7 +466,7 @@ internal sealed class SampleGenerator
         SchemaNode? previousWant = null;
         SchemaNode? previousNode = null;
 
-        for (int index = 0; index < length; index++)
+        for (int index = 0; index < length && !OutOfWork; index++)
         {
             SchemaNode slot = index < view.PrefixItems.Length ? view.PrefixItems[index] : view.Items ?? SchemaNode.True;
             SchemaNode? want = wantIndex < wanted.Count ? wanted[wantIndex].Node : null;
@@ -479,6 +485,7 @@ internal sealed class SampleGenerator
             {
                 nodes.Add(node);
                 items.Add(items[^1]);
+                Charge(items[^1], 0);
                 continue;
             }
 
@@ -491,6 +498,7 @@ internal sealed class SampleGenerator
 
             nodes.Add(node);
             items.Add(item);
+            Charge(item, 0);
         }
 
         return (nodes, items);
@@ -568,8 +576,11 @@ internal sealed class SampleGenerator
         names.Add(name);
         nodes.Add(node);
         values.Add(found);
+        Charge(found, name.Length);
         return true;
     }
+
+    private void Charge(JsonElement value, int nameLength) => _produced += value.GetRawText().Length + nameLength + 1;
 
     /// <summary>Declared properties in order, then the rest. Dependencies come along, and <c>maxProperties</c> holds.</summary>
     private List<string> Names(SchemaNode view, bool optional)
