@@ -117,7 +117,7 @@ Check("optional omitted", JsonSerializer.Serialize(cleared, SmokeJson.Default.Pe
 Check("validate instance", patch.Validate(new PersonPatch { Name = "Ada" }).IsSuccess && !patch.Validate(new PersonPatch { Name = "" }).IsSuccess);
 Check("validate trimmed", Z.String().Trim().Validate("  a  ").Value == "a");
 
-StringSchema generated = Z.String().Pattern(Patterns.Lower());
+StringSchema generated = Z.String().Pattern(Patterns.Lower(), "^[a-z]+$");
 Check("regex valid", generated.SafeParse("\"abc\"").IsSuccess && !generated.SafeParse("\"ABC\"").IsSuccess);
 Check("regex emitted", generated.ToJsonSchema()["pattern"]?.GetValue<string>() == "^[a-z]+$");
 EmitResult callback = Z.String().Refine(_ => true, "x").Emit(new JsonSchemaOptions

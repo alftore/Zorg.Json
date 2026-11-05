@@ -57,7 +57,7 @@ public sealed record SchemaBehavior
     /// <summary>The regular expression a caller supplied to <c>Pattern(Regex)</c>. Validation uses it as given.</summary>
     internal Regex? PatternRegex { get; init; }
 
-    /// <summary>Set when <see cref="PatternRegex"/> has no ECMA-262 spelling, so <c>pattern</c> can't be emitted.</summary>
+    /// <summary>Set when <see cref="PatternRegex"/> came without an ECMA-262 pattern, so <c>pattern</c> can't be emitted.</summary>
     internal bool PatternIsUnstated { get; init; }
 
     internal Func<string, bool>? NumberCheck { get; init; }

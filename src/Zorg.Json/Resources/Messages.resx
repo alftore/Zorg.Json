@@ -90,6 +90,9 @@
   <data name="invalid_value.complex" xml:space="preserve">
     <value>The input takes too long to validate against this schema.</value>
   </data>
+  <data name="too_many_issues" xml:space="preserve">
+    <value>Stopped after {0} issues. There may be more.</value>
+  </data>
   <data name="required" xml:space="preserve">
     <value>The property {0} is required.</value>
   </data>

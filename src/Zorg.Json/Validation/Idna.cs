@@ -107,8 +107,22 @@ internal static class Idna
 
         try
         {
-            string folded = mapped.ToString().Normalize(NormalizationForm.FormKC);
-            return ToLower(folded).Normalize(NormalizationForm.FormC);
+            // Per label, so that a character whose compatibility form is a dot, such as U+2024, can't split one.
+            List<string> labels = [];
+
+            foreach (string label in mapped.ToString().Split('.'))
+            {
+                string folded = ToLower(label.Normalize(NormalizationForm.FormKC)).Normalize(NormalizationForm.FormC);
+
+                if (folded.Contains('.', StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                labels.Add(folded);
+            }
+
+            return string.Join('.', labels);
         }
         catch (ArgumentException)
         {

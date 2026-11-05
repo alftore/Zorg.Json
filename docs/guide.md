@@ -317,17 +317,17 @@ The compliance tests check this guarantee against JsonSchema.Net, an independent
 
 ### Patterns from `[GeneratedRegex]`
 
-`Pattern(Regex regex, string? ecmaPattern = null)` validates with the regex you give it, options and timeout included, and states it as `pattern`.
+`Pattern(Regex regex, string? ecmaPattern = null)` validates with the regex you give it, options and timeout included. `pattern` is written only when you pass `ecmaPattern`.
 
 ```csharp
 [GeneratedRegex("^[a-z]+$")]
 private static partial Regex Slug();
 
-Z.String().Pattern(Slug());                                   // pattern: "^[a-z]+$"
-Z.String().Pattern(Atomic(), "^a+b$");                        // the regex validates, the text is emitted
+Z.String().Pattern(Slug(), "^[a-z]+$");                       // the regex validates, the text is emitted
+Z.String().Pattern(Slug());                                   // no pattern is emitted, with a diagnostic
 ```
 
-`pattern` is `ecmaPattern` when you pass it, and otherwise `regex.ToString()` when that is valid ECMA-262 and the regex has no options that change matching, such as `IgnoreCase`. If neither holds, the rule can't be stated: `pattern` is left out with a diagnostic, like any other unrepresentable rule. A .NET regex can also differ from its ECMA-262 text, so a schema with a given `Regex` is treated as inexact: under `not`, `if`, `maxContains` and `oneOf` it is handled like a refinement. An `ecmaPattern` must not match fewer strings than the regex does, or the emitted schema would reject what parsing accepts.
+Zorg doesn't read `ecmaPattern` out of `regex.ToString()`, even when that text is valid ECMA-262, because a .NET regex can still accept strings that its ECMA-262 reading rejects. `$` matches before a final newline, so `^[a-z]+$` accepts `"abc\n"`, and `\d` matches every Unicode digit. Emitting that text would make the input schema reject what `SafeParse` accepts. Without `ecmaPattern` the rule can't be stated: `pattern` is left out with a diagnostic, like any other unrepresentable rule. A schema with a given `Regex` is also treated as inexact: under `not`, `if`, `maxContains` and `oneOf` it is handled like a refinement. An `ecmaPattern` must not match fewer strings than the regex does, or the emitted schema would reject what parsing accepts.
 
 ### Stating what Zorg can't
 
@@ -362,8 +362,9 @@ Every issue has a stable `Code`, a localized `Message`, a JSON Pointer `Instance
 | `invalid_value` | Not an allowed value, invalid Unicode, or a value too complex to evaluate | `const`, `enum`, `not`, `uniqueItems` |
 | `not_multiple_of` | Not a multiple | `multipleOf` |
 | `required` | Missing property, reported at its own path | `required`, `dependentRequired` |
-| `unrecognized_keys` | Unknown properties, listed in `Parameters["keys"]` | `additionalProperties` |
+| `unrecognized_keys` | Unknown properties, listed in `Parameters["keys"]` (the first 20) | `additionalProperties` |
 | `invalid_union` | No branch matched, or more than one of a `oneOf` | `anyOf`, `oneOf` |
+| `too_many_issues` | Evaluation stopped after 100 issues, so the list is not complete | |
 | `deserialization_failed` | Valid, but System.Text.Json couldn't read it | |
 | `custom` | A refinement failed | |
 
@@ -380,6 +381,24 @@ Following the JSON Schema 2020-12 output format, `EvaluationPath` lists the keyw
 ### Size bounds stop early
 
 An array longer than `maxItems`, or an object with more than `maxProperties` properties, reports `too_big` and its items or properties are not validated, so a huge document can't make the parser do work for a result that is already invalid. `contains`, `uniqueItems` and refinements are skipped for it too, so its issue list holds only the size issue. `maxProperties` counts the final object after `Strip` and `Default`, so a schema that strips unknown properties still checks them.
+
+## Evaluation limits
+
+A hostile document or schema can make validation expensive: a recursive union re-evaluates the same value in every branch, `allOf` over shared `$ref`s doubles the work at each level, and a pattern can backtrack. Evaluation has limits, so that none of them costs more than about a second for a small document. **Exceeding any limit fails the whole parse.** Once one is hit, the verdict of every branch that was running is meaningless, so it is never read as acceptance. That includes branches under `not`, `if`, `oneOf` and `contains`: they cannot turn a limit into success, and a parse that hit a limit never succeeds.
+
+| Limit | Value | Issue |
+|---|---|---|
+| Schema depth | 512 nested evaluations | `invalid_value` (`$ref`, "nests too deeply") |
+| Evaluation steps, over the whole parse | 500,000, plus 48 per byte of the document | `invalid_value` ("takes too long") |
+| Evaluation steps inside union, `not`, `if` and `contains` branches | 100,000, plus 16 per byte | `invalid_value` ("takes too long") |
+| One regular expression match | 100 ms, for the patterns that need the backtracking engine | `invalid_format` ("took too long") |
+| `format: regex` | 1,024 characters, and compiling charges 200 steps per character to the step budget | `invalid_format` for a longer value |
+| Issues | 100, then one `too_many_issues` issue ends the parse | `too_many_issues` |
+| Property names listed in `unrecognized_keys` | 20 | |
+
+The budgets grow with the document, so a large honest one has room and a small hostile one stops quickly. A step is one schema evaluated against one value, so a document of `n` values checked by a schema with a handful of `allOf` or `if` branches per value stays far below the budget.
+
+A failure can therefore mean "too complex", not "invalid". The issue says so: look for `invalid_value` with the keyword `anyOf` or `$ref` and the message "takes too long to validate against this schema", an `invalid_format` timeout, or `too_many_issues` as the last issue. Treat those as a rejection of the request, not as a statement that the value breaks a rule. After `too_many_issues` the list stops, so a document can have more problems than it reports. If an honest document hits a step limit, simplify the schema: fewer branches that overlap, `Z.DiscriminatedUnion` instead of `oneOf`, and no shared `$ref`s inside `allOf` that all apply to the same value.
 
 ## Strings are measured in code points
 

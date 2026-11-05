@@ -80,13 +80,15 @@ public sealed class StringSchema : Schema<string, StringSchema>
     /// </summary>
     /// <param name="regex">The expression, matched unanchored unless it says otherwise.</param>
     /// <param name="ecmaPattern">
-    /// The same rule in ECMA-262 syntax, written as <c>pattern</c>. Without it, <c>regex.ToString()</c> is written when
-    /// it's valid ECMA-262 and the regex has no options that change matching (such as <see cref="RegexOptions.IgnoreCase"/>).
+    /// The same rule in ECMA-262 syntax, written as <c>pattern</c>. It must not match fewer strings than
+    /// <paramref name="regex"/> does, or the emitted schema would reject what parsing accepts. Without it, <c>pattern</c>
+    /// is left out: a .NET regex can differ from its ECMA-262 reading even when the text is valid in both (<c>$</c> matches
+    /// before a final newline, and <c>\d</c> matches every Unicode digit), so the text is never taken as the pattern.
     /// </param>
     /// <returns>A new schema.</returns>
     /// <exception cref="ArgumentException"><paramref name="ecmaPattern"/> isn't a valid ECMA-262 pattern.</exception>
     /// <remarks>
-    /// When no ECMA-262 spelling exists, the rule is unrepresentable: <c>pattern</c> is left out, with a diagnostic (see
+    /// Without <paramref name="ecmaPattern"/> the rule is unrepresentable: <c>pattern</c> is left out, with a diagnostic (see
     /// <see cref="Emission.JsonSchemaOptions.Unrepresentable"/>). The schema stays looser, which is safe, but the node is also
     /// treated as inexact: a .NET regex can differ from its ECMA-262 text, so a subschema with a given
     /// <see cref="Regex"/> is never written under <c>not</c>, <c>if</c> or <c>oneOf</c>.
@@ -96,8 +98,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     /// [GeneratedRegex("^[a-z]+$")]
     /// private static partial Regex Lower();
     ///
-    /// StringSchema schema = Z.String().Pattern(Lower());
-    /// StringSchema explicit = Z.String().Pattern(Lower(), "^[a-z]+$");
+    /// StringSchema schema = Z.String().Pattern(Lower(), "^[a-z]+$");
     /// </code>
     /// </example>
     [Pure]
@@ -105,17 +106,15 @@ public sealed class StringSchema : Schema<string, StringSchema>
     {
         ArgumentNullException.ThrowIfNull(regex);
 
-        string? stated = ecmaPattern ?? StatedPattern(regex);
-
-        if (stated is not null)
+        if (ecmaPattern is not null)
         {
-            _ = PatternCompiler.Compile(stated);
+            _ = PatternCompiler.Compile(ecmaPattern);
         }
 
         return With(Node with
         {
-            Pattern = stated,
-            Behavior = Node.Behavior with { PatternRegex = regex, PatternIsUnstated = stated is null },
+            Pattern = ecmaPattern,
+            Behavior = Node.Behavior with { PatternRegex = regex, PatternIsUnstated = ecmaPattern is null },
         });
     }
 
@@ -354,27 +353,6 @@ public sealed class StringSchema : Schema<string, StringSchema>
         catch (ArgumentException)
         {
             return text;
-        }
-    }
-
-    private static string? StatedPattern(Regex regex)
-    {
-        const RegexOptions Neutral = RegexOptions.None | RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
-
-        if ((regex.Options & ~Neutral) != 0)
-        {
-            return null;
-        }
-
-        try
-        {
-            string pattern = regex.ToString();
-            _ = EcmaRegexTranslator.Translate(pattern);
-            return pattern;
-        }
-        catch (ArgumentException)
-        {
-            return null;
         }
     }
 

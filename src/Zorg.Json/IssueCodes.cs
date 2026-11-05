@@ -44,4 +44,10 @@ public static class IssueCodes
 
     /// <summary>A refinement failed. Its message is the one given to <c>Refine</c>.</summary>
     public const string Custom = "custom";
+
+    /// <summary>
+    /// Evaluation stopped after the first <c>100</c> issues, so the list is not complete. It is the last issue, and the
+    /// parse stays failed. See the evaluation limits in the guide.
+    /// </summary>
+    public const string TooManyIssues = "too_many_issues";
 }

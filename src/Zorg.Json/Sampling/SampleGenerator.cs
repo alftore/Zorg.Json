@@ -201,7 +201,7 @@ internal sealed class SampleGenerator
     private bool Passes(SchemaNode node, JsonElement value, out int issues)
     {
         _checks++;
-        ValidationContext context = new();
+        ValidationContext context = new(value);
         Plan(node).Run(value, context);
         issues = context.IssueCount;
         _rejected += Math.Min(issues, 1);
@@ -213,7 +213,7 @@ internal sealed class SampleGenerator
     /// <summary>The full verdict on a document, as parsing would give it.</summary>
     private ImmutableArray<ParseIssue> Finish(JsonElement sample, out bool deferred)
     {
-        ValidationContext context = new();
+        ValidationContext context = new(sample);
         JsonElement value = Plan(_root).Run(sample, context);
         deferred = false;
 

@@ -11,6 +11,11 @@ internal static partial class StringFormats
     private const string EmailSymbols = "!#$%&'*+-/=?^_`{|}~";
     private const string UriTemplateOperators = "+#./;?&=,!@|";
 
+    /// <summary>The longest pattern <c>format: regex</c> accepts.</summary>
+    internal const int MaxRegexLength = 1024;
+
+    private const long RegexStepsPerCharacter = 200;
+
     /// <summary>Gets the check for a format. Null means the format is only an annotation.</summary>
     public static Func<string, bool>? Find(string? format) => format switch
     {
@@ -38,8 +43,31 @@ internal static partial class StringFormats
 
     public static bool IsKnown(string format) => Find(format) is not null;
 
-    // Guid parsing tolerates surrounding whitespace, which the format doesn't.
-    private static bool IsUuid(string value) => value.Length == 36 && Guid.TryParseExact(value, "D", out _);
+    // Guid parsing takes a sign, "0x" and whitespace in a group, which the format doesn't.
+    private static bool IsUuid(string value)
+    {
+        if (value.Length != 36)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < value.Length; index++)
+        {
+            if (index is 8 or 13 or 18 or 23 ? value[index] != '-' : !char.IsAsciiHexDigit(value[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// A pattern longer than <see cref="MaxRegexLength"/> is not accepted, so that the input can't make the compiler
+    /// work on megabytes. The compile is charged to the evaluation budget.
+    /// </summary>
+    public static bool IsRegex(string value, ValidationContext context) =>
+        value.Length <= MaxRegexLength && context.Spend(RegexStepsPerCharacter * value.Length) && IsRegex(value);
 
     private static bool IsRegex(string value)
     {
@@ -351,6 +379,33 @@ internal static partial class StringFormats
 
     private static bool IsRelativeJsonPointer(string value)
     {
+        // draft-bhutton-relative-json-pointer-00: an integer, an optional "+" or "-" and a second integer, then "#" or a pointer.
+        int length = ReadNonNegativeInteger(value);
+
+        if (length == 0)
+        {
+            return false;
+        }
+
+        if (length < value.Length && value[length] is '+' or '-')
+        {
+            int adjustment = ReadNonNegativeInteger(value.AsSpan(length + 1));
+
+            if (adjustment == 0)
+            {
+                return false;
+            }
+
+            length += 1 + adjustment;
+        }
+
+        ReadOnlySpan<char> rest = value.AsSpan(length);
+        return rest is "#" || IsJsonPointer(rest);
+    }
+
+    /// <summary>The length of the integer at the start, with no leading zero, or 0 if there isn't one.</summary>
+    private static int ReadNonNegativeInteger(ReadOnlySpan<char> value)
+    {
         int digits = 0;
 
         while (digits < value.Length && char.IsAsciiDigit(value[digits]))
@@ -358,13 +413,7 @@ internal static partial class StringFormats
             digits++;
         }
 
-        if (digits == 0 || (digits > 1 && value[0] == '0'))
-        {
-            return false;
-        }
-
-        ReadOnlySpan<char> rest = value.AsSpan(digits);
-        return rest is "#" || IsJsonPointer(rest);
+        return digits > 1 && value[0] == '0' ? 0 : digits;
     }
 
     private static bool IsUri(string value, bool relative, bool unicode)
@@ -558,7 +607,7 @@ internal static partial class StringFormats
 
     private static bool IsUcsChar(int codePoint) =>
         codePoint is (>= 0xA0 and <= 0xD7FF) or (>= 0xF900 and <= 0xFDCF) or (>= 0xFDF0 and <= 0xFFEF)
-        || (codePoint is >= 0x10000 and <= 0xEFFFD && (codePoint & 0xFFFE) != 0xFFFE);
+        || (codePoint is (>= 0x10000 and <= 0xDFFFD) or (>= 0xE1000 and <= 0xEFFFD) && (codePoint & 0xFFFE) != 0xFFFE);
 
     private static bool IsPrivateUse(int codePoint) =>
         codePoint is (>= 0xE000 and <= 0xF8FF) or (>= 0xF0000 and <= 0xFFFFD) or (>= 0x100000 and <= 0x10FFFD);
