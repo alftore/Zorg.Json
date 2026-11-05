@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Zorg.Json.Model;
@@ -164,14 +165,24 @@ internal sealed class ContractSeeder
                 continue;
             }
 
-            SchemaNode schema = property.CustomConverter is not null ? new SchemaNode() : Seed(property.PropertyType);
+            Type? optional = OptionalValueType(property.PropertyType);
+            SchemaNode schema;
 
-            if (schema != AnyValue && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
+            if (optional is not null)
             {
-                schema = schema.WithNull();
+                schema = SeedOptional(property, optional);
+            }
+            else
+            {
+                schema = property.CustomConverter is not null ? new SchemaNode() : Seed(property.PropertyType);
+
+                if (schema != AnyValue && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
+                {
+                    schema = schema.WithNull();
+                }
             }
 
-            JsonElement? defaultValue = DefaultValue(property);
+            JsonElement? defaultValue = optional is null ? DefaultValue(property) : null;
 
             if (defaultValue is not null)
             {
@@ -180,7 +191,7 @@ internal sealed class ContractSeeder
 
             properties.Add(new SchemaProperty(property.Name, schema) { OutputOnly = !readable });
 
-            if (readable && (property.IsRequired || (defaultValue is null && IsRequired(property))))
+            if (readable && (property.IsRequired || (optional is null && defaultValue is null && IsRequired(property))))
             {
                 required.Add(property.Name);
             }
@@ -197,6 +208,40 @@ internal sealed class ContractSeeder
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };
+    }
+
+    /// <summary>The <c>T</c> of an <see cref="Optional{T}"/>, or null for any other type. Reads the type arguments only, so it's safe for Native AOT.</summary>
+    private static Type? OptionalValueType(Type type) =>
+        type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Optional<>) ? type.GetGenericArguments()[0] : null;
+
+    /// <summary>An optional property has the schema of its value, and JSON null is allowed when the value type is nullable.</summary>
+    private SchemaNode SeedOptional(JsonPropertyInfo property, Type valueType)
+    {
+        SchemaNode schema = Seed(valueType);
+
+        if (schema == AnyValue || valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
+        {
+            return schema;
+        }
+
+        return AllowsNull(property, valueType) ? schema.WithNull() : schema;
+    }
+
+    private static bool AllowsNull(JsonPropertyInfo property, Type valueType)
+    {
+        if (valueType.IsValueType)
+        {
+            return true;
+        }
+
+        // Without nullable annotations, such as a type from an older assembly, null is allowed: the converter accepts it.
+        if (property.AttributeProvider is not PropertyInfo member)
+        {
+            return true;
+        }
+
+        NullabilityInfo info = new NullabilityInfoContext().Create(member);
+        return info.GenericTypeArguments.Length == 0 || info.GenericTypeArguments[0].ReadState != NullabilityState.NotNull;
     }
 
     /// <summary>Reads <see cref="DefaultValueAttribute"/>. Like the attribute, it's an annotation: nothing fills the value in.</summary>
