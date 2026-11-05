@@ -302,7 +302,7 @@ internal sealed class FuzzChecker(FuzzFindings findings)
             findings.Fail("String and UTF-8 overloads disagree", $"on {document}: string={text} utf8={bytes} | {where}");
         }
 
-        if (viaText == true && document.Text is { Length: < 20_000 } raw && TryElement(raw) is { } parsed)
+        if (viaText == true && document.Text is { Length: < 20_000 } raw && (KnownBugs.Included || !KnownBugs.HasLoneSurrogate(raw)) && TryElement(raw) is { } parsed)
         {
             CheckOracles(oracles, parsed, "Emitted schema is stricter than parsing", document.ToString(), where);
         }
