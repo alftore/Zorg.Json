@@ -614,7 +614,7 @@
       "part": "interop-in",
       "category": "refused-schemas",
       "status": "zod-behaviour",
-      "reason": "Zod writes prefixItems: [] for z.tuple([]), which Draft 2020-12 does not allow (a non-empty array of schemas). Zorg refuses it as invalid_schema. It accepts items: [] in Draft-07 and Draft-04, where the metaschema also requires a non-empty array.",
+      "reason": "Zod writes prefixItems: [] for z.tuple([]), which Draft 2020-12 does not allow (a non-empty array of schemas). Zorg refuses it as invalid_schema. It refuses the items: [] that Zod writes for Draft-07 and Draft-04 in the same way, because their metaschemas also require a non-empty array.",
       "link": "docs/import.md#what-s-supported",
       "cases": [
         "tuple-empty"

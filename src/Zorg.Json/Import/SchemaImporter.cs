@@ -71,7 +71,9 @@ internal sealed class SchemaImporter
     private readonly Dictionary<SchemaNode, string> _locations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<(string Resource, string Name), string> _anchors = [];
     private readonly List<PendingReference> _references = [];
+    private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
     private int _count;
+    private long _patternLength;
 
     private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect)
     {
@@ -129,6 +131,11 @@ internal sealed class SchemaImporter
             string code = IsWellFormed(schema) ? JsonSchemaImportCodes.LimitExceeded : JsonSchemaImportCodes.InvalidSchema;
             throw new JsonSchemaImportException(code, string.Empty, exception.Message, exception);
         }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            // A lone surrogate in the .NET string has no UTF-8 spelling, and one in an escaped property name can't be compared.
+            throw new JsonSchemaImportException(JsonSchemaImportCodes.InvalidSchema, string.Empty, "The text isn't valid Unicode.", exception);
+        }
     }
 
     private static bool IsWellFormed(string schema)
@@ -156,8 +163,10 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.InvalidSchema, "/$schema", "$schema must be a string.");
         }
 
-        return ToDialect(declared.GetString()!)
-            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{declared.GetString()}\" can't be imported. Use Draft 2020-12, draft-07, draft-06 or draft-04.");
+        string dialect = Text(declared, "/$schema");
+
+        return ToDialect(dialect)
+            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{dialect}\" can't be imported. Use Draft 2020-12, draft-07, draft-06 or draft-04.");
     }
 
     private static JsonSchemaImportDialect? ToDialect(string uri) => uri.TrimEnd('#') switch
@@ -170,6 +179,34 @@ internal sealed class SchemaImporter
     };
 
     private static JsonSchemaImportException Error(string code, string location, string message) => new(code, location, message);
+
+    /// <summary>
+    /// The text of a JSON string. The parser accepts an escaped lone surrogate, which has no decoding, and Zorg refuses
+    /// such text in instances too. Values Zorg only keeps, such as <c>const</c>, are never decoded.
+    /// </summary>
+    private static string Text(JsonElement value, string location)
+    {
+        try
+        {
+            return value.GetString()!;
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new JsonSchemaImportException(JsonSchemaImportCodes.InvalidSchema, location, "The text has an unpaired surrogate, so it isn't valid Unicode.", exception);
+        }
+    }
+
+    private static string Name(JsonProperty property, string location)
+    {
+        try
+        {
+            return property.Name;
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new JsonSchemaImportException(JsonSchemaImportCodes.InvalidSchema, location, "A name has an unpaired surrogate, so it isn't valid Unicode.", exception);
+        }
+    }
 
     private static string Escape(string name) =>
         name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
@@ -191,7 +228,7 @@ internal sealed class SchemaImporter
         AnyDialect.Contains(keyword) || SinceDraft07.Contains(keyword) || UntilDraft07.Contains(keyword);
 
     private static JsonTypes ToType(JsonElement value, string location) => value.ValueKind == JsonValueKind.String
-        ? value.GetString() switch
+        ? Text(value, location) switch
         {
             "null" => JsonTypes.Null,
             "boolean" => JsonTypes.Boolean,
@@ -200,7 +237,7 @@ internal sealed class SchemaImporter
             "string" => JsonTypes.String,
             "array" => JsonTypes.Array,
             "object" => JsonTypes.Object,
-            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, location, $"\"{value.GetString()}\" isn't a JSON Schema type."),
+            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, location, $"\"{Text(value, location)}\" isn't a JSON Schema type."),
         }
         : throw Error(JsonSchemaImportCodes.InvalidSchema, location, "A type must be a string.");
 
@@ -216,12 +253,14 @@ internal sealed class SchemaImporter
 
         foreach (JsonElement item in value.EnumerateArray())
         {
-            if (item.ValueKind != JsonValueKind.String || !seen.Add(item.GetString()!))
+            string name = item.ValueKind == JsonValueKind.String ? Text(item, $"{location}/{names.Count}") : string.Empty;
+
+            if (item.ValueKind != JsonValueKind.String || !seen.Add(name))
             {
                 throw Error(JsonSchemaImportCodes.InvalidSchema, location, "Expected an array of unique strings.");
             }
 
-            names.Add(item.GetString()!);
+            names.Add(name);
         }
 
         return names.MoveToImmutable();
@@ -353,9 +392,11 @@ internal sealed class SchemaImporter
 
         foreach (JsonProperty property in schema.EnumerateObject())
         {
-            if (!values.TryAdd(property.Name, property.Value))
+            string keyword = Name(property, at.Pointer);
+
+            if (!values.TryAdd(keyword, property.Value))
             {
-                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(property.Name), "The keyword appears twice.");
+                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(keyword), "The keyword appears twice.");
             }
         }
 
@@ -571,7 +612,7 @@ internal sealed class SchemaImporter
             return ([], keywords.Schema("items", scope));
         }
 
-        return (keywords.List("items", scope), keywords.Schema("additionalItems", scope));
+        return (keywords.NonEmptyList("items", scope), keywords.Schema("additionalItems", scope));
     }
 
     private (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> Required, ImmutableArray<SchemaProperty> Schemas) ReadDependencies(Keywords keywords, Scope scope)
@@ -596,15 +637,16 @@ internal sealed class SchemaImporter
 
         foreach (JsonProperty property in dependencies.EnumerateObject())
         {
-            Scope child = scope.Child("dependencies", property.Name);
+            string name = Name(property, location);
+            Scope child = scope.Child("dependencies", name);
 
             if (property.Value.ValueKind == JsonValueKind.Array)
             {
-                required.Add(KeyValuePair.Create(property.Name, ToUniqueStrings(property.Value, child.Pointer)));
+                required.Add(KeyValuePair.Create(name, ToUniqueStrings(property.Value, child.Pointer)));
             }
             else
             {
-                schemas.Add(new SchemaProperty(property.Name, Build(property.Value, child)));
+                schemas.Add(new SchemaProperty(name, Build(property.Value, child)));
             }
         }
 
@@ -643,7 +685,7 @@ internal sealed class SchemaImporter
 
     private void CheckNestedDialect(JsonElement value, Scope at)
     {
-        if (value.ValueKind != JsonValueKind.String || ToDialect(value.GetString()!) != _dialect)
+        if (value.ValueKind != JsonValueKind.String || ToDialect(Text(value, at.Keyword("$schema"))) != _dialect)
         {
             throw Error(JsonSchemaImportCodes.UnsupportedDialect, at.Keyword("$schema"), "A subschema can't change the dialect.");
         }
@@ -690,6 +732,12 @@ internal sealed class SchemaImporter
         if (pattern.Length > _options.MaxPatternLength)
         {
             throw Error(JsonSchemaImportCodes.LimitExceeded, location, $"The pattern is longer than {_options.MaxPatternLength} characters.");
+        }
+
+        // Each distinct text is compiled once and shared with the validation plan, so only new text costs anything.
+        if (_patterns.Add(pattern) && (_patternLength += pattern.Length) > _options.MaxTotalPatternLength)
+        {
+            throw Error(JsonSchemaImportCodes.LimitExceeded, location, $"The patterns add up to more than MaxTotalPatternLength, which is {_options.MaxTotalPatternLength}.");
         }
 
         try
@@ -937,7 +985,7 @@ internal sealed class SchemaImporter
                 return null;
             }
 
-            return value.ValueKind == JsonValueKind.String ? value.GetString() : throw Invalid(location, "a string");
+            return value.ValueKind == JsonValueKind.String ? Text(value, location) : throw Invalid(location, "a string");
         }
 
         public bool? Boolean(string keyword)
@@ -1079,7 +1127,10 @@ internal sealed class SchemaImporter
             }
 
             return [.. value.EnumerateObject().Select(property =>
-                KeyValuePair.Create(property.Name, ToUniqueStrings(property.Value, $"{location}/{Escape(property.Name)}")))];
+            {
+                string name = Name(property, location);
+                return KeyValuePair.Create(name, ToUniqueStrings(property.Value, $"{location}/{Escape(name)}"));
+            })];
         }
 
         private static JsonSchemaImportException Invalid(string location, string expected) =>
@@ -1102,19 +1153,20 @@ internal sealed class SchemaImporter
 
             foreach (JsonProperty property in value.EnumerateObject())
             {
-                Scope child = scope.Child(keyword, property.Name);
+                string name = Name(property, location);
+                Scope child = scope.Child(keyword, name);
 
-                if (!seen.Add(property.Name))
+                if (!seen.Add(name))
                 {
                     throw Error(JsonSchemaImportCodes.InvalidSchema, child.Pointer, "The name appears twice.");
                 }
 
                 if (checkNames)
                 {
-                    importer.CheckPattern(property.Name, child.Pointer);
+                    importer.CheckPattern(name, child.Pointer);
                 }
 
-                properties.Add(new SchemaProperty(property.Name, importer.Build(property.Value, child)));
+                properties.Add(new SchemaProperty(name, importer.Build(property.Value, child)));
             }
 
             return properties.ToImmutable();

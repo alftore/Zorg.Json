@@ -44,6 +44,13 @@ public sealed record JsonSchemaImportOptions
     /// Exceeding it fails with <see cref="JsonSchemaImportCodes.LimitExceeded"/>. Default: 1,024.
     /// </summary>
     public int MaxPatternLength { get; init; } = 1_024;
+
+    /// <summary>
+    /// The total length of all distinct <c>pattern</c> texts and <c>patternProperties</c> keys, in UTF-16 units. A pattern that
+    /// appears more than once counts once, because it is compiled once. Exceeding it fails with
+    /// <see cref="JsonSchemaImportCodes.LimitExceeded"/>. Default: 65,536.
+    /// </summary>
+    public int MaxTotalPatternLength { get; init; } = 65_536;
 }
 
 /// <summary>The JSON Schema dialects that can be imported, chosen by <c>$schema</c>. Zod equivalent: the dialect detection in <c>z.fromJSONSchema</c>.</summary>
