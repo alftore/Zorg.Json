@@ -575,7 +575,7 @@ internal sealed class JsonSchemaEmitter
         if (node.Behavior.PatternIsUnstated && node.Behavior.PatternRegex is { } regex)
         {
             notes.Add($"Also matches the .NET regular expression {regex}.");
-            Unrepresentable("pattern", $"The regular expression {regex} has no ECMA-262 spelling, so pattern can't be stated.", location, regex.ToString());
+            Unrepresentable("pattern", $"The regular expression {regex} has no ECMA-262 pattern given, so pattern can't be stated.", location, regex.ToString());
         }
 
         Add(schema, "minLength", node.MinLength);

@@ -37,11 +37,13 @@ public sealed partial class RegexPatternTests
     }
 
     [Fact]
-    public void Emission_writes_the_regex_text_when_it_is_valid_ecma()
+    public void Emission_does_not_infer_the_pattern_from_the_regex_text()
     {
-        JsonObject schema = Z.String().Pattern(Lower()).ToJsonSchema();
+        EmitResult result = Z.String().Pattern(Lower()).Emit();
 
-        Assert.Equal("^[a-z]+$", schema["pattern"]!.GetValue<string>());
+        Assert.False(result.Schema.ContainsKey("pattern"));
+        Assert.Equal("pattern", Assert.Single(result.Diagnostics).Keyword);
+        Assert.Equal("^[a-z]+$", Z.String().Pattern(Lower(), "^[a-z]+$").ToJsonSchema()["pattern"]!.GetValue<string>());
     }
 
     [Fact]
