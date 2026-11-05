@@ -75,4 +75,7 @@ public enum CompatibilityIssueKind
 
     /// <summary>A documented count or size is exceeded.</summary>
     LimitExceeded,
+
+    /// <summary>A <c>$ref</c> does not lead to anything in the emitted schema.</summary>
+    Reference,
 }

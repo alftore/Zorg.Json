@@ -161,15 +161,17 @@ internal static class PatternSampler
                 part.Write(writer);
                 writer.Variant = variant;
 
+                int written = writer.Length - length;
+
                 if (count >= minimum)
                 {
-                    int written = writer.Length - length;
                     writer.Need -= written - (need - writer.Need);
+                }
 
-                    if (written == 0)
-                    {
-                        break;
-                    }
+                // Another copy of what wrote nothing writes nothing, however many are asked for.
+                if (written == 0)
+                {
+                    break;
                 }
             }
         }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Unicode;
 using Zorg.Json.Emission;
 
 namespace Zorg.Json.Llm;
@@ -11,6 +12,9 @@ namespace Zorg.Json.Llm;
 public static class LlmSchemaExtensions
 {
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
+
+    private static bool IsUnreadable(Exception exception) =>
+        exception is JsonException or InvalidOperationException or ArgumentException;
 
     /// <summary>Emits the schema to send to a provider. Zod equivalent: <c>z.toJSONSchema</c> with an SDK's own transform on top.</summary>
     /// <typeparam name="T">The type of the parsed value.</typeparam>
@@ -82,14 +86,18 @@ public static class LlmSchemaExtensions
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(json);
 
+        JsonElement element;
+
         try
         {
-            return schema.ParseModelOutput(emitted, JsonElement.Parse(json, DocumentOptions));
+            element = JsonElement.Parse(json, DocumentOptions);
         }
-        catch (JsonException)
+        catch (Exception exception) when (IsUnreadable(exception))
         {
             return schema.SafeParse(json);
         }
+
+        return schema.ParseModelOutput(emitted, element);
     }
 
     /// <summary>Validates a model's UTF-8 answer against the full schema, as the <see cref="string"/> overload does.</summary>
@@ -107,14 +115,18 @@ public static class LlmSchemaExtensions
     {
         ArgumentNullException.ThrowIfNull(schema);
 
+        JsonElement element;
+
         try
         {
-            return schema.ParseModelOutput(emitted, JsonElement.Parse(utf8Json, DocumentOptions));
+            element = Utf8.IsValid(utf8Json) ? JsonElement.Parse(utf8Json, DocumentOptions) : default;
         }
-        catch (JsonException)
+        catch (Exception exception) when (IsUnreadable(exception))
         {
             return schema.SafeParse(utf8Json);
         }
+
+        return element.ValueKind == JsonValueKind.Undefined ? schema.SafeParse(utf8Json) : schema.ParseModelOutput(emitted, element);
     }
 
     /// <summary>Validates a parsed answer against the full schema, as the <see cref="string"/> overload does.</summary>

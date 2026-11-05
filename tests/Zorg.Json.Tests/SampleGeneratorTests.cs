@@ -1,5 +1,7 @@
 using System;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -664,6 +666,61 @@ public sealed class SampleGeneratorTests
             .Property("nick", Z.String().Optional());
 
         Assert.Equal("""{"id":"123e4567-e89b-42d3-a456-000000000000","age":18,"tags":["aaa","bbb"],"nick":"string"}""", Valid(schema));
+    }
+
+    [Fact]
+    public void Huge_min_contains_in_two_places_does_not_overflow()
+    {
+        SampleResult sample = Z.FromJsonSchema("""
+            {"contains":{},"minContains":2147483647,"allOf":[{"contains":{},"minContains":2147483647}]}
+            """).GenerateSample();
+
+        Assert.Equal(sample.IsValid, sample.Issues.IsEmpty);
+    }
+
+    [Fact]
+    public async Task Nested_minimums_stop_at_a_size_budget()
+    {
+        const string Schema = """
+            {"type":"array","minItems":10000,"items":{"type":"array","minItems":10000,"items":{"type":"array","minItems":10000,"items":{"type":"string"}}}}
+            """;
+
+        SampleResult sample = await Task.Run(() => Z.FromJsonSchema(Schema).GenerateSample(), TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+
+        Assert.False(sample.IsValid);
+    }
+
+    [Fact]
+    public async Task Doubling_required_properties_stop_at_a_size_budget()
+    {
+        StringBuilder text = new("""{"$ref":"#/$defs/l0","$defs":{""");
+
+        for (int level = 0; level < 30; level++)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"\"l{level}\":{{\"type\":\"object\",\"required\":[\"x\",\"y\"],\"properties\":{{\"x\":{{\"$ref\":\"#/$defs/l{level + 1}\"}},\"y\":{{\"$ref\":\"#/$defs/l{level + 1}\"}}}}}},");
+        }
+
+        text.Append("""
+            "l30":{"type":"string"}}}
+            """);
+        JsonValueSchema schema = Z.FromJsonSchema(text.ToString());
+
+        SampleResult sample = await Task.Run(() => schema.GenerateSample(), TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+
+        Assert.False(sample.IsValid);
+    }
+
+    [Fact]
+    public async Task Nested_empty_repeats_with_huge_counts_finish()
+    {
+        ObjectSchema schema = Z.Object().Property("a", Z.String().Pattern("^((?:){2147483647}){2147483647}$"));
+
+        SampleResult sample = await Task.Run(() => schema.GenerateSample(), TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal(sample.IsValid, sample.Issues.IsEmpty);
     }
 
     [Fact]

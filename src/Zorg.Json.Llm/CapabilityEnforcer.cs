@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -14,23 +15,112 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
 {
     public SchemaCapabilities Capabilities { get; } = capabilities;
 
-    public void Process(JsonObject schema, EmitContext context) =>
+    public void Process(JsonObject schema, EmitContext context)
+    {
+        KeepReferencesValid(schema);
         JsonSchemaWalker.Walk(schema, (node, location, _) => Enforce(node, location, context));
+
+        foreach ((string location, string reference) in LocalReferences.Dangling(schema))
+        {
+            context.Report(new EmitDiagnostic("$ref", LocalReferences.DanglingMessage(reference), location));
+        }
+    }
 
     private static string Text(JsonNode? value) =>
         value?.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : value?.ToJsonString(JsonSchemaWalker.TextOptions) ?? "null";
 
     private static void Annotate(JsonObject node, string note)
     {
-        if (node["description"] is JsonValue existing)
+        if (LocalReferences.AsString(node["description"]) is { } existing)
         {
-            node["description"] = $"{existing.GetValue<string>()} {note}";
+            node["description"] = $"{existing} {note}";
+        }
+        else if (node.ContainsKey("description"))
+        {
+            node["description"] = note;
         }
         else
         {
             int index = node.ContainsKey("title") ? node.IndexOf("title") + 1 : 0;
             node.Insert(index, "description", note);
         }
+    }
+
+    private static void RewriteReferences(JsonObject schema, Func<string, string?> rewrite) =>
+        JsonSchemaWalker.Walk(schema, (node, _, _) =>
+        {
+            if (LocalReferences.AsString(node["$ref"]) is { } reference && rewrite(reference) is { } replacement)
+            {
+                node["$ref"] = replacement;
+            }
+        });
+
+    // Moving a keyword to description must not leave a reference pointing at it.
+    private void KeepReferencesValid(JsonObject schema)
+    {
+        if (!Capabilities.Keywords.Contains("definitions") && Capabilities.Keywords.Contains("$defs"))
+        {
+            RenameDefinitions(schema);
+        }
+
+        if (!Capabilities.Keywords.Contains("$anchor"))
+        {
+            ResolveAnchors(schema);
+        }
+    }
+
+    private static void RenameDefinitions(JsonObject schema)
+    {
+        const string Old = "#/definitions/";
+        const string New = "#/$defs/";
+
+        if (schema["definitions"] is not JsonObject definitions || (schema.ContainsKey("$defs") && schema["$defs"] is not JsonObject))
+        {
+            return;
+        }
+
+        JsonObject? target = schema["$defs"] as JsonObject;
+
+        if (target is not null && definitions.Any(entry => target.ContainsKey(entry.Key)))
+        {
+            return;
+        }
+
+        int index = schema.IndexOf("definitions");
+        schema.Remove("definitions");
+
+        if (target is null)
+        {
+            target = [];
+            schema.Insert(index, "$defs", target);
+        }
+
+        foreach ((string name, JsonNode? value) in definitions.ToArray())
+        {
+            definitions.Remove(name);
+            target.Add(name, value);
+        }
+
+        RewriteReferences(schema, reference => reference.StartsWith(Old, StringComparison.Ordinal) ? string.Concat(New, reference.AsSpan(Old.Length)) : null);
+    }
+
+    private static void ResolveAnchors(JsonObject schema)
+    {
+        Dictionary<string, string> anchors = new(StringComparer.Ordinal);
+
+        JsonSchemaWalker.Walk(schema, (node, location, _) =>
+        {
+            if (LocalReferences.AsString(node["$anchor"]) is { } name)
+            {
+                anchors.TryAdd(name, location);
+            }
+        });
+
+        RewriteReferences(
+            schema,
+            reference => reference.Length > 1 && reference[0] == '#' && reference[1] != '/' && anchors.TryGetValue(reference[1..], out string? location)
+                ? $"#{location}"
+                : null);
     }
 
     private void Enforce(JsonObject node, string location, EmitContext context)
