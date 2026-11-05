@@ -315,9 +315,13 @@ internal sealed class FuzzChecker(FuzzFindings findings)
 
             if (verdict is null)
             {
-                findings.Count("oracle declined an instance");
+                findings.Count(Oracle.IsSafeForOracle(instance.GetRawText()) ? "oracle threw on an instance" : "oracle skipped an unsafe number");
             }
-            else if (!verdict.Value)
+            else if (verdict.Value)
+            {
+                findings.Count("oracle accepted an instance");
+            }
+            else
             {
                 if (usesRegex || (usesLength && !document.All(char.IsAscii)) || (usesLength && document.Contains("\\u", StringComparison.Ordinal)))
                 {

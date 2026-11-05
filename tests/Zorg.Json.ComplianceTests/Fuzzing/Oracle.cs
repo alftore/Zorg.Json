@@ -22,6 +22,13 @@ internal static partial class Oracle
         try
         {
             RemoveInertKeywords(schema);
+
+            // OpenAPI 3.1 output has no $schema, and without one JsonSchema.Net refuses every unknown keyword.
+            if (!schema.ContainsKey("$schema"))
+            {
+                schema["$schema"] = "https://json-schema.org/draft/2020-12/schema";
+            }
+
             return JsonSchema.FromText(schema.ToJsonString(), Fresh());
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -61,7 +68,7 @@ internal static partial class Oracle
     }
 
     /// <summary>JsonSchema.Net overflows the stack in its multipleOf check on numbers with huge exponents or digit runs, which ends the process.</summary>
-    private static bool IsSafeForOracle(string raw) => !UnsafeNumber().IsMatch(raw);
+    public static bool IsSafeForOracle(string raw) => !UnsafeNumber().IsMatch(raw);
 
     [GeneratedRegex(@"[eE][+-]?\d{3,}|\d{40,}")]
     private static partial Regex UnsafeNumber();
