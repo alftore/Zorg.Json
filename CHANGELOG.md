@@ -18,6 +18,15 @@
 - Emission stops with an `InvalidOperationException` after 100,000 subschemas, which names `Reused = Ref` and `.Named`. `GenerateSample` stops sooner on schemas that reject every candidate.
 - Evaluation limits: `NormalizeUnicode` refuses a string with more than 64 combining marks in a row, a big `enum` is checked by hash, its issues share one list of values and its message lists 50, and `dependentRequired` and `required` look properties up in one index instead of once each.
 - Importing a schema nested 100,000 levels deep is refused in milliseconds.
+- Review fixes in evaluation:
+  - Instance paths copied into the issues of speculative branches are charged to a budget, so a long property name with a long array no longer takes quadratic time.
+  - `SafeParse(JsonElement)` no longer throws on bytes that aren't UTF-8 when it rewrites an object or array, or reads a discriminator.
+  - `const`, `enum` and a discriminated union fail the parse on a value with an unreadable string, so `Z.Not(...)`, `Z.If(...)` and `Z.AnyOf(...)` over them can't accept `"\ud800"`.
+  - A discriminator compares values as JSON, so `1` and `1.0` select the same branch, and branches with equal values make it a plain `oneOf`.
+  - Numbers are compared as digits and an exponent, in linear time, and long numbers are charged to the step budget. Before, a ten-megabyte number took seconds to parse. Exponents are exact up to 18 digits (`1e2000000000` and `1e3000000000` used to be equal), and a longer one fails the parse where a schema has to compare it.
+  - Failed `anyOf` and `oneOf` branches keep at most 20,000 issues over a parse, so a recursive union over a large document no longer holds gigabytes.
+  - An exception thrown by your own `Refine` or `RefineAsync`, including a `JsonException`, passes through instead of becoming `deserialization_failed`.
+  - `SafeParse(ReadOnlySpan<byte>)` skips a UTF-8 byte order mark, as the stream overload does. A bad byte and the escape `\udcff` are different strings for `uniqueItems`.
 - Docs: "Differences from Zod" in the reference lists the differences that are on purpose, including the loss of data from `Strip` objects in `Z.AllOf`.
 - Packages now link to the repository.
 - Exceeding an evaluation limit now fails the whole parse. Before, a branch under `if`, `oneOf` or `contains` that ran out of budget, or a regex that timed out under `not` or `if`, counted as "didn't match" and could turn into acceptance. There is now a budget over all steps as well as the speculative one, and the guide lists the limits.
