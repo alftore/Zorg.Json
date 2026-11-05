@@ -78,7 +78,8 @@ public abstract class Schema<T> : ISchema, ISampleTarget
 
         try
         {
-            element = JsonElement.Parse(utf8Json, DocumentOptions);
+            // The stream overload skips a byte order mark, so this one does too.
+            element = JsonElement.Parse(utf8Json.StartsWith<byte>([0xEF, 0xBB, 0xBF]) ? utf8Json[3..] : utf8Json, DocumentOptions);
         }
         catch (Exception exception) when (IsUnreadable(exception))
         {

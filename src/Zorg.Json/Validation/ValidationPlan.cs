@@ -735,21 +735,27 @@ internal sealed class ValidationPlan
 
             foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in _patternProperties)
             {
+                // Only the match is guarded: an exception from the plan below is a caller's, and passes through.
+                bool matched;
+
                 try
                 {
-                    if (pattern.IsMatch(name))
-                    {
-                        int before = context.RewriteCount;
-                        context.Walk("patternProperties", patternName);
-                        JsonElement candidate = patternPlan.Run(original, context);
-                        context.Unwalk();
-                        result = context.RewriteCount != before ? candidate : result;
-                        covered = true;
-                    }
+                    matched = pattern.IsMatch(name);
                 }
                 catch (RegexMatchTimeoutException)
                 {
                     context.ReportTimeout("patternProperties", pattern.ToString());
+                    covered = true;
+                    continue;
+                }
+
+                if (matched)
+                {
+                    int before = context.RewriteCount;
+                    context.Walk("patternProperties", patternName);
+                    JsonElement candidate = patternPlan.Run(original, context);
+                    context.Unwalk();
+                    result = context.RewriteCount != before ? candidate : result;
                     covered = true;
                 }
             }
@@ -1132,7 +1138,7 @@ internal sealed class ValidationPlan
                     context.ReportRefinement(refinement);
                 }
             }
-            catch (JsonException exception)
+            catch (MaterializationException exception)
             {
                 context.ReportDeserializationFailed(exception);
             }

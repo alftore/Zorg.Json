@@ -198,6 +198,38 @@ public sealed class ReviewFollowUpTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Exceptions_from_a_callers_refinement_pass_through()
+    {
+        StringSchema json = Z.String().Refine(_ => throw new JsonException("mine"), "unused");
+        ObjectSchema timeout = Z.Object().PatternProperty("^a", Z.String().Refine(_ => throw new System.Text.RegularExpressions.RegexMatchTimeoutException(), "unused"));
+        StringSchema later = Z.String().RefineAsync((_, _) => throw new JsonException("mine"), "unused");
+
+        Assert.Equal("mine", Assert.Throws<JsonException>(() => json.SafeParse("\"x\"")).Message);
+        Assert.Throws<System.Text.RegularExpressions.RegexMatchTimeoutException>(() => timeout.SafeParse("""{"a":"x"}"""));
+        await Assert.ThrowsAsync<JsonException>(async () => await later.SafeParseAsync(new System.IO.MemoryStream("\"x\""u8.ToArray()), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task A_byte_order_mark_is_read_the_same_from_bytes_and_a_stream()
+    {
+        byte[] bytes = [0xEF, 0xBB, 0xBF, 0x31];
+
+        bool fromBytes = Z.Any().SafeParse(bytes).IsSuccess;
+        bool fromStream = (await Z.Any().SafeParseAsync(new System.IO.MemoryStream(bytes), TestContext.Current.CancellationToken)).IsSuccess;
+
+        Assert.Equal(fromStream, fromBytes);
+        Assert.True(fromBytes);
+    }
+
+    [Fact]
+    public void Strings_that_differ_only_in_how_a_bad_byte_is_read_stay_distinct()
+    {
+        using JsonDocument document = Bytes("[\"", (byte)0xFF, "\",\"\\udcff\"]");
+
+        Assert.True(Z.Array().UniqueItems().SafeParse(document.RootElement).IsSuccess);
+    }
+
+    [Fact]
     public void Invalid_utf8_inside_an_element_does_not_throw()
     {
         ObjectSchema strip = Z.Object().Strip().Property("a", Z.Any());

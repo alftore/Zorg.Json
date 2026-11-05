@@ -303,7 +303,7 @@ internal sealed class ValidationContext
                     ReportRefinement(pending.Refinement, pending.Location, pending.EvaluationPath, pending.SchemaLocation);
                 }
             }
-            catch (JsonException exception)
+            catch (MaterializationException exception)
             {
                 ReportDeserializationFailed(exception, pending.Location, pending.EvaluationPath, pending.SchemaLocation);
             }

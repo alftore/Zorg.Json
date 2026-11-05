@@ -169,6 +169,16 @@ internal static class JsonEquality
             return left.SequenceEqual(right);
         }
 
+        // An invalid byte is read as a lone surrogate, which is also what an escape such as \udcff gives. They differ in the text, so
+        // they must not be equal: without a decoded form to tell them apart, a string with bad bytes is only equal to the same bytes.
+        bool leftBad = !System.Text.Unicode.Utf8.IsValid(left);
+        bool rightBad = !System.Text.Unicode.Utf8.IsValid(right);
+
+        if (leftBad || rightBad)
+        {
+            return leftBad && rightBad && string.Equals(JsonText.GetString(first), JsonText.GetString(second), StringComparison.Ordinal);
+        }
+
         return string.Equals(JsonText.GetString(first), JsonText.GetString(second), StringComparison.Ordinal);
     }
 
