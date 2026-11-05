@@ -157,9 +157,17 @@ internal sealed class SchemaRefinement<T>(
         {
             return materialize(value);
         }
-        catch (Exception exception) when (Deserialization.Failed(exception) && exception is not JsonException)
+        catch (Exception exception) when (Deserialization.Failed(exception))
         {
-            throw new JsonException(exception.Message, exception);
+            throw new MaterializationException(exception.Message, exception);
         }
     }
 }
+
+/// <summary>
+/// The value passed validation but couldn't be read as the .NET type. It is separate from a <see cref="JsonException"/>, so that
+/// one thrown by a caller's own check isn't mistaken for it.
+/// </summary>
+#pragma warning disable CA1032
+internal sealed class MaterializationException(string message, Exception inner) : JsonException(message, inner);
+#pragma warning restore CA1032

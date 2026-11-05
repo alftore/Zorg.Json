@@ -86,6 +86,7 @@ public sealed class HoldsInterface
 }
 
 /// <summary>One test per finding of the independent review, so that none comes back.</summary>
+[Collection(AllocationSensitive.Name)]
 public sealed class ReviewRegressionTests
 {
     private static string Code<T>(ParseResult<T> result) => result.Issues[0].Code;

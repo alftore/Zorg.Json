@@ -41,7 +41,8 @@ internal sealed class ValidationPlan
     private readonly ImmutableArray<ValidationPlan> _allOf;
     private readonly ImmutableArray<ValidationPlan> _anyOf;
     private readonly ImmutableArray<ValidationPlan> _oneOf;
-    private readonly FrozenDictionary<string, (ValidationPlan Plan, int Index)>? _discriminated;
+    private readonly Dictionary<int, List<(JsonElement Value, ValidationPlan Plan, int Index)>>? _discriminated;
+    private readonly string[]? _discriminatorOptions;
     private readonly ValidationPlan? _not;
     private readonly ValidationPlan? _if;
     private readonly ValidationPlan? _then;
@@ -92,9 +93,24 @@ internal sealed class ValidationPlan
         _allOf = List(node.AllOf);
         _anyOf = List(node.AnyOf);
         _oneOf = List(node.OneOf);
-        _discriminated = DiscriminatorKeys.TryBuild(node, out Dictionary<string, SchemaNode> branches)
-            ? branches.ToFrozenDictionary(branch => branch.Key, branch => (Get(branch.Value, plans), IndexOf(node.OneOf, branch.Value)), StringComparer.Ordinal)
-            : null;
+        if (DiscriminatorKeys.TryBuild(node, out List<(JsonElement Value, SchemaNode Branch)> entries))
+        {
+            _discriminated = [];
+            _discriminatorOptions = [.. entries.Select(entry => DiscriminatorKeys.Describe(entry.Value))];
+
+            foreach ((JsonElement entryValue, SchemaNode branch) in entries)
+            {
+                int hash = JsonEquality.Hash(entryValue);
+
+                if (!_discriminated.TryGetValue(hash, out List<(JsonElement Value, ValidationPlan Plan, int Index)>? bucket))
+                {
+                    _discriminated[hash] = bucket = [];
+                }
+
+                bucket.Add((entryValue, Get(branch, plans), IndexOf(node.OneOf, branch)));
+            }
+        }
+
         _not = Single(node.Not);
         _if = Single(node.If);
         _then = Single(node.Then);
@@ -230,7 +246,7 @@ internal sealed class ValidationPlan
             return value;
         }
 
-        if (ExactNumber.TryParse(text, out _))
+        if (ExactNumber.TryParse(text, out _, out _))
         {
             context.Rewritten();
             return JsonElement.Parse(text);
@@ -304,15 +320,55 @@ internal sealed class ValidationPlan
 
     private void CheckValue(JsonElement value, ValidationContext context)
     {
-        if (_node.Const is { } constant && !JsonEquality.AreEqual(constant, value))
+        if (_node.Const is { } constant && !JsonEquality.AreEqual(constant, value, context))
         {
-            context.Report(IssueCodes.InvalidValue, "const", "invalid_value.const", "expected", constant.GetRawText(), constant.GetRawText());
+            if (!HoldsUnreadableText(constant.ValueKind, value, context, "const"))
+            {
+                context.Report(IssueCodes.InvalidValue, "const", "invalid_value.const", "expected", constant.GetRawText(), constant.GetRawText());
+            }
         }
 
-        if (_enum is not null && !_enum.Contains(value))
+        if (_enum is not null && !_enum.Contains(value, context))
         {
-            context.Report(IssueCodes.InvalidValue, "enum", "invalid_value.enum", "values", _enum.Texts, _enum.Message);
+            if (!HoldsUnreadableText(_enum.HoldsText ? JsonValueKind.String : JsonValueKind.Null, value, context, "enum"))
+            {
+                context.Report(IssueCodes.InvalidValue, "enum", "invalid_value.enum", "values", _enum.Texts, _enum.Message);
+            }
         }
+    }
+
+    /// <summary>
+    /// A value that holds a string no schema can read doesn't count as "different from" a constant that has strings, because
+    /// that would let <c>not</c> accept it. That ends the parse as a failure, as it does for any other read of the string.
+    /// </summary>
+    private static bool HoldsUnreadableText(JsonValueKind expected, JsonElement value, ValidationContext context, string keyword)
+    {
+        if (expected is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null
+            || value.ValueKind is not (JsonValueKind.String or JsonValueKind.Array or JsonValueKind.Object))
+        {
+            return false;
+        }
+
+        return HoldsUnreadableText(value, context, keyword);
+    }
+
+    /// <summary>True when the value holds an unreadable string, or a limit was hit while looking. The parse has then failed.</summary>
+    private static bool HoldsUnreadableText(JsonElement value, ValidationContext context, string keyword)
+    {
+        ReadOnlySpan<byte> raw = System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value);
+
+        if (!context.Spend((raw.Length / 16) + 1))
+        {
+            return true;
+        }
+
+        if (!JsonText.HasUndecodableString(raw))
+        {
+            return false;
+        }
+
+        context.ReportUndecodable(keyword);
+        return true;
     }
 
     /// <summary>The values of an <c>enum</c>, prepared once: the texts and the message are shared by every issue.</summary>
@@ -326,6 +382,7 @@ internal sealed class ValidationPlan
         private EnumTable(ImmutableArray<JsonElement> values)
         {
             _values = values;
+            HoldsText = values.Any(allowed => allowed.ValueKind is JsonValueKind.String or JsonValueKind.Array or JsonValueKind.Object);
             Texts = [.. values.Select(allowed => allowed.GetRawText())];
             Message = string.Join(", ", Texts.Take(MaxListedValues)) + (Texts.Length > MaxListedValues ? $", and {Texts.Length - MaxListedValues} more" : string.Empty);
 
@@ -349,11 +406,14 @@ internal sealed class ValidationPlan
 
         public string[] Texts { get; }
 
+        /// <summary>True when a value might be equal to one of the strings, or to a container that may hold strings.</summary>
+        public bool HoldsText { get; }
+
         public string Message { get; }
 
-        public bool Contains(JsonElement value) => _index is null
-            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value))
-            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value));
+        public bool Contains(JsonElement value, ValidationContext context) => _index is null
+            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value, context))
+            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value, context));
     }
 
     private void CheckString(JsonElement value, ValidationContext context)
@@ -410,6 +470,11 @@ internal sealed class ValidationPlan
         }
     }
 
+    /// <summary>A bound with an exponent too long to hold can't be compared with, so a number against it ends the parse.</summary>
+    private bool BoundsOutOfRange() =>
+        _minimum?.IsOutOfRange == true || _maximum?.IsOutOfRange == true || _exclusiveMinimum?.IsOutOfRange == true
+        || _exclusiveMaximum?.IsOutOfRange == true || _multipleOf?.IsOutOfRange == true;
+
     private void CheckNumber(JsonElement value, ValidationContext context)
     {
         string text = value.GetRawText();
@@ -426,7 +491,19 @@ internal sealed class ValidationPlan
             return;
         }
 
+        // Reading the digits takes time in proportion to their number, so a long number is charged for it.
+        if (!context.Spend((text.Length / 32) + 1))
+        {
+            return;
+        }
+
         ExactNumber number = ExactNumber.Parse(text);
+
+        if (number.IsOutOfRange || BoundsOutOfRange())
+        {
+            context.ReportTooComplex("type");
+            return;
+        }
 
         if (_node.Types.HasFlag(JsonTypes.Integer) && !_node.Types.HasFlag(JsonTypes.Number) && !number.IsInteger)
         {
@@ -458,7 +535,7 @@ internal sealed class ValidationPlan
             context.Report(IssueCodes.TooBig, "exclusiveMaximum", "too_big.exclusive", "maximum", limit, limit);
         }
 
-        if (_multipleOf is { } multipleOf && !number.IsMultipleOf(multipleOf))
+        if (_multipleOf is { } multipleOf && context.Spend(number.MultipleOfCost(multipleOf)) && !number.IsMultipleOf(multipleOf))
         {
             string divisor = _node.MultipleOf!.Value.GetRawText();
             context.Report(IssueCodes.NotMultipleOf, "multipleOf", IssueCodes.NotMultipleOf, "divisor", divisor, divisor);
@@ -565,7 +642,7 @@ internal sealed class ValidationPlan
                     return;
                 }
 
-                if (JsonEquality.AreEqual(items[candidate], item))
+                if (JsonEquality.AreEqual(items[candidate], item, context))
                 {
                     context.Report(IssueCodes.InvalidValue, "uniqueItems", "invalid_value.unique", "indexes", new[] { candidate, index }, candidate, index);
                     return;
@@ -658,21 +735,27 @@ internal sealed class ValidationPlan
 
             foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in _patternProperties)
             {
+                // Only the match is guarded: an exception from the plan below is a caller's, and passes through.
+                bool matched;
+
                 try
                 {
-                    if (pattern.IsMatch(name))
-                    {
-                        int before = context.RewriteCount;
-                        context.Walk("patternProperties", patternName);
-                        JsonElement candidate = patternPlan.Run(original, context);
-                        context.Unwalk();
-                        result = context.RewriteCount != before ? candidate : result;
-                        covered = true;
-                    }
+                    matched = pattern.IsMatch(name);
                 }
                 catch (RegexMatchTimeoutException)
                 {
                     context.ReportTimeout("patternProperties", pattern.ToString());
+                    covered = true;
+                    continue;
+                }
+
+                if (matched)
+                {
+                    int before = context.RewriteCount;
+                    context.Walk("patternProperties", patternName);
+                    JsonElement candidate = patternPlan.Run(original, context);
+                    context.Unwalk();
+                    result = context.RewriteCount != before ? candidate : result;
                     covered = true;
                 }
             }
@@ -949,7 +1032,7 @@ internal sealed class ValidationPlan
                 return result;
             }
 
-            failures.Add(fork.ToIssues());
+            failures.Add(context.Retain(fork));
         }
 
         context.Report(IssueCodes.InvalidUnion, "anyOf", "invalid_union.none", "errors", failures.ToImmutableArray());
@@ -972,7 +1055,7 @@ internal sealed class ValidationPlan
 
             if (fork.HasIssues)
             {
-                failures.Add(fork.ToIssues());
+                failures.Add(context.Retain(fork));
                 continue;
             }
 
@@ -1010,16 +1093,23 @@ internal sealed class ValidationPlan
         }
 
         if (JsonText.TryGetProperty(value, discriminator, out JsonElement selected)
-            && DiscriminatorKeys.Key(selected) is { } key
-            && _discriminated!.TryGetValue(key, out (ValidationPlan Plan, int Index) branch))
+            && _discriminated!.TryGetValue(JsonEquality.Hash(selected), out List<(JsonElement Value, ValidationPlan Plan, int Index)>? bucket)
+            && bucket.FindIndex(entry => JsonEquality.AreEqual(entry.Value, selected, context)) is >= 0 and int found)
         {
-            context.Walk("oneOf", branch.Index);
-            JsonElement result = branch.Plan.Run(value, context);
+            (_, ValidationPlan plan, int index) = bucket[found];
+            context.Walk("oneOf", index);
+            JsonElement result = plan.Run(value, context);
             context.Unwalk();
             return result;
         }
 
-        string[] options = [.. _discriminated!.Keys.Select(option => option[1..])];
+        // Without a branch, the branches never read the value, so an unreadable string in it can't be passed over.
+        if (HoldsUnreadableText(value, context, "oneOf"))
+        {
+            return value;
+        }
+
+        string[] options = _discriminatorOptions!;
         context.Push(discriminator);
         context.Report(IssueCodes.InvalidUnion, "oneOf", "invalid_union.discriminator", "options", options, string.Join(", ", options));
         context.Pop();
@@ -1048,7 +1138,7 @@ internal sealed class ValidationPlan
                     context.ReportRefinement(refinement);
                 }
             }
-            catch (JsonException exception)
+            catch (MaterializationException exception)
             {
                 context.ReportDeserializationFailed(exception);
             }
