@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using Zorg.Json.Model;
 using Zorg.Json.Validation;
@@ -26,6 +28,8 @@ internal sealed class JsonSchemaEmitter
     {
         _options = options;
         _profile = options.Target;
+        _exactness = new SchemaExactness.Checker(_profile.Dialect);
+        _rewritten = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
     }
 
     /// <summary>
@@ -34,8 +38,17 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private const int MaxEmitted = 100_000;
 
+    /// <summary>
+    /// How deep the walk may go, counting each <c>$ref</c> it follows. A document with a longer chain of references, or a
+    /// schema nested that far, would use up the stack, which ends the process, so it's refused instead.
+    /// </summary>
+    internal const int MaxDepth = 256;
+
+    private readonly SchemaExactness.Checker _exactness;
+    private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private List<JsonObject>? _fragments;
     private int _emitted;
+    private int _depth;
 
     private bool IsInput => _options.Direction == SchemaDirection.Input;
 
@@ -55,8 +68,20 @@ internal sealed class JsonSchemaEmitter
         }
 
         JsonSchemaEmitter emitter = new(options);
-        return emitter.EmitRoot(emitter.Rewrite(node, isRoot: true));
+
+        try
+        {
+            return emitter.EmitRoot(emitter.Rewrite(node, isRoot: true));
+        }
+        catch (InsufficientExecutionStackException exception)
+        {
+            throw new InvalidOperationException("The schema is nested too deeply for the stack this thread has left.", exception);
+        }
     }
+
+    private static InvalidOperationException TooDeep() => new(
+        $"The schema nests more than {MaxDepth} levels deep, counting each $ref it follows. "
+        + "Flatten the schema, or break the chain of references.");
 
     /// <summary>Records a rule that can't be stated and, with the callback policy, collects the handler's fragment for the current subschema.</summary>
     private void Unrepresentable(string? keyword, string message, string location, JsonNode? value = null)
@@ -138,18 +163,42 @@ internal sealed class JsonSchemaEmitter
     {
         SchemaNode result = node;
 
-        foreach (ISchemaRewriter rewriter in _profile.Rewriters)
+        for (int index = 0; index < _profile.Rewriters.Length; index++)
         {
-            result = Apply(rewriter, result, isRoot);
+            result = Apply(index, result, isRoot, depth: 0);
         }
 
         return result;
     }
 
-    private SchemaNode Apply(ISchemaRewriter rewriter, SchemaNode node, bool isRoot)
+    /// <summary>
+    /// A subschema used in many places is rewritten once, because a rewriter's answer for a node doesn't depend on where the
+    /// node is. Without that, a schema that uses the same schema twice, again and again, takes exponential time before the
+    /// emitter gets to count anything.
+    /// </summary>
+    private SchemaNode Apply(int index, SchemaNode node, bool isRoot, int depth)
     {
-        SchemaNode rewritten = node.MapChildren(child => Apply(rewriter, child, isRoot: false));
-        return rewriter.Rewrite(rewritten, new RewriteContext(_options, isRoot, _diagnostics.Add));
+        if (depth > MaxDepth)
+        {
+            throw TooDeep();
+        }
+
+        RuntimeHelpers.EnsureSufficientExecutionStack();
+
+        if (!isRoot && _rewritten[index].TryGetValue(node, out SchemaNode? known))
+        {
+            return known;
+        }
+
+        SchemaNode mapped = node.MapChildren(child => Apply(index, child, isRoot: false, depth + 1));
+        SchemaNode result = _profile.Rewriters[index].Rewrite(mapped, new RewriteContext(_options, isRoot, _diagnostics.Add));
+
+        if (!isRoot)
+        {
+            _rewritten[index][node] = result;
+        }
+
+        return result;
     }
 
     private EmitResult EmitRoot(SchemaNode node)
@@ -179,7 +228,7 @@ internal sealed class JsonSchemaEmitter
                 if (existing is null)
                 {
                     // Definitions come before extensions, as they do in WriteDefinitions.
-                    schema.Insert(schema.Count - node.Extensions.Length, _profile.DefinitionsKeyword, defs);
+                    schema.Insert(FirstExtension(schema, node), _profile.DefinitionsKeyword, defs);
                 }
             }
             else
@@ -203,10 +252,48 @@ internal sealed class JsonSchemaEmitter
         return new EmitResult(schema, _diagnostics.ToImmutable()) { Definitions = definitions, Target = _profile };
     }
 
+    /// <summary>Where the extensions start in what was written. Not every extension is written, and a reference is written without any.</summary>
+    private static int FirstExtension(JsonObject schema, SchemaNode node)
+    {
+        HashSet<string> names = new(node.Extensions.Select(extension => extension.Key), StringComparer.Ordinal);
+        int index = 0;
+
+        foreach ((string keyword, JsonNode? _) in schema)
+        {
+            if (names.Contains(keyword) || keyword == "x-inert-nullable")
+            {
+                return index;
+            }
+
+            index++;
+        }
+
+        return schema.Count;
+    }
+
     private static JsonObject BooleanRoot(JsonNode emitted) =>
         emitted.GetValue<bool>() ? [] : new JsonObject { ["not"] = new JsonObject() };
 
     private JsonNode EmitNode(SchemaNode node, string location)
+    {
+        if (++_depth > MaxDepth)
+        {
+            throw TooDeep();
+        }
+
+        RuntimeHelpers.EnsureSufficientExecutionStack();
+
+        try
+        {
+            return EmitNodeCore(node, location);
+        }
+        finally
+        {
+            _depth--;
+        }
+    }
+
+    private JsonNode EmitNodeCore(SchemaNode node, string location)
     {
         if (node.BooleanValue is { } allowed)
         {
@@ -249,7 +336,32 @@ internal sealed class JsonSchemaEmitter
             _definitions[name] = rewritten.Behavior.Target is null ? EmitObject(rewritten, location) : EmitNode(rewritten, location);
         }
 
-        return ReferencePrefix + Escape(name);
+        return ReferencePrefix + FragmentEscape(Escape(name));
+    }
+
+    /// <summary>
+    /// A <c>$ref</c> is a URI, and what follows the <c>#</c> may not hold a space, a <c>%</c>, a second <c>#</c> or text outside ASCII
+    /// as it is. The characters a fragment allows are left as they are, so ordinary names read the same.
+    /// </summary>
+    private static string FragmentEscape(string pointer)
+    {
+        StringBuilder text = new(pointer.Length);
+
+        foreach (byte value in Encoding.UTF8.GetBytes(pointer))
+        {
+            char character = (char)value;
+
+            if (value < 0x80 && (char.IsAsciiLetterOrDigit(character) || "-._~!$&'()*+,;=:@/?".Contains(character, StringComparison.Ordinal)))
+            {
+                text.Append(character);
+            }
+            else
+            {
+                text.Append('%').Append(value.ToString("X2", CultureInfo.InvariantCulture));
+            }
+        }
+
+        return text.ToString();
     }
 
     private JsonObject EmitObject(SchemaNode source, string location)
@@ -326,7 +438,12 @@ internal sealed class JsonSchemaEmitter
 
         foreach ((string keyword, JsonElement value) in node.Extensions.OrderBy(extension => extension.Key, StringComparer.Ordinal))
         {
-            if (IsDraft07 && keyword is "additionalItems" or "dependencies")
+            if (IsOpenApi30 && keyword == "nullable")
+            {
+                // The document this came from ignores it, but OpenAPI 3.0 would apply it.
+                schema["x-inert-nullable"] = ToNode(value);
+            }
+            else if (IsDraft07 && keyword is "additionalItems" or "dependencies")
             {
                 // Inert in the 2020-12 document it came from, but draft-07 would apply it.
                 Unrepresentable(keyword, $"{keyword} is an unknown keyword here, but draft-07 would apply it.", location, ToNode(value));
@@ -573,9 +690,20 @@ internal sealed class JsonSchemaEmitter
         if (IsOpenApi30 && written is JsonArray alternatives)
         {
             // nullable only applies beside a type, so it goes on each alternative.
-            schema["anyOf"] = new JsonArray([.. alternatives.Select(type => (JsonNode?)(nullable
+            JsonArray choices = new([.. alternatives.Select(type => (JsonNode?)(nullable
                 ? new JsonObject { ["type"] = type!.DeepClone(), ["nullable"] = true }
                 : new JsonObject { ["type"] = type!.DeepClone() }))]);
+
+            // A node's own anyOf is another condition, so the two can't share one list.
+            if (node.AnyOf.IsEmpty)
+            {
+                schema["anyOf"] = choices;
+            }
+            else
+            {
+                schema["allOf"] = new JsonArray(new JsonObject { ["anyOf"] = choices });
+            }
+
             nullable = false;
         }
         else if (written is not null)
@@ -586,6 +714,12 @@ internal sealed class JsonSchemaEmitter
         if (nullable)
         {
             schema["nullable"] = true;
+
+            // There is no null type, and nullable alone does nothing without a type beside it. Only null passes.
+            if (written is null && node.Const is null && node.Enum.IsEmpty)
+            {
+                schema["enum"] = new JsonArray((JsonNode?)null);
+            }
         }
     }
 
@@ -710,7 +844,7 @@ internal sealed class JsonSchemaEmitter
         {
             Add(schema, "minContains", node.MinContains);
 
-            if (node.MaxContains is not null && node.Contains is not null && IsInput && !SchemaExactness.IsExact(node.Contains, _profile.Dialect))
+            if (node.MaxContains is not null && node.Contains is not null && IsInput && !_exactness.IsExact(node.Contains))
             {
                 Unsupported("maxContains", notes, location);
             }
@@ -849,7 +983,7 @@ internal sealed class JsonSchemaEmitter
 
         if (node.Not is not null)
         {
-            if (IsInput && !SchemaExactness.IsExact(node.Not, _profile.Dialect))
+            if (IsInput && !_exactness.IsExact(node.Not))
             {
                 Unsupported("not", notes, location);
             }
@@ -861,7 +995,7 @@ internal sealed class JsonSchemaEmitter
 
         if (node.If is not null || node.Then is not null || node.Else is not null)
         {
-            if (IsOpenApi30 || (IsInput && node.If is not null && !SchemaExactness.IsExact(node.If, _profile.Dialect)))
+            if (IsOpenApi30 || (IsInput && node.If is not null && !_exactness.IsExact(node.If)))
             {
                 Unsupported("if", notes, location);
             }
@@ -891,7 +1025,7 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
-        if (!IsInput || node.OneOf.All(branch => SchemaExactness.IsExact(branch, _profile.Dialect)) || DiscriminatorKeys.TryBuild(node, out _))
+        if (!IsInput || node.OneOf.All(branch => _exactness.IsExact(branch)) || DiscriminatorKeys.TryBuild(node, out _))
         {
             WriteList(schema, "oneOf", node.OneOf, location);
         }

@@ -364,6 +364,8 @@ public static class Rewriters
 
         private SchemaNode Walk(SchemaNode node)
         {
+            System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
+
             if (node.Ref is null)
             {
                 return node.MapChildren(Walk);
@@ -466,6 +468,7 @@ public static class Rewriters
 
         private static SchemaNode Retarget(SchemaNode node)
         {
+            System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
             SchemaNode mapped = node.MapChildren(Retarget);
 
             return mapped.Ref is { } reference && PointsIntoRoot(reference)

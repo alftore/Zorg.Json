@@ -1,0 +1,330 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading.Tasks;
+using Json.Schema;
+using Xunit;
+using Zorg.Json.Emission;
+using Zorg.Json.Import;
+
+namespace Zorg.Json.ComplianceTests;
+
+/// <summary>
+/// Cases from a code review of emission. Each emitted schema is judged by JsonSchema.Net, so none of them depends on
+/// Zorg's own reading of what it wrote.
+/// </summary>
+public sealed class EmissionReviewTests
+{
+    private static readonly JsonSchemaProfile[] Profiles =
+        [JsonSchemaProfile.Draft202012, JsonSchemaProfile.Draft07, JsonSchemaProfile.OpenApi31, JsonSchemaProfile.OpenApi30];
+
+    private static JsonValueSchema Import(string document, JsonSchemaImportOptions? options = null) => Z.FromJsonSchema(document, options);
+
+    /// <summary>The Schema Object of OpenAPI 3.0, translated into 2020-12 for the oracle.</summary>
+    private static JsonNode? ConvertOpenApi30(JsonNode? node)
+    {
+        if (node is JsonArray list)
+        {
+            return new JsonArray([.. list.Select(ConvertOpenApi30)]);
+        }
+
+        if (node is not JsonObject schema)
+        {
+            return node?.DeepClone();
+        }
+
+        JsonObject result = [];
+
+        foreach ((string keyword, JsonNode? value) in schema)
+        {
+            if (keyword is "properties" or "$defs" or "definitions")
+            {
+                JsonObject named = [];
+
+                foreach ((string name, JsonNode? child) in (JsonObject)value!)
+                {
+                    named[name] = ConvertOpenApi30(child);
+                }
+
+                result[keyword] = named;
+            }
+            else if (keyword is "items" or "not" or "additionalProperties" or "allOf" or "anyOf" or "oneOf")
+            {
+                result[keyword] = ConvertOpenApi30(value);
+            }
+            else if (keyword is not ("nullable" or "exclusiveMinimum" or "exclusiveMaximum" or "minimum" or "maximum" or "type"))
+            {
+                result[keyword] = value?.DeepClone();
+            }
+        }
+
+        bool nullable = schema["nullable"] is JsonValue flag && flag.GetValue<bool>();
+
+        if (schema["type"] is { } type)
+        {
+            result["type"] = nullable ? new JsonArray(type.DeepClone(), "null") : type.DeepClone();
+        }
+
+        void Limit(string inclusive, string exclusive)
+        {
+            if (schema[inclusive] is { } limit)
+            {
+                result[schema[exclusive] is JsonValue on && on.GetValue<bool>() ? exclusive : inclusive] = limit.DeepClone();
+            }
+        }
+
+        Limit("minimum", "exclusiveMinimum");
+        Limit("maximum", "exclusiveMaximum");
+        return result;
+    }
+
+    private static bool Accepts(string schemaText, JsonSchemaProfile profile, string instance)
+    {
+        JsonNode node = JsonNode.Parse(schemaText)!;
+
+        if (profile.Dialect == JsonSchemaDialect.OpenApi30)
+        {
+            node = ConvertOpenApi30(node)!;
+        }
+
+        RemoveInert(node);
+
+        if (node is JsonObject root && !root.ContainsKey("$schema"))
+        {
+            root["$schema"] = "https://json-schema.org/draft/2020-12/schema";
+        }
+
+        JsonSchema oracle = JsonSchema.FromText(node.ToJsonString(), new BuildOptions { SchemaRegistry = new SchemaRegistry() });
+        return oracle.Evaluate(JsonElement.Parse(instance)).IsValid;
+    }
+
+    private static void RemoveInert(JsonNode? node)
+    {
+        if (node is JsonObject schema)
+        {
+            foreach (string keyword in schema.Select(entry => entry.Key).Where(key => key.StartsWith("x-inert-", StringComparison.Ordinal)).ToArray())
+            {
+                schema.Remove(keyword);
+            }
+
+            foreach ((string _, JsonNode? child) in schema.ToArray())
+            {
+                RemoveInert(child);
+            }
+        }
+        else if (node is JsonArray list)
+        {
+            foreach (JsonNode? child in list)
+            {
+                RemoveInert(child);
+            }
+        }
+    }
+
+    /// <summary>The emitted schema accepts every instance that parsing accepts, in each of the profiles.</summary>
+    private static void AssertNeverStricter<T>(string name, Schema<T> schema, IEnumerable<JsonSchemaProfile> profiles, params string[] instances)
+    {
+        foreach (JsonSchemaProfile profile in profiles)
+        {
+            string text = schema.Emit(new JsonSchemaOptions { Target = profile }).Schema.ToJsonString();
+
+            foreach (string instance in instances.Where(instance => schema.SafeParse(instance).IsSuccess))
+            {
+                Assert.True(Accepts(text, profile, instance), $"{name} in {profile.Name} is stricter than parsing on {instance}: {text}");
+            }
+        }
+    }
+
+    private static void AssertNeverStricter<T>(string name, Schema<T> schema, params string[] instances) =>
+        AssertNeverStricter(name, schema, Profiles, instances);
+
+    private static void CompletesWithin(TimeSpan limit, Action action)
+    {
+        Task task = Task.Run(action);
+        Assert.True(task.Wait(limit), $"did not finish in {limit.TotalSeconds} seconds");
+        task.GetAwaiter().GetResult();
+    }
+
+    private static string ChainDocument(int links, string root)
+    {
+        StringBuilder text = new("{");
+        text.Append(root).Append(",\"$defs\":{");
+
+        for (int index = 0; index < links; index++)
+        {
+            text.Append($"\"a{index}\":{{\"properties\":{{\"x\":{{\"$ref\":\"#/$defs/a{index + 1}\"}}}}}},");
+        }
+
+        text.Append($"\"a{links}\":{{\"type\":\"string\"}}}}}}");
+        return text.ToString();
+    }
+
+    private static JsonValueSchema NestedAnyOf(int depth)
+    {
+        ISchema schema = Z.String();
+
+        for (int index = 0; index < depth; index++)
+        {
+            schema = Z.AnyOf(schema);
+        }
+
+        return (JsonValueSchema)schema;
+    }
+
+    private static JsonValueSchema Doubled(int depth)
+    {
+        ISchema schema = Z.String();
+
+        for (int index = 0; index < depth; index++)
+        {
+            schema = Z.AnyOf(schema, schema);
+        }
+
+        return (JsonValueSchema)schema;
+    }
+
+    // 1. Emission must not overflow the stack.
+
+    [Theory]
+    [InlineData("\"not\":{\"$ref\":\"#/$defs/a0\"}", "not")]
+    [InlineData("\"oneOf\":[{\"$ref\":\"#/$defs/a0\"},{\"type\":\"number\"}]", "oneOf")]
+    [InlineData("\"if\":{\"$ref\":\"#/$defs/a0\"},\"then\":{\"type\":\"object\"}", "if")]
+    public void A_long_chain_of_references_is_judged_without_using_the_stack(string root, string keyword)
+    {
+        JsonValueSchema schema = Import(ChainDocument(3_500, root));
+
+        _ = schema.SafeParse("\"x\"");
+        Assert.Contains($"\"{keyword}\"", schema.ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_chain_of_references_within_the_limit_is_emitted()
+    {
+        JsonValueSchema schema = Import(ChainDocument(100, "\"not\":{\"$ref\":\"#/$defs/a0\"}"));
+
+        Assert.Contains("a100", schema.ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_deeply_nested_fluent_schema_is_refused_with_an_exception_not_a_crash()
+    {
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => NestedAnyOf(1_000).Emit());
+
+        Assert.Contains("256", exception.Message, StringComparison.Ordinal);
+        Assert.NotNull(NestedAnyOf(200).Emit());
+    }
+
+    [Fact]
+    public void A_long_chain_of_lazy_schemas_is_refused_with_an_exception_not_a_crash()
+    {
+        JsonValueSchema schema = Z.Any();
+
+        for (int index = 0; index < 100_000; index++)
+        {
+            JsonValueSchema previous = schema;
+            schema = Z.Lazy("n" + index, () => previous);
+        }
+
+        Assert.Throws<InvalidOperationException>(() => schema.Emit());
+    }
+
+    // 2. A rewriter must not make emission exponential.
+
+    [Theory]
+    [InlineData(24)]
+    [InlineData(30)]
+    public void Rewriters_do_not_make_a_schema_that_reuses_itself_take_exponential_time(int depth)
+    {
+        JsonSchemaOptions options = new() { Target = JsonSchemaProfile.Draft202012.With(Rewriters.ConvertBooleanSchemas) };
+
+        CompletesWithin(TimeSpan.FromSeconds(30), () => Assert.Throws<InvalidOperationException>(() => Doubled(depth).Emit(options)));
+    }
+
+    // 3. OpenAPI 3.0 has no null type.
+
+    [Fact]
+    public void Null_in_OpenAPI_30_accepts_null_and_nothing_else()
+    {
+        JsonSchemaOptions options = new() { Target = JsonSchemaProfile.OpenApi30 };
+        string text = Z.Null().Emit(options).Schema.ToJsonString();
+
+        Assert.True(Accepts(text, JsonSchemaProfile.OpenApi30, "null"), text);
+        Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, "\"a\""), text);
+        Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, "1"), text);
+    }
+
+    [Fact]
+    public void Null_beside_other_schemas_in_OpenAPI_30_stays_exact()
+    {
+        AssertNeverStricter("oneOf null|string", Z.OneOf(Z.Null(), Z.String()), "\"a\"", "null", "1");
+        AssertNeverStricter("not null", Z.Not(Z.Null()), "\"a\"", "1", "null");
+        AssertNeverStricter("if null", Z.If(Z.Null(), Z.Null(), Z.String()), "\"a\"", "null", "1");
+    }
+
+    // 8. An imported format is asserted by Zorg, and a validator may only annotate it.
+
+    [Theory]
+    [InlineData("""{"not":{"format":"email"}}""")]
+    [InlineData("""{"oneOf":[{"format":"email"},{"format":"ipv4"}]}""")]
+    [InlineData("""{"if":{"format":"email"},"then":{"type":"number"}}""")]
+    public void An_imported_format_is_not_written_where_a_looser_one_would_make_the_document_stricter(string document) =>
+        AssertNeverStricter(document, Import(document), "\"abc\"", "\"a@b.co\"", "\"1.1.1.1\"", "1", "null");
+
+    // 9. OpenAPI 3.0 spellings.
+
+    [Theory]
+    [InlineData("""{"not":{"minimum":5,"exclusiveMinimum":1}}""", new[] { "3", "7", "0" })]
+    [InlineData("""{"not":{"maximum":1,"exclusiveMaximum":5}}""", new[] { "0", "3", "7" })]
+    [InlineData("""{"not":{"const":"a","enum":["a","b"]}}""", new[] { "\"a\"", "\"b\"", "\"c\"" })]
+    [InlineData("""{"not":{"type":["string","number"],"anyOf":[{"type":"string","minLength":2},{"type":"number","minimum":3}]}}""", new[] { "\"a\"", "\"abc\"", "1", "4", "true" })]
+    [InlineData("""{"type":["string","number"],"anyOf":[{"type":"string","minLength":2},{"type":"number","minimum":3}]}""", new[] { "\"a\"", "\"abc\"", "1", "4", "true" })]
+    [InlineData("""{"$schema":"https://json-schema.org/draft/2020-12/schema","type":["string","null"],"nullable":false}""", new[] { "null", "\"a\"" })]
+    public void OpenAPI_30_spellings_are_never_stricter_than_parsing(string document, string[] instances) =>
+        AssertNeverStricter(document, Import(document), instances);
+
+    // 12 and 13. Definition names.
+
+    [Fact]
+    public void A_root_lazy_schema_with_several_extensions_is_emitted()
+    {
+        JsonValueSchema schema = Z.Lazy("a", () => Z.String())
+            .Meta("x-1", JsonElement.Parse("1"))
+            .Meta("x-2", JsonElement.Parse("2"))
+            .Meta("x-3", JsonElement.Parse("3"));
+
+        foreach (JsonSchemaProfile profile in Profiles)
+        {
+            Assert.Null(Record.Exception(() => schema.Emit(new JsonSchemaOptions { Target = profile })));
+        }
+
+        AssertNeverStricter("root lazy", schema, "\"a\"");
+    }
+
+    [Theory]
+    [InlineData("a b")]
+    [InlineData("a%20b")]
+    [InlineData("a#b")]
+    [InlineData("List<Foo>")]
+    [InlineData("a\"b")]
+    [InlineData("a^b")]
+    [InlineData("é")]
+    public void A_definition_name_is_written_as_a_valid_reference(string name) =>
+        AssertNeverStricter(name, Z.Array(Z.Lazy(name, () => Z.String())), "[\"x\"]", "[]");
+
+    // 18. Exactness is judged once per subschema.
+
+    [Fact]
+    public void A_schema_used_under_many_nots_is_judged_once()
+    {
+        // Draft-04 integers are checked by a function, which the input schema can't state, so the schema is not exact.
+        string properties = string.Join(',', Enumerable.Range(0, 20_000).Select(index => $"\"p{index}\":{{}}"));
+        JsonValueSchema shared = Import("{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"properties\":{" + properties + ",\"zzz\":{\"type\":\"integer\"}}}", new JsonSchemaImportOptions { MaxNodes = 100_000 });
+        ISchema[] branches = [.. Enumerable.Range(0, 8_000).Select(_ => (ISchema)Z.Not(shared))];
+        JsonSchemaOptions options = new() { Unrepresentable = UnrepresentablePolicy.Omit };
+
+        CompletesWithin(TimeSpan.FromSeconds(15), () => Z.AllOf(branches).Emit(options));
+    }
+}
