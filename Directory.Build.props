@@ -25,6 +25,9 @@
     <Authors>Zorg.Json contributors</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/alftore/Zorg.Json</PackageProjectUrl>
+    <PackageReleaseNotes>https://github.com/alftore/Zorg.Json/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <RepositoryUrl>https://github.com/alftore/Zorg.Json.git</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <IncludeSymbols>true</IncludeSymbols>

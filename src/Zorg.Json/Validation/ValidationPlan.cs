@@ -32,6 +32,7 @@ internal sealed class ValidationPlan
     private readonly FrozenSet<string>? _namesIgnoringCase;
     private readonly ImmutableArray<(Regex Pattern, ValidationPlan Plan)> _patternProperties;
     private readonly ValidationPlan? _additionalProperties;
+    private readonly string? _closedBy;
     private readonly ValidationPlan? _propertyNames;
     private readonly ImmutableArray<(string Name, ValidationPlan Plan)> _dependentSchemas;
     private readonly ImmutableArray<ValidationPlan> _allOf;
@@ -75,6 +76,9 @@ internal sealed class ValidationPlan
             : null;
         _patternProperties = [.. node.PatternProperties.Select(property => (PatternCompiler.Compile(property.Name), Get(property.Schema, plans)))];
         _additionalProperties = Single(node.AdditionalProperties ?? node.UnevaluatedProperties);
+        _closedBy = node.AdditionalProperties?.BooleanValue == false ? "additionalProperties"
+            : node.AdditionalProperties is null && node.UnevaluatedProperties?.BooleanValue == false ? "unevaluatedProperties"
+            : null;
         _propertyNames = Single(node.PropertyNames);
         _dependentSchemas = [.. node.DependentSchemas.Select(property => (property.Name, Get(property.Schema, plans)))];
         _allOf = List(node.AllOf);
@@ -552,6 +556,10 @@ internal sealed class ValidationPlan
                 {
                     (unknown ??= []).Add(name);
                 }
+                else if (_closedBy is not null)
+                {
+                    (unknown ??= []).Add(name);
+                }
                 else if (_additionalProperties is not null)
                 {
                     result = _additionalProperties.Run(original, context);
@@ -587,7 +595,7 @@ internal sealed class ValidationPlan
 
         if (unknown is not null)
         {
-            context.Report(IssueCodes.UnrecognizedKeys, "additionalProperties", IssueCodes.UnrecognizedKeys, "keys", unknown.ToArray(), string.Join(", ", unknown));
+            context.Report(IssueCodes.UnrecognizedKeys, _closedBy ?? "additionalProperties", IssueCodes.UnrecognizedKeys, "keys", unknown.ToArray(), string.Join(", ", unknown));
         }
 
         CheckRequired(value, context);

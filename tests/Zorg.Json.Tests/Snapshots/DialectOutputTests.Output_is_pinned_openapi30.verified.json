@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "properties": {
+    "conditional": {},
+    "union": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "circle"
+              ]
+            },
+            "radius": {
+              "type": "number",
+              "nullable": true,
+              "format": "double"
+            }
+          },
+          "required": [
+            "kind",
+            "radius"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "square"
+              ]
+            },
+            "side": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "kind",
+            "side"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "nullable": {
+      "type": "string",
+      "nullable": true
+    },
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "conditional",
+    "union",
+    "nullable",
+    "tree"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

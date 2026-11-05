@@ -139,20 +139,20 @@ public sealed class StructuredGuaranteeTests
         _ => throw new NotSupportedException(schema.GetType().Name),
     };
 
-    private static JsonSchema Emitted(ISchema schema) => schema switch
+    private static JsonSchema Emitted(ISchema schema, JsonSchemaOptions? options = null) => schema switch
     {
-        Schema<JsonElement> element => FromText(element.Emit().Schema),
-        Schema<string> text => FromText(text.Emit().Schema),
-        Schema<double> number => FromText(number.Emit().Schema),
-        Schema<decimal> number => FromText(number.Emit().Schema),
-        Schema<long> number => FromText(number.Emit().Schema),
-        Schema<int> number => FromText(number.Emit().Schema),
-        Schema<byte> number => FromText(number.Emit().Schema),
-        Schema<bool> boolean => FromText(boolean.Emit().Schema),
-        Schema<Item> item => FromText(item.Emit().Schema),
-        Schema<IReadOnlyList<string>> list => FromText(list.Emit().Schema),
-        Schema<IReadOnlyList<JsonElement>> list => FromText(list.Emit().Schema),
-        Schema<IReadOnlyList<long>> list => FromText(list.Emit().Schema),
+        Schema<JsonElement> element => FromText(element.Emit(options).Schema),
+        Schema<string> text => FromText(text.Emit(options).Schema),
+        Schema<double> number => FromText(number.Emit(options).Schema),
+        Schema<decimal> number => FromText(number.Emit(options).Schema),
+        Schema<long> number => FromText(number.Emit(options).Schema),
+        Schema<int> number => FromText(number.Emit(options).Schema),
+        Schema<byte> number => FromText(number.Emit(options).Schema),
+        Schema<bool> boolean => FromText(boolean.Emit(options).Schema),
+        Schema<Item> item => FromText(item.Emit(options).Schema),
+        Schema<IReadOnlyList<string>> list => FromText(list.Emit(options).Schema),
+        Schema<IReadOnlyList<JsonElement>> list => FromText(list.Emit(options).Schema),
+        Schema<IReadOnlyList<long>> list => FromText(list.Emit(options).Schema),
         _ => throw new NotSupportedException(schema.GetType().Name),
     };
 
@@ -218,6 +218,24 @@ public sealed class StructuredGuaranteeTests
         }
 
         Assert.True(accepted > 0 || name == "never", $"{name} accepted no document, so it proves nothing");
+    }
+
+    [Theory]
+    [MemberData(nameof(Exact))]
+    [MemberData(nameof(Looser))]
+    public void Other_dialects_are_never_stricter_than_parsing(string name, ISchema schema)
+    {
+        Func<string, bool> parse = Parser(schema);
+        JsonSchema draft07 = Emitted(schema, new() { Target = JsonSchemaProfile.Draft07 });
+        JsonSchema openApi31 = Emitted(schema, new() { Target = JsonSchemaProfile.OpenApi31 });
+
+        foreach (string document in Documents().Where(parse))
+        {
+            JsonElement element = JsonElement.Parse(document);
+
+            Assert.True(draft07.Evaluate(element).IsValid, $"{name} in Draft-07 is stricter than parsing on {document}");
+            Assert.True(openApi31.Evaluate(element).IsValid, $"{name} in OpenAPI 3.1 is stricter than parsing on {document}");
+        }
     }
 
     [Fact]

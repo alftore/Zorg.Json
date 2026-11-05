@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.ComponentModel;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -169,9 +171,16 @@ internal sealed class ContractSeeder
                 schema = schema.WithNull();
             }
 
+            JsonElement? defaultValue = DefaultValue(property);
+
+            if (defaultValue is not null)
+            {
+                schema = schema with { Default = defaultValue };
+            }
+
             properties.Add(new SchemaProperty(property.Name, schema) { OutputOnly = !readable });
 
-            if (readable && IsRequired(property))
+            if (readable && (property.IsRequired || (defaultValue is null && IsRequired(property))))
             {
                 required.Add(property.Name);
             }
@@ -188,6 +197,31 @@ internal sealed class ContractSeeder
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };
+    }
+
+    /// <summary>Reads <see cref="DefaultValueAttribute"/>. Like the attribute, it's an annotation: nothing fills the value in.</summary>
+    private JsonElement? DefaultValue(JsonPropertyInfo property)
+    {
+        if (property.AttributeProvider?.GetCustomAttributes(typeof(DefaultValueAttribute), inherit: true) is not [DefaultValueAttribute attribute, ..]
+            || !_options.TryGetTypeInfo(property.PropertyType, out JsonTypeInfo? typeInfo))
+        {
+            return null;
+        }
+
+        Type target = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+        try
+        {
+            object? value = attribute.Value is null || target.IsInstanceOfType(attribute.Value)
+                ? attribute.Value
+                : Convert.ChangeType(attribute.Value, target, CultureInfo.InvariantCulture);
+
+            return JsonSerializer.SerializeToElement(value, typeInfo);
+        }
+        catch (Exception exception) when (exception is InvalidCastException or FormatException or OverflowException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     private SchemaNode Polymorphic(JsonPolymorphismOptions polymorphism)

@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "conditional": {
+      "if": {
+        "type": "string"
+      },
+      "then": {
+        "type": "string",
+        "minLength": 1
+      },
+      "else": {
+        "type": "boolean"
+      }
+    },
+    "union": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "circle"
+            },
+            "radius": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "radius"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "square"
+            },
+            "side": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "side"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "nullable": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "conditional",
+    "union",
+    "nullable",
+    "tree"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "tree": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tree"
+          }
+        }
+      },
+      "required": [
+        "value",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
