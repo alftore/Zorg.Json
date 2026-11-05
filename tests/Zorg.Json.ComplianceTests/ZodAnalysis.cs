@@ -189,8 +189,26 @@ internal sealed class ZodAnalysis
         }
     }
 
+    private static bool SaysNullable(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            return element.EnumerateObject().Any(property =>
+                (property.Name == "nullable" && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False) || SaysNullable(property.Value));
+        }
+
+        return element.ValueKind == JsonValueKind.Array && element.EnumerateArray().Any(SaysNullable);
+    }
+
+    /// <summary>
+    /// A document Zod writes for <c>openapi-3.0</c> has no <c>$schema</c>. With no dialect chosen, one that says <c>nullable</c> has to be
+    /// refused, because it would be read as Draft 2020-12 and <c>nullable</c> ignored. Every document is also read with
+    /// <see cref="JsonSchemaImportDialect.OpenApi30"/> and has to give Zod's verdicts.
+    /// </summary>
     private void CompareOpenApi(ZodCaseData zodCase, HashSet<(string, int)> verdictDifferences)
     {
+        JsonSchemaImportOptions openApi = new() { DefaultDialect = JsonSchemaImportDialect.OpenApi30 };
+
         foreach (string io in new[] { "input", "output" })
         {
             JsonElement entry = zodCase.Schemas.GetProperty("openapi-3.0").GetProperty(io).GetProperty("inline");
@@ -200,40 +218,56 @@ internal sealed class ZodAnalysis
                 continue;
             }
 
-            Count("openapi-3.0 refusal");
-            JsonValueSchema? imported = null;
-            string code;
+            string text = entry.GetProperty("schema").GetRawText();
+
+            if (SaysNullable(entry.GetProperty("schema")))
+            {
+                Count("openapi-3.0 refusal");
+                string code;
+
+                try
+                {
+                    _ = Z.FromJsonSchema(text);
+                    code = "imported";
+                }
+                catch (JsonSchemaImportException exception)
+                {
+                    code = exception.Code;
+                }
+
+                if (!string.Equals(code, JsonSchemaImportCodes.UnsupportedDialect, StringComparison.Ordinal))
+                {
+                    _other.Add((new Difference("openapi-refusal", zodCase.Name, null, "refused", "openapi-3.0 document", code, "openapi-3.0", io, "inline"), false));
+                }
+            }
+
+            JsonValueSchema imported;
 
             try
             {
-                imported = Z.FromJsonSchema(entry.GetProperty("schema").GetRawText());
-                code = "imported";
+                imported = Z.FromJsonSchema(text, openApi);
             }
             catch (JsonSchemaImportException exception)
             {
-                code = exception.Code;
+                _other.Add((new Difference("openapi-read", zodCase.Name, null, "refused", "openapi-3.0 document", exception.Code, "openapi-3.0", io, "inline"), false));
+                continue;
             }
 
-            if (!string.Equals(code, JsonSchemaImportCodes.UnsupportedDialect, StringComparison.Ordinal))
-            {
-                _other.Add((new Difference("openapi-refusal", zodCase.Name, null, "refused", "openapi-3.0 document", code, "openapi-3.0", io, "inline"), false));
-            }
-
-            if (imported is null || io != "input")
+            if (io != "input")
             {
                 continue;
             }
 
             for (int index = 0; index < ZodFixture.Documents.Length; index++)
             {
-                Count("openapi-3.0 misread");
+                Count("openapi-3.0 read");
                 bool zod = zodCase.Results[index].Accepted;
                 bool accepted = imported.SafeParse(ZodFixture.Documents[index].Text).IsSuccess;
 
                 if (accepted != zod)
                 {
                     _other.Add((
-                        new Difference("openapi-misread", zodCase.Name, ZodFixture.Documents[index], "verdict", ZodComparer.State(zod), ZodComparer.State(accepted), "openapi-3.0", io, "inline"),
+                        new Difference("openapi-read", zodCase.Name, ZodFixture.Documents[index], "verdict", ZodComparer.State(zod), ZodComparer.State(accepted), "openapi-3.0", io, "inline"),
                         verdictDifferences.Contains((zodCase.Name, index)) && Outcomes[zodCase.Name][index].Accepted == accepted));
                 }
             }

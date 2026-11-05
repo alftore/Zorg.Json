@@ -17,13 +17,16 @@ public static class JsonSchemaImportCodes
     /// </summary>
     public const string UnsupportedKeyword = "unsupported_keyword";
 
-    /// <summary>A <c>$schema</c> that isn't Draft 2020-12, draft-07, draft-06 or draft-04.</summary>
+    /// <summary>
+    /// A <c>$schema</c> that isn't Draft 2020-12, draft-07, draft-06 or draft-04. Also a boolean <c>nullable</c> in a document that has no
+    /// <c>$schema</c> while <see cref="JsonSchemaImportOptions.DefaultDialect"/> is left alone, which would be ignored.
+    /// </summary>
     public const string UnsupportedDialect = "unsupported_dialect";
 
     /// <summary>A <c>pattern</c> or <c>patternProperties</c> key that isn't a valid regular expression.</summary>
     public const string InvalidPattern = "invalid_pattern";
 
-    /// <summary>The document isn't a valid schema: malformed JSON, or a keyword with a value of the wrong shape.</summary>
+    /// <summary>The document isn't a valid schema: malformed JSON, a keyword with a value of the wrong shape, or text with an unpaired surrogate.</summary>
     public const string InvalidSchema = "invalid_schema";
 
     /// <summary>A <c>$ref</c> cycle that consumes no input, so that evaluating it would never end.</summary>

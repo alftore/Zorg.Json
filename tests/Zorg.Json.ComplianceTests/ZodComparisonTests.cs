@@ -33,10 +33,18 @@ public sealed class ZodComparisonTests
     public void ImportingZodJsonSchemaMatchesZodOrIsListed() => AssertExplained("interop-in");
 
     [Fact]
-    public void OpenApi30IsRefusedWithTheDocumentedCode() => AssertExplained("openapi-refusal");
+    public void AnOpenApi30DocumentThatSaysNullableIsRefusedWhenNoDialectIsChosen()
+    {
+        AssertExplained("openapi-refusal");
+        Assert.True(ZodAnalysis.Instance.Compared.GetValueOrDefault("openapi-3.0 refusal") >= 10, "too few documents say nullable");
+    }
 
     [Fact]
-    public void ImportingAnOpenApi30DocumentGivesZodsVerdictsOrIsListed() => AssertExplained("openapi-misread");
+    public void ReadingAnOpenApi30DocumentWithTheDialectGivesZodsVerdictsOrIsListed()
+    {
+        AssertExplained("openapi-read");
+        Assert.True(ZodAnalysis.Instance.Compared.GetValueOrDefault("openapi-3.0 read") > 1_000, "too few comparisons");
+    }
 
     [Fact]
     public void ZodReadingZorgJsonSchemaMatchesOrIsListed() => AssertExplained("interop-out");

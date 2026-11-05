@@ -53,6 +53,18 @@ internal sealed class SchemaImporter
         "$ref", "definitions", "title", "description", "$comment", "default", "examples", "readOnly", "writeOnly",
     }.ToFrozenSet(StringComparer.Ordinal);
 
+    /// <summary>What the OpenAPI 3.0 schema object honours. <c>definitions</c> is a container for <c>$ref</c>, which Zod writes.</summary>
+    private static readonly FrozenSet<string> OpenApi30Keywords = new[]
+    {
+        "$ref", "definitions", "title", "description", "default", "deprecated", "readOnly", "writeOnly", "nullable", "example", "type", "enum",
+        "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "format", "items",
+        "minItems", "maxItems", "uniqueItems", "properties", "required", "additionalProperties", "minProperties", "maxProperties", "allOf",
+        "anyOf", "oneOf", "not",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>Annotations of the OpenAPI 3.0 schema object that nothing validates. They're kept as they are.</summary>
+    private static readonly FrozenSet<string> OpenApi30Annotations = new[] { "discriminator", "xml", "externalDocs" }.ToFrozenSet(StringComparer.Ordinal);
+
     private static readonly FrozenSet<string> AnyDialect = new[]
     {
         "$id", "$ref", "$schema", "$vocabulary", "title", "description", "default", "deprecated", "examples", "type", "const", "enum", "minimum",
@@ -75,14 +87,16 @@ internal sealed class SchemaImporter
     private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
     private readonly HashSet<(string Resource, string Pointer)> _offTree = [];
     private readonly Dictionary<(string Resource, string Pointer), string>? _homes;
+    private readonly bool _isDialectAssumed;
     private int _count;
     private long _patternLength;
 
-    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, Dictionary<(string Resource, string Pointer), string>? homes)
+    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, bool isDialectAssumed, Dictionary<(string Resource, string Pointer), string>? homes)
     {
         _root = root;
         _options = options;
         _dialect = dialect;
+        _isDialectAssumed = isDialectAssumed;
         _homes = homes;
     }
 
@@ -98,6 +112,11 @@ internal sealed class SchemaImporter
 
     private bool IsDraft04 => _dialect == JsonSchemaImportDialect.Draft04;
 
+    private bool IsOpenApi30 => _dialect == JsonSchemaImportDialect.OpenApi30;
+
+    /// <summary>Draft-04 and OpenAPI 3.0 share the boolean exclusive limits, the integers without a fraction, and the lack of boolean schemas.</summary>
+    private bool IsDraft04Style => IsDraft04 || IsOpenApi30;
+
     public static SchemaNode Import(JsonElement schema, JsonSchemaImportOptions? options)
     {
         if (schema.ValueKind == JsonValueKind.Undefined)
@@ -108,7 +127,8 @@ internal sealed class SchemaImporter
         JsonSchemaImportOptions effective = options ?? new JsonSchemaImportOptions();
         JsonElement root = schema.Clone();
         JsonSchemaImportDialect dialect = DetectDialect(root, effective);
-        SchemaImporter importer = new(root, effective, dialect, homes: null);
+        bool isAssumed = effective.DefaultDialect == JsonSchemaImportDialect.Draft202012 && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("$schema", out _));
+        SchemaImporter importer = new(root, effective, dialect, isAssumed, homes: null);
         SchemaNode node = importer.Run();
 
         if (importer._offTree.Count == 0)
@@ -117,7 +137,7 @@ internal sealed class SchemaImporter
         }
 
         // A second pass, now that it's known which targets lie outside the walked tree. Each gets a home under $defs.
-        return new SchemaImporter(root, effective, dialect, importer.NameHomes()).Run();
+        return new SchemaImporter(root, effective, dialect, isAssumed, importer.NameHomes()).Run();
     }
 
     private SchemaNode Run()
@@ -241,8 +261,9 @@ internal sealed class SchemaImporter
     /// <summary>Draft-04 calls an integer a number without a fraction or exponent part, so <c>1.0</c> isn't one.</summary>
     private static bool IsDraft04Integer(string number) => number.AsSpan().IndexOfAny('.', 'e', 'E') < 0;
 
-    private static bool IsKeyword(string keyword) =>
-        AnyDialect.Contains(keyword) || SinceDraft07.Contains(keyword) || UntilDraft07.Contains(keyword);
+    private bool IsKeyword(string keyword) =>
+        AnyDialect.Contains(keyword) || SinceDraft07.Contains(keyword) || UntilDraft07.Contains(keyword)
+        || (IsOpenApi30 && (OpenApi30Keywords.Contains(keyword) || OpenApi30Annotations.Contains(keyword)));
 
     private static JsonTypes ToType(JsonElement value, string location) => value.ValueKind == JsonValueKind.String
         ? Text(value, location) switch
@@ -383,7 +404,7 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.LimitExceeded, at.Pointer, $"The document has more than {_options.MaxNodes} subschemas.");
         }
 
-        bool isBooleanLegal = allowsBoolean || !IsDraft04;
+        bool isBooleanLegal = allowsBoolean || !IsDraft04Style;
 
         SchemaNode node = schema.ValueKind switch
         {
@@ -428,6 +449,11 @@ internal sealed class SchemaImporter
             RejectUnsupported(values, at);
         }
 
+        if (_isDialectAssumed && values.TryGetValue("nullable", out JsonElement nullable) && nullable.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            throw Error(JsonSchemaImportCodes.UnsupportedDialect, at.Keyword("nullable"), "nullable is a keyword of OpenAPI 3.0, and this document has no $schema, so it would be ignored. Set DefaultDialect = JsonSchemaImportDialect.OpenApi30 to read it as OpenAPI 3.0.");
+        }
+
         Keywords keywords = new(this, values, at, ignoresSiblings: IsLegacy && values.ContainsKey("$ref"));
         (string? id, string? anchor, Scope scope) = ReadIdentity(keywords, at);
         string? reference = keywords.String("$ref");
@@ -456,11 +482,17 @@ internal sealed class SchemaImporter
         ImmutableArray<SchemaNode> allOf = keywords.NonEmptyList("allOf", scope);
         (JsonElement? minimum, JsonElement? exclusiveMinimum) = ReadLimit(keywords, "minimum", "exclusiveMinimum", at);
         (JsonElement? maximum, JsonElement? exclusiveMaximum) = ReadLimit(keywords, "maximum", "exclusiveMaximum", at);
-        JsonTypes types = ReadTypes(keywords);
+        JsonTypes types = ReadTypes(keywords, strict: IsOpenApi30);
 
-        if (IsDraft04 && types.HasFlag(JsonTypes.Integer) && !types.HasFlag(JsonTypes.Number))
+        if (IsDraft04Style && types.HasFlag(JsonTypes.Integer) && !types.HasFlag(JsonTypes.Number))
         {
             behavior = behavior with { NumberCheck = IsDraft04Integer, NumberType = "integer" };
+        }
+
+        // Only beside a type, and only the type: an enum or const still has to list null.
+        if (IsOpenApi30 && keywords.Boolean("nullable") == true && types != JsonTypes.None)
+        {
+            types |= JsonTypes.Null;
         }
 
         SchemaNode node = new()
@@ -473,7 +505,7 @@ internal sealed class SchemaImporter
             Description = keywords.String("description"),
             Comment = keywords.String("$comment"),
             Default = keywords.Element("default"),
-            Examples = keywords.Elements("examples"),
+            Examples = IsOpenApi30 ? (keywords.Element("example") is { } example ? [example] : []) : keywords.Elements("examples"),
             Deprecated = keywords.Boolean("deprecated"),
             ReadOnly = keywords.Boolean("readOnly"),
             WriteOnly = keywords.Boolean("writeOnly"),
@@ -588,11 +620,16 @@ internal sealed class SchemaImporter
         }
     }
 
-    private static JsonTypes ReadTypes(Keywords keywords)
+    private static JsonTypes ReadTypes(Keywords keywords, bool strict)
     {
         if (!keywords.Take("type", out JsonElement value, out string location))
         {
             return JsonTypes.None;
+        }
+
+        if (strict && (value.ValueKind == JsonValueKind.Array || (value.ValueKind == JsonValueKind.String && Text(value, location) == "null")))
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, location, "OpenAPI 3.0 takes one type name, and has no null type. Use nullable: true.");
         }
 
         if (value.ValueKind != JsonValueKind.Array)
@@ -622,7 +659,7 @@ internal sealed class SchemaImporter
     {
         JsonElement? limit = keywords.Number(inclusive);
 
-        if (!IsDraft04)
+        if (!IsDraft04Style)
         {
             return (limit, keywords.Number(exclusive));
         }
@@ -631,7 +668,7 @@ internal sealed class SchemaImporter
 
         if (isExclusive is not null && limit is null)
         {
-            throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(exclusive), $"{exclusive} needs {inclusive} beside it in draft-04.");
+            throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(exclusive), $"{exclusive} needs {inclusive} beside it in {(IsOpenApi30 ? "OpenAPI 3.0" : "draft-04")}.");
         }
 
         return isExclusive == true ? (null, limit) : (limit, null);
@@ -647,6 +684,11 @@ internal sealed class SchemaImporter
         if (!keywords.Peek("items", out JsonElement items) || items.ValueKind != JsonValueKind.Array)
         {
             return ([], keywords.Schema("items", scope));
+        }
+
+        if (IsOpenApi30)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, scope.Keyword("items"), "OpenAPI 3.0 has no tuples: items is one schema.");
         }
 
         return (keywords.NonEmptyList("items", scope), keywords.Schema("additionalItems", scope));
@@ -735,6 +777,16 @@ internal sealed class SchemaImporter
             return false;
         }
 
+        if (IsOpenApi30)
+        {
+            // These all mean something in 2020-12, or would be taken for a Draft 2020-12 keyword when read again.
+            return keyword is "$schema" or "nullable" or "example" or "patternProperties"
+                || Only202012.Contains(keyword)
+                || SinceDraft07.Contains(keyword)
+                || SinceDraft06.Contains(keyword)
+                || (ignoresSiblings && IsKeyword(keyword));
+        }
+
         // $defs is among the 2020-12 keywords, so it stays inert here. A $ref into it gets a home of its own.
         return keyword == "$schema"
             || Only202012.Contains(keyword)
@@ -755,6 +807,7 @@ internal sealed class SchemaImporter
             JsonSchemaImportDialect.Draft202012 => !UntilDraft07.Contains(keyword),
             JsonSchemaImportDialect.Draft07 => !Only202012.Contains(keyword),
             JsonSchemaImportDialect.Draft06 => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword),
+            JsonSchemaImportDialect.OpenApi30 => OpenApi30Keywords.Contains(keyword),
             _ => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword) && !SinceDraft06.Contains(keyword),
         };
     }
@@ -958,7 +1011,11 @@ internal sealed class SchemaImporter
             return Build(target, new Scope(pointer, resource, 0, IsWalked: false));
         }
 
-        throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" doesn't point at a schema.");
+        string hint = IsOpenApi30 && reference.Text.StartsWith("#/components/", StringComparison.Ordinal)
+            ? " An OpenAPI reference points into the whole OpenAPI document, so this document has to hold the components it names."
+            : string.Empty;
+
+        throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" doesn't point at a schema.{hint}");
     }
 
     /// <summary>

@@ -78,7 +78,9 @@ internal static class ZodResultsReport
         text.AppendLine();
         text.AppendLine("## Interop: OpenAPI 3.0 documents");
         text.AppendLine();
-        text.AppendLine($"{analysis.Compared.GetValueOrDefault("openapi-3.0 refusal")} documents checked, {items.Count(i => i.Difference.Part == "openapi-refusal")} not refused with `unsupported_dialect`.");
+        text.AppendLine($"{analysis.Compared.GetValueOrDefault("openapi-3.0 refusal")} documents say `nullable`, and {items.Count(i => i.Difference.Part == "openapi-refusal")} of them were not refused with `unsupported_dialect` when no dialect was chosen.");
+        text.AppendLine();
+        text.AppendLine($"Read with `DefaultDialect = OpenApi30`: {analysis.Compared.GetValueOrDefault("openapi-3.0 read")} comparisons with Zod's verdicts, {items.Count(i => i.Difference.Part == "openapi-read" && i.Inherited)} the same as a native difference, {items.Count(i => i.Difference.Part == "openapi-read" && i.Rule is not null)} listed, {items.Count(i => i.Difference.Part == "openapi-read" && i.Difference.Kind == "refused")} refused.");
         text.AppendLine();
         text.AppendLine("## Interop: Zod reading what Zorg writes (`z.fromJSONSchema`)");
         text.AppendLine();
