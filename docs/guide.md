@@ -268,7 +268,7 @@ Every sample is validated against the schema, and typed schemas also convert it.
 | `MaxRecursionDepth` | 3 | `MaxRecursionLevel` | How often a reference repeats before recursion stops |
 | `ArrayItemCount` | 1 | | Items per array, bounded by `minItems` and `maxItems` |
 
-A value comes from `const`, `default`, `examples` or `enum`, in that order, and then from its type. A candidate that doesn't validate is skipped. Numbers prefer 0, and bounds and `multipleOf` are met exactly. Unions take the first branch that works, and nullable values prefer the other type. Recursion stops by omitting optional properties, leaving arrays at `minItems`, and taking `null` where that's allowed.
+A value comes from `const`, `default`, `examples` or `enum`, in that order, and then from its type. A candidate that doesn't validate is skipped. Numbers prefer 0, and bounds and `multipleOf` are met exactly. Unions take the first branch that works, and nullable values prefer the other type. Recursion stops by omitting optional properties, leaving arrays at `minItems`, and taking `null` where that's allowed. A sample must read back from its text, which `SafeParse(string)` refuses past 64 levels of nesting, so a deeper one is reported as not valid.
 
 `IsValid = false` doesn't prove that a schema is unsatisfiable, because the search has limits:
 
