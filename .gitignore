@@ -23,3 +23,6 @@ Thumbs.db
 # Secrets and local settings
 *.env
 appsettings.Local.json
+
+# Node tooling for the Zod comparison
+tools/zod-compare/node_modules/
