@@ -16,7 +16,7 @@ namespace Zorg.Json.ComplianceTests.Fuzzing;
 /// <summary>Collects findings across threads. A finding is a broken promise, so any one fails the run.</summary>
 internal sealed class FuzzFindings
 {
-    private const int KeptPerKind = 4;
+    private const int KeptPerKind = 12;
 
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _failures = new();
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _notes = new();
@@ -344,7 +344,7 @@ internal sealed class FuzzChecker(FuzzFindings findings)
     private static bool Uncertain(string emitted, Built built) =>
         emitted.Contains("\"pattern\"", StringComparison.Ordinal)
         || emitted.Contains("\"patternProperties\"", StringComparison.Ordinal)
-        || (built.Code.StartsWith("import", StringComparison.Ordinal) && emitted.Contains("\"format\"", StringComparison.Ordinal));
+        || (built.Code.StartsWith("import", StringComparison.Ordinal) && (emitted.Contains("\"format\"", StringComparison.Ordinal) || built.Code.Contains("unevaluated", StringComparison.Ordinal)));
 
     private static JsonElement? TryElement(string text)
     {

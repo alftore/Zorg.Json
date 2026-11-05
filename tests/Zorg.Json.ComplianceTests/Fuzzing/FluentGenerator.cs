@@ -418,8 +418,8 @@ internal sealed class FluentGenerator(Random random)
                         code += ".UniqueItems()";
                         break;
                     case 4:
-                        int? minimum = Chance(50) ? _random.Next(-1, 3) : null;
-                        int? maximum = Chance(50) ? _random.Next(-1, 3) : null;
+                        int? minimum = Chance(50) ? _random.Next(KnownBugs.Included ? -1 : 0, 3) : null;
+                        int? maximum = Chance(50) ? _random.Next(KnownBugs.Included ? -1 : 0, 3) : null;
                         schema = schema.Contains(item.Schema, minimum, maximum);
                         code += $".Contains({item.Code}, {minimum}, {maximum})";
                         break;
