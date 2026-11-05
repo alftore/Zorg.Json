@@ -268,7 +268,7 @@ public static class Z
     }
 
     /// <summary>
-    /// Imports a JSON Schema document (Draft 2020-12, draft-07 or draft-06), so that it validates like any other schema.
+    /// Imports a JSON Schema document (Draft 2020-12, draft-07, draft-06 or draft-04), so that it validates like any other schema.
     /// JSON Schema: all of the core, applicator and validation vocabularies, except <c>$dynamicRef</c> and
     /// <c>unevaluated*</c> beside in-place applicators. Zod equivalent: <c>z.fromJSONSchema()</c>.
     /// </summary>

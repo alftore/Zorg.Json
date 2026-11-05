@@ -17,7 +17,7 @@ public static class JsonSchemaImportCodes
     /// </summary>
     public const string UnsupportedKeyword = "unsupported_keyword";
 
-    /// <summary>A <c>$schema</c> that isn't Draft 2020-12, draft-07 or draft-06.</summary>
+    /// <summary>A <c>$schema</c> that isn't Draft 2020-12, draft-07, draft-06 or draft-04.</summary>
     public const string UnsupportedDialect = "unsupported_dialect";
 
     /// <summary>A <c>pattern</c> or <c>patternProperties</c> key that isn't a valid regular expression.</summary>

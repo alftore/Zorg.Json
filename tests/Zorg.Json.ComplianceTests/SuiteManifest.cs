@@ -17,6 +17,12 @@ internal enum ExclusionKind
 
     /// <summary>Not run until the ECMA-262 pattern translator lands. It's reported, not an error, if the case would pass.</summary>
     TemporaryRegex,
+
+    /// <summary>
+    /// The verdict is checked as usual, but emitting can't keep it: the emitted schema accepts a value the import
+    /// rejects. It's an error if the emitted schema still rejects it, or if the import accepted it.
+    /// </summary>
+    LooserAfterEmit,
 }
 
 internal sealed record Exclusion(ExclusionKind Kind, string? Code, string Reason);
@@ -78,7 +84,13 @@ internal sealed class SuiteManifest
         return null;
     }
 
-    public Exclusion? ForTest(string file, string group, string test)
+    public Exclusion? ForTest(string file, string group, string test) =>
+        Find(file, group, test) is { Kind: not ExclusionKind.LooserAfterEmit } exclusion ? exclusion : null;
+
+    public bool IsLooserAfterEmit(string file, string group, string test) =>
+        Find(file, group, test)?.Kind == ExclusionKind.LooserAfterEmit;
+
+    private Exclusion? Find(string file, string group, string test)
     {
         string key = $"{file}|{group} :: {test}";
 

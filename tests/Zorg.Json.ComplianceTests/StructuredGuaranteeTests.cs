@@ -63,6 +63,11 @@ public sealed class StructuredGuaranteeTests
         { "not", Z.Not(Z.String()) },
         { "if", Z.If(Z.String(), Z.String().MinLength(1), Z.Number()) },
         { "lazy", Tree.Schema },
+        { "draft-04 exclusive", Draft04("""{ "minimum": 1, "exclusiveMinimum": true, "maximum": 50, "exclusiveMaximum": false }""") },
+        { "draft-04 tuple", Draft04("""{ "items": [{ "type": "string" }], "additionalItems": false }""") },
+        { "draft-04 dependencies", Draft04("""{ "dependencies": { "a": ["b"], "b": { "required": ["name"] } } }""") },
+        { "draft-04 ref siblings", Draft04("""{ "definitions": { "a": { "type": "string" } }, "$ref": "#/definitions/a", "maxLength": 0 }""") },
+        { "draft-04 inert keywords", Draft04("""{ "const": 1, "contains": { "type": "string" }, "propertyNames": { "maxLength": 0 }, "if": {}, "then": { "not": {} } }""") },
     };
 
     public static TheoryData<string, ISchema> Looser { get; } = new()
@@ -120,7 +125,15 @@ public sealed class StructuredGuaranteeTests
         { "strip counts", Z.Object().Strip().Property("a", Z.Number()).MaxProperties(1) },
         { "default counts", Z.Object().Property("a", Z.Integer().Default(1)).MinProperties(1) },
         { "coerced unique", Z.Array(Z.Integer().Coerce()).UniqueItems() },
+        { "draft-04 integer", Draft04("""{ "type": "integer", "minimum": 1 }""") },
+        { "draft-04 not integer", Draft04("""{ "not": { "type": "integer" } }""") },
+        { "draft-04 not nested integer", Draft04("""{ "not": { "properties": { "a": { "type": "integer" } }, "required": ["a"] } }""") },
+        { "draft-04 not through a reference", Draft04("""{ "definitions": { "a": { "type": "integer" } }, "not": { "$ref": "#/definitions/a" } }""") },
+        { "draft-04 oneOf integer", Draft04("""{ "oneOf": [{ "type": "integer" }, { "minimum": 2 }] }""") },
     };
+
+    private static JsonValueSchema Draft04(string document) =>
+        Z.FromJsonSchema(document, new() { DefaultDialect = Import.JsonSchemaImportDialect.Draft04 });
 
     private static Func<string, bool> Parser(ISchema schema) => schema switch
     {

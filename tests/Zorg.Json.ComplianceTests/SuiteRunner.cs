@@ -20,6 +20,8 @@ internal sealed record FileResult(string Draft, string File)
 
     public int RoundTripped { get; set; }
 
+    public int Loosened { get; set; }
+
     public List<string> Failures { get; } = [];
 
     public List<string> RoundTripFailures { get; } = [];
@@ -35,11 +37,13 @@ internal static class SuiteRunner
         ("draft2020-12", JsonSchemaImportDialect.Draft202012),
         ("draft7", JsonSchemaImportDialect.Draft07),
         ("draft6", JsonSchemaImportDialect.Draft06),
+        ("draft4", JsonSchemaImportDialect.Draft04),
     ];
 
     private static readonly string[] Optional =
     [
         "bignum.json", "float-overflow.json", "anchor.json", "id.json", "no-schema.json", "refOfUnknownKeyword.json", "unknownKeyword.json",
+        "zeroTerminatedFloats.json",
     ];
 
     private static readonly Lazy<ImmutableArray<FileResult>> LazyResults = new(RunAll);
@@ -226,7 +230,18 @@ internal static class SuiteRunner
                 {
                     string name = test.GetProperty("description").GetString()!;
 
-                    if (Manifest.ForTest(relative, description, name) is null)
+                    if (Manifest.IsLooserAfterEmit(relative, description, name))
+                    {
+                        if (!test.GetProperty("valid").GetBoolean() && again.SafeParse(test.GetProperty("data")).IsSuccess)
+                        {
+                            result.Loosened++;
+                        }
+                        else
+                        {
+                            result.RoundTripFailures.Add($"{prefix} :: {name}: excluded as looser after emitting, but it isn't\n  {first}");
+                        }
+                    }
+                    else if (Manifest.ForTest(relative, description, name) is null)
                     {
                         if (Agrees(again, test, out string? problem))
                         {
