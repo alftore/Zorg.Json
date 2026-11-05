@@ -9,8 +9,13 @@ internal static class JsonStrings
     private static readonly JsonDocumentOptions ReaderOptions = new() { MaxDepth = int.MaxValue };
 
     /// <summary>Keeps a lone surrogate as an escape, which <see cref="Utf8JsonWriter"/> would refuse or replace.</summary>
-    public static JsonElement ToElement(string value)
+    public static JsonElement ToElement(string? value)
     {
+        if (value is null)
+        {
+            return JsonElement.Parse("null");
+        }
+
         StringBuilder text = new(value.Length + 2);
         JsonText.AppendLiteral(text, value);
         return JsonElement.Parse(text.ToString(), ReaderOptions);

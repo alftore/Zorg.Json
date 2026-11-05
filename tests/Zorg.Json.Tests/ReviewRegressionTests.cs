@@ -1025,6 +1025,15 @@ public sealed class ReviewRegressionTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), watch.Elapsed.ToString());
     }
 
+    [Fact]
+    public void A_null_string_in_a_list_is_validated_as_null()
+    {
+        ArraySchema<string> schema = Z.Array(Z.String().Nullable());
+
+        Assert.True(schema.Validate(new List<string> { null!, "a" }).IsSuccess);
+        Assert.True(schema.SafeParse("[null,\"a\"]").IsSuccess);
+    }
+
     private static class Ast
     {
         public static readonly ObjectSchema Schema = Z.Object()
