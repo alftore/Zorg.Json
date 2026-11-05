@@ -1,10 +1,12 @@
 using System;
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Zorg.Json.Emission;
 using Zorg.Json.Model;
+using Zorg.Json.Validation;
 
 namespace Zorg.Json.Llm;
 
@@ -12,6 +14,17 @@ namespace Zorg.Json.Llm;
 internal sealed class ModelOutputAdapter(SchemaNode root)
 {
     private const string DefsPrefix = "#/$defs/";
+
+    // Deeper than JsonNode.Parse reads. Anything below is left as it came.
+    private const int MaxConvertDepth = 64;
+
+    private const int MaxVisitDepth = 256;
+
+    private const int MaxVisits = 1_000_000;
+
+    private static readonly JsonDocumentOptions ResultOptions = new() { MaxDepth = int.MaxValue };
+
+    private int _visits;
 
     public static JsonElement Adapt(SchemaNode root, EmitResult emitted, JsonElement json)
     {
@@ -24,7 +37,17 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             return json;
         }
 
-        JsonNode? value = JsonNode.Parse(json.GetRawText());
+        JsonNode? value;
+
+        try
+        {
+            value = ToNode(json, 0);
+        }
+        catch (InvalidOperationException)
+        {
+            // A property name that can't be decoded. SafeParse reports on the element as it is.
+            return json;
+        }
 
         if (unwrap && value is JsonObject wrapper && wrapper.Count == 1 && wrapper.TryGetPropertyValue(Rewriters.RootWrapperProperty, out JsonNode? inner))
         {
@@ -34,10 +57,87 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
         if (requiredAll)
         {
-            new ModelOutputAdapter(root).Visit(value, root);
+            new ModelOutputAdapter(root).Visit(value, root, 0);
         }
 
-        return JsonElement.Parse(value?.ToJsonString() ?? "null");
+        return ToElement(value);
+    }
+
+    private static JsonNode? ToNode(JsonElement element, int depth)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object when depth < MaxConvertDepth:
+                JsonObject target = [];
+
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    target[property.Name] = ToNode(property.Value, depth + 1);
+                }
+
+                return target;
+            case JsonValueKind.Array when depth < MaxConvertDepth:
+                JsonArray array = [];
+
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    array.Add(ToNode(item, depth + 1));
+                }
+
+                return array;
+            default:
+                return JsonValue.Create(element);
+        }
+    }
+
+    // Leaves are written as the text they came in, so what System.Text.Json can't decode, such as a lone surrogate or a huge exponent, passes through.
+    private static JsonElement ToElement(JsonNode? node)
+    {
+        ArrayBufferWriter<byte> buffer = new();
+
+        using (Utf8JsonWriter writer = new(buffer))
+        {
+            Write(writer, node);
+        }
+
+        return JsonElement.Parse(buffer.WrittenSpan, ResultOptions);
+    }
+
+    private static void Write(Utf8JsonWriter writer, JsonNode? node)
+    {
+        switch (node)
+        {
+            case null:
+                writer.WriteNullValue();
+                break;
+            case JsonObject target:
+                writer.WriteStartObject();
+
+                foreach ((string name, JsonNode? item) in target)
+                {
+                    writer.WritePropertyName(name);
+                    Write(writer, item);
+                }
+
+                writer.WriteEndObject();
+                break;
+            case JsonArray array:
+                writer.WriteStartArray();
+
+                foreach (JsonNode? item in array)
+                {
+                    Write(writer, item);
+                }
+
+                writer.WriteEndArray();
+                break;
+            case JsonValue leaf when leaf.TryGetValue(out JsonElement element):
+                writer.WriteRawValue(element.GetRawText(), skipInputValidation: true);
+                break;
+            default:
+                node.WriteTo(writer);
+                break;
+        }
     }
 
     private static bool IsWrapper(JsonObject schema) =>
@@ -74,18 +174,23 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
     private static bool HasAllowedValue(JsonNode? value, SchemaNode node)
     {
-        JsonElement element = JsonElement.Parse(value?.ToJsonString() ?? "null");
+        JsonElement element = ToElement(value);
 
-        if (node.Const is { } constant && !JsonElement.DeepEquals(constant, element))
+        if (node.Const is { } constant && !JsonEquality.AreEqual(constant, element))
         {
             return element.ValueKind == JsonValueKind.Null;
         }
 
-        return node.Enum.IsEmpty || element.ValueKind == JsonValueKind.Null || node.Enum.Any(item => JsonElement.DeepEquals(item, element));
+        return node.Enum.IsEmpty || element.ValueKind == JsonValueKind.Null || node.Enum.Any(item => JsonEquality.AreEqual(item, element));
     }
 
-    private void Visit(JsonNode? value, SchemaNode schema)
+    private void Visit(JsonNode? value, SchemaNode schema, int depth)
     {
+        if (depth > MaxVisitDepth || ++_visits > MaxVisits)
+        {
+            return;
+        }
+
         SchemaNode? node = Resolve(schema);
 
         if (node is null)
@@ -95,11 +200,11 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
         if (value is JsonObject target)
         {
-            VisitProperties(target, node);
+            VisitProperties(target, node, depth);
         }
         else if (value is JsonArray array)
         {
-            VisitItems(array, node);
+            VisitItems(array, node, depth);
         }
         else
         {
@@ -108,16 +213,16 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
         foreach (SchemaNode branch in node.AllOf)
         {
-            Visit(value, branch);
+            Visit(value, branch, depth + 1);
         }
 
         if (Select(value, node.AnyOf.IsEmpty ? node.OneOf : node.AnyOf) is { } selected)
         {
-            Visit(value, selected);
+            Visit(value, selected, depth + 1);
         }
     }
 
-    private void VisitProperties(JsonObject value, SchemaNode node)
+    private void VisitProperties(JsonObject value, SchemaNode node, int depth)
     {
         foreach (SchemaProperty property in node.Properties)
         {
@@ -132,12 +237,23 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             }
             else
             {
-                Visit(item, property.Schema);
+                Visit(item, property.Schema, depth + 1);
+            }
+        }
+
+        if (node.AdditionalProperties is { } additional)
+        {
+            foreach ((string name, JsonNode? item) in value.ToArray())
+            {
+                if (node.Properties.All(property => property.Name != name))
+                {
+                    Visit(item, additional, depth + 1);
+                }
             }
         }
     }
 
-    private void VisitItems(JsonArray value, SchemaNode node)
+    private void VisitItems(JsonArray value, SchemaNode node, int depth)
     {
         for (int index = 0; index < value.Count; index++)
         {
@@ -145,7 +261,7 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
             if (item is not null)
             {
-                Visit(value[index], item);
+                Visit(value[index], item, depth + 1);
             }
         }
     }
