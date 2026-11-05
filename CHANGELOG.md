@@ -24,7 +24,16 @@
 - Added the issue code `too_many_issues`. A context keeps 100 issues, and `unrecognized_keys` lists 20 names.
 - `format: regex` accepts at most 1,024 characters and is charged to the budget.
 - `Pattern(Regex)` no longer takes `regex.ToString()` as the ECMA-262 `pattern`. Pass `ecmaPattern` to state one.
-- Fixed `uuid`, `iri`, `uri-template`, `idn-hostname` and `relative-json-pointer` verdicts, translated regex group names that collided, and percent-encoded astral property names in `SchemaLocation`.
+- Fixed `uuid`, `iri`, `idn-hostname` and `relative-json-pointer` verdicts, translated regex group names that collided, and percent-encoded astral property names in `SchemaLocation`.
+- Added `Validate(T)` and `ValidateAsync`, which check an object you already have.
+- Added `Optional<T>` and `OptionalJsonConverter<T>`, which tell an absent property from `null`, for PATCH bodies.
+- Added `Pattern(Regex, ecmaPattern)` for `[GeneratedRegex]`.
+- Added `UnrepresentablePolicy.Callback` with `UnrepresentableHandler`.
+- Added `EvaluationPath` and `SchemaLocation` to issues, and `ToTree()`.
+- Past `maxItems` or `maxProperties`, only that issue is reported and the elements aren't validated.
+- Union and conditional branches all see the same value. If several branches rewrite it, the last rewrite wins. `MinProperties`, `MaxProperties` and `UniqueItems` apply to the final value.
+- `Zorg.Json.AspNetCore`: a `charset` other than UTF-8 gets a 415, handlers receive the validated JSON, so an absent `Optional<T>` stays absent, and problem details hold at most 100 issues.
+- `Zorg.Json.Llm`: `ParseModelOutput` never throws on malformed output.
 
 ## 0.1.0-preview.1
 
