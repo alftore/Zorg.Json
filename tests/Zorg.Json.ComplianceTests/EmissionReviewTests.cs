@@ -690,6 +690,95 @@ public sealed class EmissionReviewTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"took {watch.Elapsed}");
     }
 
+    private const string NullableReference = """
+        {"$schema":"https://json-schema.org/draft/2020-12/schema",
+         "$defs":{"item":{"type":"object","properties":{"id":{"type":"string","format":"uuid"}},"required":["id"]}},
+         "type":"object","properties":{"p":{"oneOf":[{"$ref":"#/$defs/item"},{"type":"null"}]}}}
+        """;
+
+    [Fact]
+    public void A_nullable_reference_to_a_schema_with_a_format_round_trips()
+    {
+        JsonValueSchema schema = Import(NullableReference);
+        EmitResult result = schema.Emit(new JsonSchemaOptions());
+
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(NullableReference), result.Schema), result.Schema.ToJsonString());
+        Assert.Empty(result.Diagnostics);
+        Assert.NotNull(schema.Emit(new JsonSchemaOptions { Unrepresentable = UnrepresentablePolicy.Throw }));
+    }
+
+    [Theory]
+    [InlineData("""{"oneOf":[{"type":"string","format":"uuid"},{"type":"null"}]}""")]
+    [InlineData("""{"oneOf":[{"type":"string","format":"date-time"},{"type":"integer"}]}""")]
+    [InlineData("""{"oneOf":[{"type":"array","items":{"type":"string","format":"uuid"}},{"type":"null"}]}""")]
+    [InlineData("""{"oneOf":[{"type":["string","null"],"format":"uuid"},{"type":"object"}]}""")]
+    [InlineData("""{"$defs":{"a":{"$ref":"#/$defs/b"},"b":{"type":"string","format":"uuid"}},"oneOf":[{"$ref":"#/$defs/a"},{"type":"null"}]}""")]
+    public void Branches_of_different_types_keep_one_of(string document)
+    {
+        foreach (JsonSchemaProfile profile in new[] { JsonSchemaProfile.Draft202012, JsonSchemaProfile.Draft07, JsonSchemaProfile.OpenApi30, JsonSchemaProfile.OpenApi31 })
+        {
+            JsonObject schema = Import(document).ToJsonSchema(new JsonSchemaOptions { Target = profile });
+
+            Assert.True(schema.ContainsKey("oneOf"), schema.ToJsonString());
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"oneOf":[{"type":"string","format":"uuid"},{"type":"string","format":"email"}]}""", "\"abc@example.com\"")]
+    [InlineData("""{"oneOf":[{"type":"string","format":"uuid"},{"type":["string","null"]}]}""", "\"abc\"")]
+    [InlineData("""{"oneOf":[{"type":"integer","maximum":5,"format":"date"},{"type":"number","minimum":6,"format":"date"}]}""", "1")]
+    [InlineData("""{"oneOf":[{"type":"string","format":"uuid"},{"format":"email"}]}""", "\"abc@example.com\"")]
+    public void Branches_that_can_overlap_still_relax_to_any_of(string document, string instance)
+    {
+        JsonValueSchema schema = Import(document);
+        string text = schema.ToJsonSchema().ToJsonString();
+
+        Assert.Contains("\"anyOf\"", text, StringComparison.Ordinal);
+
+        if (schema.SafeParse(instance).IsSuccess)
+        {
+            Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, instance), text);
+        }
+    }
+
+    [Fact]
+    public void A_coerced_branch_overlaps_a_string_branch()
+    {
+        JsonObject schema = Z.OneOf(Z.Integer().Coerce(), Z.String().Email()).ToJsonSchema();
+
+        Assert.False(schema.ContainsKey("oneOf"), schema.ToJsonString());
+        Assert.True(Accepts(schema.ToJsonString(), JsonSchemaProfile.Draft202012, "\"5\""), schema.ToJsonString());
+    }
+
+    [Fact]
+    public void A_rewriter_keeps_the_relaxed_form_because_it_can_change_a_type()
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.ConvertBooleanSchemas);
+        JsonObject schema = Import(NullableReference).ToJsonSchema(new JsonSchemaOptions { Target = profile });
+
+        Assert.Contains("\"anyOf\"", schema.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Keeping_one_of_does_not_make_not_exact()
+    {
+        const string Document = """{"not":{"oneOf":[{"type":"string","format":"uuid"},{"type":"null"}]}}""";
+        JsonValueSchema schema = Import(Document);
+
+        Assert.True(schema.SafeParse("\"abc\"").IsSuccess);
+        Assert.True(Accepts(schema.ToJsonSchema().ToJsonString(), JsonSchemaProfile.Draft202012, "\"abc\""));
+    }
+
+    [Fact]
+    public void A_recursive_nullable_reference_ends_the_type_walk()
+    {
+        const string Document = """{"$defs":{"a":{"oneOf":[{"$ref":"#/$defs/n"},{"type":"null"}]},"n":{"type":"object","properties":{"id":{"format":"uuid"},"next":{"$ref":"#/$defs/a"}}}},"$ref":"#/$defs/a"}""";
+        string text = Import(Document).ToJsonSchema().ToJsonString();
+
+        Assert.Contains("\"oneOf\"", text, StringComparison.Ordinal);
+        Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, """{"next":{"next":null}}"""), text);
+    }
+
     [Fact]
     public void A_copy_of_a_merged_dependency_does_not_repeat_its_id()
     {

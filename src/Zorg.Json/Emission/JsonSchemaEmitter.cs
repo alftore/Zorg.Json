@@ -1372,23 +1372,85 @@ internal sealed class JsonSchemaEmitter
 
     /// <summary>
     /// Branches that aren't exact can overlap in the emitted schema though only one matches in Zorg, so
-    /// <c>oneOf</c> relaxes to <c>anyOf</c>. Discriminated branches can't overlap, whatever else they leave out.
+    /// <c>oneOf</c> relaxes to <c>anyOf</c>. Discriminated branches can't overlap, whatever else they leave out, and
+    /// nor can branches of different types.
     /// </summary>
     private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
-        if (!IsInput || node.OneOf.All(branch => _exactness.IsExact(branch)) || DiscriminatorKeys.TryBuild(node, out _))
+        if (!IsInput || node.OneOf.All(branch => _exactness.IsExact(branch)) || DiscriminatorKeys.TryBuild(node, out _) || HaveSeparateTypes(node.OneOf))
         {
             WriteList(schema, "oneOf", node.OneOf, location);
         }
         else if (node.AnyOf.IsEmpty)
         {
-            Unrepresentable("oneOf", "Some branches can't be stated exactly, so oneOf is written as anyOf.", location);
+            Unrepresentable("oneOf", "Branches can overlap in a validator that doesn't apply every rule, such as format, so oneOf is written as anyOf.", location);
             WriteList(schema, "anyOf", node.OneOf, location);
         }
         else
         {
             Unsupported("oneOf", notes, location);
         }
+    }
+
+    /// <summary>
+    /// True when no value can match two branches as they are written, whatever else a branch leaves out, so <c>oneOf</c>
+    /// and <c>anyOf</c> agree. This judges the written <c>type</c>, so anything that could change it answers false.
+    /// </summary>
+    private bool HaveSeparateTypes(ImmutableArray<SchemaNode> branches)
+    {
+        // A rewriter can replace a branch or a definition after this is judged.
+        if (!_profile.Rewriters.IsEmpty)
+        {
+            return false;
+        }
+
+        JsonTypes seen = JsonTypes.None;
+
+        foreach (SchemaNode branch in branches)
+        {
+            JsonTypes types = WrittenTypes(branch);
+
+            if (types == JsonTypes.None || (seen & types) != JsonTypes.None)
+            {
+                return false;
+            }
+
+            seen |= types;
+        }
+
+        return true;
+    }
+
+    /// <summary>The types a subschema's written form can accept, or <see cref="JsonTypes.None"/> when that isn't known. Follows references.</summary>
+    private static JsonTypes WrittenTypes(SchemaNode node)
+    {
+        HashSet<SchemaNode> followed = new(ReferenceEqualityComparer.Instance);
+
+        while (followed.Add(node) && followed.Count <= SchemaExactness.MaxWalked)
+        {
+            // Coercion adds string to the written type.
+            if (node.Behavior.Coercion != SchemaCoercion.None)
+            {
+                return JsonTypes.None;
+            }
+
+            if (node.Types != JsonTypes.None)
+            {
+                // Every integer is a number, so the two overlap.
+                return (node.Types & (JsonTypes.Integer | JsonTypes.Number)) != JsonTypes.None
+                    ? node.Types | JsonTypes.Integer | JsonTypes.Number
+                    : node.Types;
+            }
+
+            if (node.Behavior.Target is not { } target)
+            {
+                return JsonTypes.None;
+            }
+
+            node = target();
+        }
+
+        return JsonTypes.None;
     }
 
     private void WriteDefinitions(JsonObject schema, SchemaNode node, string location)

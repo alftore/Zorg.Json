@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-preview.3
+
+- Fixed an imported `oneOf` being written as `anyOf` when a branch held a `format`, though its branches can't overlap, as in a nullable `$ref`. Branches of different types now keep `oneOf`, so these schemas round trip again and `UnrepresentablePolicy.Throw` doesn't throw on them. Branches that can overlap once `format` is ignored still become `anyOf`.
+- The diagnostic for that `anyOf` now says why it's needed.
+
 ## 0.1.0-preview.2
 
 Known limit: inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`, a `RefineAsync` check counts as passed, because these decide before async checks run. `Contains` can accept a value the check would refuse, and `AnyOf` can reject a value another branch would accept. Put `RefineAsync` on the outer schema instead. See the guide.

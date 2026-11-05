@@ -305,7 +305,7 @@ JsonObject schema = PersonSchema.ToJsonSchema();
 - Parts of a schema a dialect has no keyword for.
 - `format`, which Zorg enforces and other validators may treat as a note.
 
-Leaving a rule out makes a schema looser, but under `not`, `if`, `maxContains` or `oneOf` a looser subschema would make the document **stricter**. So a subschema that can't be stated exactly takes that keyword with it: `not`, `if` and `maxContains` are left out, and `oneOf` becomes `anyOf`. This applies to any subschema with a normalizer, a refinement, a known format, or a .NET numeric range. Discriminated unions stay `oneOf`, because their branches can't overlap.
+Leaving a rule out makes a schema looser, but under `not`, `if`, `maxContains` or `oneOf` a looser subschema would make the document **stricter**. So a subschema that can't be stated exactly takes that keyword with it: `not`, `if` and `maxContains` are left out, and `oneOf` becomes `anyOf`. This applies to any subschema with a normalizer, a refinement, a known format, or a .NET numeric range. Discriminated unions stay `oneOf`, because their branches can't overlap, and so do branches of different types, such as a nullable `$ref` to an object. Branches that can overlap once a rule is ignored, such as two string formats, become `anyOf`, and `UnrepresentablePolicy.Throw` throws on those.
 
 By default each of these is noted in `description`. `Emit()` also returns them as diagnostics:
 
