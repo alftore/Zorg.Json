@@ -18,7 +18,7 @@
 - Emission stops with an `InvalidOperationException` after 100,000 subschemas, which names `Reused = Ref` and `.Named`. `GenerateSample` stops sooner on schemas that reject every candidate.
 - Evaluation limits: `NormalizeUnicode` refuses a string with more than 64 combining marks in a row, a big `enum` is checked by hash, its issues share one list of values and its message lists 50, and `dependentRequired` and `required` look properties up in one index instead of once each.
 - Importing a schema nested 100,000 levels deep is refused in milliseconds.
-- Review fixes in evaluation:
+- Evaluation fixes:
   - Instance paths copied into the issues of speculative branches are charged to a budget, so a long property name with a long array no longer takes quadratic time.
   - `SafeParse(JsonElement)` no longer throws on bytes that aren't UTF-8 when it rewrites an object or array, or reads a discriminator.
   - `const`, `enum` and a discriminated union fail the parse on a value with an unreadable string, so `Z.Not(...)`, `Z.If(...)` and `Z.AnyOf(...)` over them can't accept `"\ud800"`.
@@ -27,11 +27,11 @@
   - Failed `anyOf` and `oneOf` branches keep at most 20,000 issues over a parse, so a recursive union over a large document no longer holds gigabytes.
   - An exception thrown by your own `Refine` or `RefineAsync`, including a `JsonException`, passes through instead of becoming `deserialization_failed`.
   - The stream overload refuses a UTF-8 byte order mark as `invalid_json`, as the string and byte overloads do. It used to skip it. A bad byte and the escape `\udcff` are different strings for `uniqueItems`.
-- Second review fixes in evaluation:
+- More evaluation fixes:
   - A number with an exponent of more than 18 digits can't be hashed to find an equal number, so `uniqueItems` (with two items or more), a large `enum` and a discriminated union now fail the parse when they hold or are given one, where before `[1e999999999999999999, 0.1e1000000000000000000]` passed `uniqueItems` and `Z.Not(...)` over a large `enum` accepted such a number.
   - `multipleOf` charges for raising ten to a long exponent modulo the divisor. A 1,001-digit divisor under `not` used to take seconds over a 105 KB array and now fails the parse with the limit.
   - `GenerateSample` no longer ends the process on a schema nested 100,000 levels deep.
-- Second review fixes in emission:
+- More emission fixes:
   - An imported schema with an `$id` of its own is a resource again when it sits in another schema: its `$defs` and references are left as they are, instead of being moved to the document, which left the references dangling. A reference inside such a resource to a place the dialect doesn't write (`#/if` in OpenAPI 3.0) is written again under the definitions of that resource.
   - A moved target is named `target-1` and so on, but never after a definition the document has, which it used to replace.
   - Pointing a reference at a moved target reads only schemas, so a `const`, `enum`, `default` or example that spells `{"$ref": ...}` is left alone.
