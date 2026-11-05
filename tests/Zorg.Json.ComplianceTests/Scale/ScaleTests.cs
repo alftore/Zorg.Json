@@ -92,7 +92,8 @@ public sealed class ScaleTests
     {
         string patternProperties = "{\"patternProperties\":{\"" + new string('a', 1_100) + "\":{}}}";
 
-        foreach (JsonSchemaImportDialect dialect in System.Enum.GetValues<JsonSchemaImportDialect>())
+        // OpenAPI 3.0 has no patternProperties, so there it's an inert keyword and holds no pattern.
+        foreach (JsonSchemaImportDialect dialect in System.Enum.GetValues<JsonSchemaImportDialect>().Where(item => item != JsonSchemaImportDialect.OpenApi30))
         {
             Assert.Equal(JsonSchemaImportCodes.LimitExceeded, Refused(patternProperties, new() { DefaultDialect = dialect }).Code);
         }
