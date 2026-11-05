@@ -27,6 +27,10 @@
   - Failed `anyOf` and `oneOf` branches keep at most 20,000 issues over a parse, so a recursive union over a large document no longer holds gigabytes.
   - An exception thrown by your own `Refine` or `RefineAsync`, including a `JsonException`, passes through instead of becoming `deserialization_failed`.
   - The stream overload refuses a UTF-8 byte order mark as `invalid_json`, as the string and byte overloads do. It used to skip it. A bad byte and the escape `\udcff` are different strings for `uniqueItems`.
+- Second review fixes in evaluation:
+  - A number with an exponent of more than 18 digits can't be hashed to find an equal number, so `uniqueItems` (with two items or more), a large `enum` and a discriminated union now fail the parse when they hold or are given one, where before `[1e999999999999999999, 0.1e1000000000000000000]` passed `uniqueItems` and `Z.Not(...)` over a large `enum` accepted such a number.
+  - `multipleOf` charges for raising ten to a long exponent modulo the divisor. A 1,001-digit divisor under `not` used to take seconds over a 105 KB array and now fails the parse with the limit.
+  - `GenerateSample` no longer ends the process on a schema nested 100,000 levels deep.
 - Docs: "Differences from Zod" in the reference lists the differences that are on purpose, including the loss of data from `Strip` objects in `Z.AllOf`.
 - Packages now link to the repository.
 - Exceeding an evaluation limit now fails the whole parse. Before, a branch under `if`, `oneOf` or `contains` that ran out of budget, or a regex that timed out under `not` or `if`, counted as "didn't match" and could turn into acceptance. There is now a budget over all steps as well as the speculative one, and the guide lists the limits.

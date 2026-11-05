@@ -88,11 +88,20 @@ internal static class JsonEquality
     /// A hash that agrees with <see cref="AreEqual"/>: equal values hash equally, whatever the number's spelling or the
     /// order of an object's properties. It reads every value once and doesn't recurse.
     /// </summary>
-    public static int Hash(JsonElement element)
+    public static int Hash(JsonElement element) => Hash(element, out _);
+
+    /// <summary>
+    /// A hash that agrees with <see cref="AreEqual"/> for every value, except that a number whose exponent is too long to hold
+    /// hashes by its sign. It may equal a number that hashes otherwise, so <paramref name="outOfRange"/> says the hash can't be
+    /// trusted to find an equal value, and a caller has to compare instead.
+    /// </summary>
+    public static int Hash(JsonElement element, out bool outOfRange)
     {
+        outOfRange = false;
+
         if (element.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object))
         {
-            return Leaf(element);
+            return Leaf(element, ref outOfRange);
         }
 
         Stack<Frame> frames = new();
@@ -111,7 +120,7 @@ internal static class JsonEquality
                 }
                 else
                 {
-                    frame.Add(name, Leaf(child));
+                    frame.Add(name, Leaf(child, ref outOfRange));
                 }
 
                 continue;
@@ -205,18 +214,20 @@ internal static class JsonEquality
         return true;
     }
 
-    private static int Leaf(JsonElement element) => element.ValueKind switch
+    private static int Leaf(JsonElement element, ref bool outOfRange) => element.ValueKind switch
     {
         JsonValueKind.String => JsonText.GetString(element).GetHashCode(StringComparison.Ordinal),
-        JsonValueKind.Number => Number(element),
+        JsonValueKind.Number => Number(element, ref outOfRange),
         JsonValueKind.True => 1,
         JsonValueKind.False => 2,
         _ => 3,
     };
 
-    private static int Number(JsonElement element)
+    private static int Number(JsonElement element, ref bool outOfRange)
     {
-        return ExactNumber.Parse(element.GetRawText()).GetHash();
+        ExactNumber number = ExactNumber.Parse(element.GetRawText());
+        outOfRange |= number.IsOutOfRange;
+        return number.GetHash();
     }
 
     private static int Mix(string? name, int value) => HashCode.Combine(name?.GetHashCode(StringComparison.Ordinal) ?? 0, value);

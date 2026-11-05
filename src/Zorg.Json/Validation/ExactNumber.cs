@@ -205,7 +205,22 @@ internal readonly struct ExactNumber
     public int GetHash() => _outOfRange ? _sign : HashCode.Combine(_sign, string.GetHashCode(_digits, StringComparison.Ordinal), _exponent);
 
     /// <summary>The cost of <see cref="IsMultipleOf"/> in steps, to charge before calling it.</summary>
-    public long MultipleOfCost(ExactNumber divisor) => ((_digits.Length / ChunkDigits) + 1) * ((divisor._digits.Length / ChunkDigits) + 1);
+    public long MultipleOfCost(ExactNumber divisor)
+    {
+        long dividendChunks = (_digits.Length / ChunkDigits) + 1;
+        long divisorChunks = (divisor._digits.Length / ChunkDigits) + 1;
+        long cost = dividendChunks * divisorChunks;
+        long shift = _exponent - divisor._exponent;
+
+        // Reading the divisor, and raising ten to the shift modulo the divisor: one multiplication and reduction per bit of the shift,
+        // each about the square of the divisor's size. An eighth of a step is roughly what one chunk product takes.
+        if (shift > 0)
+        {
+            cost += ((System.Numerics.BitOperations.Log2((ulong)shift) + 2) * divisorChunks * divisorChunks / 8) + (divisorChunks * divisorChunks);
+        }
+
+        return cost;
+    }
 
     public bool IsMultipleOf(ExactNumber divisor)
     {

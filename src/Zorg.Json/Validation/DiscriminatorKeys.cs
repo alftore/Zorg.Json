@@ -42,7 +42,13 @@ internal static class DiscriminatorKeys
 
             foreach (JsonElement value in values)
             {
-                int hash = JsonEquality.Hash(value);
+                int hash = JsonEquality.Hash(value, out bool outOfRange);
+
+                // The hash of a number that can't be held doesn't find its equals, so the branches are tried one by one instead.
+                if (outOfRange)
+                {
+                    return false;
+                }
 
                 if (!seen.TryGetValue(hash, out List<JsonElement>? bucket))
                 {

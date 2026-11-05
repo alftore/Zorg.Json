@@ -165,7 +165,9 @@ internal sealed class SampleViews
             return allowed ? [Anything] : [];
         }
 
-        if (path?.Depth > MaxInPlaceDepth)
+        // Branches nest as deep as the schema does, and each level of an enumeration takes several frames. A view only steers
+        // generation, so when the stack runs low the rest is left open.
+        if (path?.Depth > MaxInPlaceDepth || !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
         {
             return [Anything];
         }

@@ -418,6 +418,7 @@ internal sealed class ValidationPlan
     {
         private readonly ImmutableArray<JsonElement> _values;
         private readonly Dictionary<int, List<JsonElement>>? _index;
+        private readonly List<JsonElement>? _unhashable;
 
         public static EnumTable? Create(SchemaNode node) => node.Enum.IsEmpty ? null : new EnumTable(node.Enum);
 
@@ -434,7 +435,14 @@ internal sealed class ValidationPlan
 
                 foreach (JsonElement allowed in values)
                 {
-                    int hash = JsonEquality.Hash(allowed);
+                    int hash = JsonEquality.Hash(allowed, out bool outOfRange);
+
+                    if (outOfRange)
+                    {
+                        // Its hash can't find an equal value, so every value is compared with it.
+                        (_unhashable ??= []).Add(allowed);
+                        continue;
+                    }
 
                     if (!_index.TryGetValue(hash, out List<JsonElement>? bucket))
                     {
@@ -453,9 +461,42 @@ internal sealed class ValidationPlan
 
         public string Message { get; }
 
-        public bool Contains(JsonElement value, ValidationContext context) => _index is null
-            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value, context))
-            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value, context));
+        public bool Contains(JsonElement value, ValidationContext context)
+        {
+            if (_index is null)
+            {
+                return Scan(_values, value, context);
+            }
+
+            int hash = JsonEquality.Hash(value, out bool outOfRange);
+
+            // A number the hash can't place may equal any allowed number, so it is compared with all of them.
+            if (outOfRange)
+            {
+                return Scan(_values, value, context);
+            }
+
+            return (_index.TryGetValue(hash, out List<JsonElement>? bucket) && Scan(bucket, value, context))
+                || (_unhashable is not null && Scan(_unhashable, value, context));
+        }
+
+        private static bool Scan(IEnumerable<JsonElement> candidates, JsonElement value, ValidationContext context)
+        {
+            foreach (JsonElement allowed in candidates)
+            {
+                if (context.Halted)
+                {
+                    return false;
+                }
+
+                if (JsonEquality.AreEqual(allowed, value, context))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private void CheckString(JsonElement value, ValidationContext context)
@@ -660,7 +701,7 @@ internal sealed class ValidationPlan
     }
 
     /// <summary>
-    /// Equal items share a hash (<see cref="JsonEquality.Hash"/>), so each item is only compared with the earlier items that
+    /// Equal items share a hash (<see cref="JsonEquality.Hash(JsonElement)"/>), so each item is only compared with the earlier items that
     /// hash like it, and those comparisons are charged to the evaluation budget.
     /// </summary>
     private static void CheckUnique(JsonElement value, ValidationContext context)
@@ -673,7 +714,14 @@ internal sealed class ValidationPlan
         foreach (JsonElement item in value.EnumerateArray())
         {
             items[index] = item;
-            int bucket = JsonEquality.Hash(item);
+            int bucket = JsonEquality.Hash(item, out bool outOfRange);
+
+            if (outOfRange && items.Length > 1)
+            {
+                // The hash can't tell whether this number equals another, and the other numbers are not at hand to compare.
+                context.ReportTooComplex("uniqueItems");
+                return;
+            }
             int candidate = latest.GetValueOrDefault(bucket, -1);
             previous[index] = candidate;
 
@@ -1124,6 +1172,31 @@ internal sealed class ValidationPlan
         return value;
     }
 
+    /// <summary>The branch whose discriminator equals the value. A number the hash can't place is compared with them all.</summary>
+    private (JsonElement Value, ValidationPlan Plan, int Index)? FindBranch(JsonElement selected, ValidationContext context)
+    {
+        int hash = JsonEquality.Hash(selected, out bool outOfRange);
+
+        IEnumerable<(JsonElement Value, ValidationPlan Plan, int Index)> candidates = outOfRange
+            ? _discriminated!.Values.SelectMany(bucket => bucket)
+            : _discriminated!.TryGetValue(hash, out List<(JsonElement Value, ValidationPlan Plan, int Index)>? found) ? found : [];
+
+        foreach ((JsonElement Value, ValidationPlan Plan, int Index) entry in candidates)
+        {
+            if (context.Halted)
+            {
+                return null;
+            }
+
+            if (JsonEquality.AreEqual(entry.Value, selected, context))
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
     private JsonElement RunDiscriminated(JsonElement value, ValidationContext context)
     {
         string discriminator = _node.Behavior.Discriminator!;
@@ -1135,10 +1208,9 @@ internal sealed class ValidationPlan
         }
 
         if (JsonText.TryGetProperty(value, discriminator, out JsonElement selected)
-            && _discriminated!.TryGetValue(JsonEquality.Hash(selected), out List<(JsonElement Value, ValidationPlan Plan, int Index)>? bucket)
-            && bucket.FindIndex(entry => JsonEquality.AreEqual(entry.Value, selected, context)) is >= 0 and int found)
+            && FindBranch(selected, context) is { } branch)
         {
-            (_, ValidationPlan plan, int index) = bucket[found];
+            (_, ValidationPlan plan, int index) = branch;
             context.Walk("oneOf", index);
             JsonElement result = plan.Run(value, context);
             context.Unwalk();
