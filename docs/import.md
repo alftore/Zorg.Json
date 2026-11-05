@@ -28,7 +28,7 @@ All core, applicator and validation keywords are honoured, including `not`, `if`
 | `unresolved_ref` | A `$ref` that isn't local, or points at nothing. Nothing is ever fetched |
 | `ref_cycle` | A reference cycle that never consumes input, such as `{ "$ref": "#" }` |
 | `invalid_pattern` | A pattern that isn't valid ECMA-262 |
-| `invalid_schema` | A keyword with an invalid value, such as an empty array-form `items`. Also text that isn't valid Unicode where Zorg reads it: an unpaired surrogate such as `\ud800` in a keyword, a property name, `$ref`, `$schema` or `required`. A `const`, `enum` or unknown keyword that holds one is only kept |
+| `invalid_schema` | A keyword with an invalid value, such as an empty array-form `items`. Also text that isn't valid Unicode where Zorg reads it: an unpaired surrogate such as `\ud800` in a keyword, a property name, `$ref`, `$schema` or `required`. A `const`, `enum` or unknown keyword that holds one is only kept. Emitting the schema again leaves such a `const` or `enum` out with a diagnostic (and the schema is inexact under `not`, `if` and `oneOf`), because it can't be written as JSON from .NET |
 | `limit_exceeded` | The document is too deep or too large for the options, or its patterns add up to more than `MaxTotalPatternLength` |
 
 `unevaluated*` works when no in-place applicator sits beside it, where it's equivalent to `additionalProperties` or `items`.
