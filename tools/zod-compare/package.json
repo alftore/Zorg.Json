@@ -1,0 +1,14 @@
+{
+  "name": "zorg-zod-compare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Compares Zorg.Json with Zod 4. Writes fixtures that a .NET test reads. Not part of any package.",
+  "scripts": {
+    "generate": "node generate.mjs",
+    "read-zorg": "node read-zorg.mjs"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}
