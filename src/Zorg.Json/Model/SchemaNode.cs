@@ -210,11 +210,21 @@ public sealed record SchemaNode
     public SchemaNode MapChildren(Func<SchemaNode, SchemaNode> map)
     {
         ArgumentNullException.ThrowIfNull(map);
+        return MapChildren((child, _) => map(child));
+    }
 
-        SchemaNode? Single(SchemaNode? node) => node is null ? null : map(node);
-        ImmutableArray<SchemaNode> List(ImmutableArray<SchemaNode> nodes) => nodes.IsEmpty ? nodes : [.. nodes.Select(map)];
+    /// <summary>
+    /// Maps every direct subschema and says where it sits. A subschema is in a negative position under <c>not</c>, in the
+    /// condition of <c>if</c>, in one branch of several in <c>oneOf</c>, and in <c>contains</c> beside <c>maxContains</c>, or
+    /// <c>unevaluated*</c>: a looser subschema there makes this node stricter.
+    /// </summary>
+    internal SchemaNode MapChildren(Func<SchemaNode, bool, SchemaNode> map)
+    {
+        SchemaNode? Single(SchemaNode? node, bool negative = false) => node is null ? null : map(node, negative);
+        ImmutableArray<SchemaNode> List(ImmutableArray<SchemaNode> nodes, bool negative = false) =>
+            nodes.IsEmpty ? nodes : [.. nodes.Select(node => map(node, negative))];
         ImmutableArray<SchemaProperty> Named(ImmutableArray<SchemaProperty> properties) =>
-            properties.IsEmpty ? properties : [.. properties.Select(property => property with { Schema = map(property.Schema) })];
+            properties.IsEmpty ? properties : [.. properties.Select(property => property with { Schema = map(property.Schema, false) })];
 
         return this with
         {
@@ -222,7 +232,7 @@ public sealed record SchemaNode
             ContentSchema = Single(ContentSchema),
             PrefixItems = List(PrefixItems),
             Items = Single(Items),
-            Contains = Single(Contains),
+            Contains = Single(Contains, negative: MaxContains is not null),
             Properties = Named(Properties),
             PatternProperties = Named(PatternProperties),
             AdditionalProperties = Single(AdditionalProperties),
@@ -230,13 +240,13 @@ public sealed record SchemaNode
             DependentSchemas = Named(DependentSchemas),
             AllOf = List(AllOf),
             AnyOf = List(AnyOf),
-            OneOf = List(OneOf),
-            Not = Single(Not),
-            If = Single(If),
+            OneOf = List(OneOf, negative: OneOf.Length > 1),
+            Not = Single(Not, negative: true),
+            If = Single(If, negative: true),
             Then = Single(Then),
             Else = Single(Else),
-            UnevaluatedItems = Single(UnevaluatedItems),
-            UnevaluatedProperties = Single(UnevaluatedProperties),
+            UnevaluatedItems = Single(UnevaluatedItems, negative: true),
+            UnevaluatedProperties = Single(UnevaluatedProperties, negative: true),
         };
     }
 

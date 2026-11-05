@@ -30,6 +30,7 @@ internal sealed class JsonSchemaEmitter
         _profile = options.Target;
         _exactness = new SchemaExactness.Checker(_profile.Dialect);
         _rewritten = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
+        _rewrittenNegative = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
     }
 
     /// <summary>
@@ -46,6 +47,7 @@ internal sealed class JsonSchemaEmitter
 
     private readonly SchemaExactness.Checker _exactness;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
+    private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
     private readonly List<ReferenceRecord> _references = [];
@@ -168,7 +170,7 @@ internal sealed class JsonSchemaEmitter
 
         for (int index = 0; index < _profile.Rewriters.Length; index++)
         {
-            result = Apply(index, result, isRoot, depth: 0);
+            result = Apply(index, result, isRoot, negative: false, depth: 0);
         }
 
         return result;
@@ -179,7 +181,7 @@ internal sealed class JsonSchemaEmitter
     /// node is. Without that, a schema that uses the same schema twice, again and again, takes exponential time before the
     /// emitter gets to count anything.
     /// </summary>
-    private SchemaNode Apply(int index, SchemaNode node, bool isRoot, int depth)
+    private SchemaNode Apply(int index, SchemaNode node, bool isRoot, bool negative, int depth)
     {
         if (depth > MaxDepth)
         {
@@ -188,17 +190,20 @@ internal sealed class JsonSchemaEmitter
 
         RuntimeHelpers.EnsureSufficientExecutionStack();
 
-        if (!isRoot && _rewritten[index].TryGetValue(node, out SchemaNode? known))
+        Dictionary<SchemaNode, SchemaNode> memo = negative ? _rewrittenNegative[index] : _rewritten[index];
+
+        if (!isRoot && memo.TryGetValue(node, out SchemaNode? known))
         {
             return known;
         }
 
-        SchemaNode mapped = node.MapChildren(child => Apply(index, child, isRoot: false, depth + 1));
-        SchemaNode result = _profile.Rewriters[index].Rewrite(mapped, new RewriteContext(_options, isRoot, _diagnostics.Add));
+        // Below a negative position everything stays negative, since a rewriter can't tell which not cancels which.
+        SchemaNode mapped = node.MapChildren((child, inside) => Apply(index, child, isRoot: false, negative || inside, depth + 1));
+        SchemaNode result = _profile.Rewriters[index].Rewrite(mapped, new RewriteContext(_options, isRoot, _diagnostics.Add) { InNegativePosition = negative });
 
         if (!isRoot)
         {
-            _rewritten[index][node] = result;
+            memo[node] = result;
         }
 
         return result;

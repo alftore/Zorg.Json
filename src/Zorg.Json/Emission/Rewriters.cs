@@ -143,7 +143,9 @@ public static class Rewriters
 
     /// <summary>
     /// Removes keywords and states them in <c>description</c>, each with a diagnostic, so that a model still sees rules a
-    /// provider won't enforce. Removing <c>prefixItems</c> also removes a closing <c>items: false</c>. Zod equivalent: none.
+    /// provider won't enforce. Removing <c>prefixItems</c> also removes a closing <c>items: false</c>. A keyword under <c>not</c>, in the
+    /// condition of <c>if</c>, in a branch of <c>oneOf</c> or in <c>contains</c> beside <c>maxContains</c> would make the schema stricter
+    /// if it were removed, so that applicator moves to <c>description</c> as a whole. Zod equivalent: none.
     /// </summary>
     /// <param name="keywords">The keywords to move. <c>$ref</c>, <c>properties</c> and other structure can't be moved.</param>
     /// <returns>The rewriter.</returns>
@@ -520,6 +522,12 @@ public static class Rewriters
     {
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
         {
+            // Where a looser subschema makes the schema stricter, the keyword stays, and the schema around it decides what to do.
+            if (context.InNegativePosition)
+            {
+                return node;
+            }
+
             List<string> moved = [];
             SchemaNode result = node;
 
@@ -529,9 +537,44 @@ public static class Rewriters
                 context.Report(new EmitDiagnostic(keyword, $"{context.Options.Target.Name} can't state {keyword}, so it moved to description."));
             }
 
+            // Taking a rule out of not, the condition of if, or a branch of oneOf would change which documents pass the
+            // applicator, so the whole applicator is stated in the description instead.
+            if (node.Not is { } negated && Holds(negated))
+            {
+                Move("not", SchemaText(negated));
+                result = result with { Not = null };
+            }
+
+            if (node.If is { } condition && Holds(condition))
+            {
+                Move("if", SchemaText(condition));
+
+                foreach ((string keyword, SchemaNode? branch) in new[] { ("then", node.Then), ("else", node.Else) })
+                {
+                    if (branch is not null)
+                    {
+                        Move(keyword, SchemaText(branch));
+                    }
+                }
+
+                result = result with { If = null, Then = null, Else = null };
+            }
+
+            if (node.OneOf.Length > 1 && node.OneOf.Any(Holds))
+            {
+                Move("oneOf", ListText(node.OneOf.Select(SchemaText)));
+                result = result with { OneOf = [] };
+            }
+
+            if (node.Contains is { } contained && node.MaxContains is not null && Holds(contained))
+            {
+                Move("contains", SchemaText(contained));
+                result = result with { Contains = null, MinContains = null, MaxContains = null };
+            }
+
             foreach (Relocation relocation in Relocations.Where(relocation => keywords.Contains(relocation.Keyword)))
             {
-                if (relocation.Read(node) is { } text)
+                if (relocation.Read(result) is { } text)
                 {
                     Move(relocation.Keyword, text);
                     result = relocation.Clear(result);
@@ -550,6 +593,34 @@ public static class Rewriters
 
             result = result with { Extensions = [.. result.Extensions.Where(extension => !keywords.Contains(extension.Key))] };
             return Annotate(result, $"Must also satisfy: {string.Join("; ", moved)}.", context);
+        }
+
+        /// <summary>Whether a keyword this rewriter moves is anywhere in the subschema, which is then left as it is.</summary>
+        private bool Holds(SchemaNode subschema)
+        {
+            HashSet<SchemaNode> seen = new(ReferenceEqualityComparer.Instance);
+            Stack<SchemaNode> pending = new([subschema]);
+
+            while (pending.TryPop(out SchemaNode? next))
+            {
+                if (!seen.Add(next))
+                {
+                    continue;
+                }
+
+                if (Relocations.Any(relocation => keywords.Contains(relocation.Keyword) && relocation.Read(next) is not null)
+                    || next.Extensions.Any(extension => keywords.Contains(extension.Key)))
+                {
+                    return true;
+                }
+
+                foreach (SchemaNode child in next.Children)
+                {
+                    pending.Push(child);
+                }
+            }
+
+            return false;
         }
     }
 }

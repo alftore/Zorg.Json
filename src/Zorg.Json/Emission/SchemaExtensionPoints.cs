@@ -32,7 +32,15 @@ public interface IJsonSchemaPostProcessor
 /// <param name="Options">The emit options.</param>
 /// <param name="IsRoot">Whether this is the root node.</param>
 /// <param name="Report">Records a diagnostic.</param>
-public sealed record RewriteContext(JsonSchemaOptions Options, bool IsRoot, System.Action<EmitDiagnostic> Report);
+public sealed record RewriteContext(JsonSchemaOptions Options, bool IsRoot, System.Action<EmitDiagnostic> Report)
+{
+    /// <summary>
+    /// Whether the node is where a looser subschema makes the schema stricter: under <c>not</c>, in the condition of
+    /// <c>if</c>, in a branch of <c>oneOf</c>, or in <c>contains</c> beside <c>maxContains</c>. A rewriter that removes
+    /// rules should leave such a node as it is.
+    /// </summary>
+    public bool InNegativePosition { get; init; }
+}
 
 /// <summary>What an <see cref="IJsonSchemaPostProcessor"/> can see of the emission in progress.</summary>
 /// <param name="Options">The emit options.</param>

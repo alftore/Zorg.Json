@@ -492,6 +492,33 @@ public sealed class EmissionReviewTests
     public void A_definition_name_is_written_as_a_valid_reference(string name) =>
         AssertNeverStricter(name, Z.Array(Z.Lazy(name, () => Z.String())), "[\"x\"]", "[]");
 
+    // 15. A rewriter that loosens a subschema must not do it where that makes the document stricter.
+
+    [Theory]
+    [InlineData("""{"not":{"minLength":3}}""", new[] { "\"a\"", "\"abc\"", "1" })]
+    [InlineData("""{"oneOf":[{"minLength":2},{"maxLength":3}]}""", new[] { "\"a\"", "\"abcd\"", "\"abc\"" })]
+    [InlineData("""{"if":{"minLength":3},"then":{"pattern":"^x"}}""", new[] { "\"ab\"", "\"xyz\"", "\"abc\"" })]
+    [InlineData("""{"type":"array","contains":{"minLength":3},"maxContains":1}""", new[] { "[\"ab\",\"abc\"]", "[\"abc\"]", "[\"abc\",\"abcd\"]" })]
+    [InlineData("""{"minLength":3}""", new[] { "\"abc\"", "\"abcd\"" })]
+    public void Relocating_a_keyword_never_makes_the_schema_stricter(string document, string[] instances)
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("minLength"));
+
+        AssertNeverStricter(document, Import(document), [profile], instances);
+    }
+
+    [Fact]
+    public void A_keyword_under_not_is_stated_in_the_description_of_the_schema_around_it()
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("minLength"));
+        EmitResult result = Import("""{"not":{"minLength":3}}""").Emit(new JsonSchemaOptions { Target = profile });
+
+        Assert.False(result.Schema.ContainsKey("not"));
+        Assert.False(result.Schema.ContainsKey("minLength"));
+        Assert.Contains("not", result.Schema["description"]!.ToString(), StringComparison.Ordinal);
+        Assert.NotEmpty(result.Diagnostics);
+    }
+
     // 18. Exactness is judged once per subschema.
 
     [Fact]
