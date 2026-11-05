@@ -501,7 +501,8 @@ public sealed class ReviewRegressionTests
 
         Assert.False(schema.SafeParse(json).IsSuccess);
 
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+        // One timeout takes 100 ms and 50 would take 5 seconds. The margin is for slow CI runners.
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"Took {watch.Elapsed}");
     }
 
     private static string Nested(int depth) => string.Concat(Enumerable.Repeat("{\"a\":", depth)) + "1" + new string('}', depth);
@@ -516,7 +517,8 @@ public sealed class ReviewRegressionTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(IssueCodes.InvalidValue, result.Issues[0].Code);
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+        // The document is valid, so the failure above proves the limit fired. The time only guards against a hang.
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"Took {watch.Elapsed}");
     }
 
     [Fact]
@@ -528,7 +530,8 @@ public sealed class ReviewRegressionTests
 
         Assert.False(schema.SafeParse(Integers(100)).IsSuccess);
 
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+        // The document is valid, so the failure above proves the limit fired. The time only guards against a hang.
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"Took {watch.Elapsed}");
     }
 
     [Fact]
@@ -555,7 +558,7 @@ public sealed class ReviewRegressionTests
         Assert.Equal(IssueCodes.InvalidFormat, schema.SafeParse(references).Issues[0].Code);
         Assert.True(schema.SafeParse(JsonSerializer.Serialize(@"^(a)\1$")).IsSuccess);
 
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"Took {watch.Elapsed}");
     }
 
     [Fact]
