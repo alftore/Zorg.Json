@@ -26,7 +26,7 @@
   - Numbers are compared as digits and an exponent, in linear time, and long numbers are charged to the step budget. Before, a ten-megabyte number took seconds to parse. Exponents are exact up to 18 digits (`1e2000000000` and `1e3000000000` used to be equal), and a longer one fails the parse where a schema has to compare it.
   - Failed `anyOf` and `oneOf` branches keep at most 20,000 issues over a parse, so a recursive union over a large document no longer holds gigabytes.
   - An exception thrown by your own `Refine` or `RefineAsync`, including a `JsonException`, passes through instead of becoming `deserialization_failed`.
-  - `SafeParse(ReadOnlySpan<byte>)` skips a UTF-8 byte order mark, as the stream overload does. A bad byte and the escape `\udcff` are different strings for `uniqueItems`.
+  - The stream overload refuses a UTF-8 byte order mark as `invalid_json`, as the string and byte overloads do. It used to skip it. A bad byte and the escape `\udcff` are different strings for `uniqueItems`.
 - Docs: "Differences from Zod" in the reference lists the differences that are on purpose, including the loss of data from `Strip` objects in `Z.AllOf`.
 - Packages now link to the repository.
 - Exceeding an evaluation limit now fails the whole parse. Before, a branch under `if`, `oneOf` or `contains` that ran out of budget, or a regex that timed out under `not` or `if`, counted as "didn't match" and could turn into acceptance. There is now a budget over all steps as well as the speculative one, and the guide lists the limits.
