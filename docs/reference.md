@@ -132,6 +132,8 @@ Booleans have `.Const(value)` and `.Coerce()`.
 
 ## Differences from Zod
 
+Known limit: inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`, a `RefineAsync` check counts as passed, because these decide before async checks run. Zod awaits it. Put `RefineAsync` on the outer schema instead.
+
 Zorg.Json follows JSON Schema where Zod follows JavaScript, so the same schema can give a different verdict, a different issue or a different value. Each difference below was found by running both libraries over the same schemas and documents (see [tools/zod-compare](../tools/zod-compare/README.md)), and each is on purpose.
 
 ### Issue codes

@@ -639,6 +639,10 @@ public abstract class Schema<T, TSelf> : Schema<T>
     /// Adds an async C# check, such as a database lookup. The schema then has to be parsed with <c>SafeParseAsync</c>.
     /// Zod equivalent: an async <c>.refine()</c>.
     /// </summary>
+    /// <remarks>
+    /// Don't use this inside <c>Not</c>, <c>If</c>, <c>Contains</c>, <c>AnyOf</c> or <c>OneOf</c>. These decide before async
+    /// checks run, and they count the check as passed. Put it on the outer schema instead.
+    /// </remarks>
     /// <param name="predicate">Returns true when the value is valid.</param>
     /// <param name="message">The issue message. The issue's code is <see cref="IssueCodes.Custom"/>.</param>
     /// <param name="hint">Replaces the message in the emitted schema.</param>

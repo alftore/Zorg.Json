@@ -2,6 +2,8 @@
 
 ## 0.1.0-preview.2
 
+Known limit: inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`, a `RefineAsync` check counts as passed, because these decide before async checks run. `Contains` can accept a value the check would refuse, and `AnyOf` can reject a value another branch would accept. Put `RefineAsync` on the outer schema instead. See the guide.
+
 - Added `GenerateSample`, which produces a document that conforms to a schema.
 - Added Draft-04 import.
 - Added `JsonSchemaImportDialect.OpenApi30`, chosen through `DefaultDialect`. A boolean `nullable` in a document with no `$schema` is now `unsupported_dialect` rather than ignored.

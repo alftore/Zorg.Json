@@ -12,6 +12,7 @@
 - There's no `Transform`. Use `ParseResult<T>.Map`.
 - A self-reference inside a field initializer needs `!`: `Z.Lazy("tree", () => Tree!)`.
 - Don't combine closed objects with `Z.AllOf`. Use `.Extend(other)`.
+- Don't put `RefineAsync` inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`: it counts as passed there. Put it on the outer schema.
 
 ## Working on the repo
 
