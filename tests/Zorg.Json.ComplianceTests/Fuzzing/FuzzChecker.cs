@@ -257,12 +257,6 @@ internal sealed class FuzzChecker(FuzzFindings findings)
         bool? viaText = null;
         bool? viaBytes = null;
 
-        if (!KnownBugs.Included && document.Text is null && (built.Code.Contains("\"enum\"", StringComparison.Ordinal) || built.Code.Contains("\"const\"", StringComparison.Ordinal)))
-        {
-            findings.Count("skipped: invalid UTF-8 against const or enum");
-            return;
-        }
-
         try
         {
             if (document.Text is not null)
@@ -283,7 +277,7 @@ internal sealed class FuzzChecker(FuzzFindings findings)
 
         try
         {
-            if (document.Text is not null && (KnownBugs.Included || !KnownBugs.HasLoneSurrogate(document.Text)) && TryElement(document.Text) is { } element)
+            if (document.Text is not null && TryElement(document.Text) is { } element)
             {
                 if (built.Probe.Revalidate(element) == false)
                 {
@@ -302,7 +296,7 @@ internal sealed class FuzzChecker(FuzzFindings findings)
             findings.Fail("String and UTF-8 overloads disagree", $"on {document}: string={text} utf8={bytes} | {where}");
         }
 
-        if (viaText == true && document.Text is { Length: < 20_000 } raw && (KnownBugs.Included || !KnownBugs.HasLoneSurrogate(raw)) && TryElement(raw) is { } parsed)
+        if (viaText == true && document.Text is { Length: < 20_000 } raw && TryElement(raw) is { } parsed)
         {
             CheckOracles(oracles, parsed, "Emitted schema is stricter than parsing", document.ToString(), where);
         }

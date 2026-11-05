@@ -88,6 +88,9 @@ public sealed class FuzzTests
         yield return Built.Of(Schema.Object(ComplianceJson.Default.Item).Passthrough().Optional(item => item.Name), "Item passthrough");
         yield return Built.Of(Schema.Object(ComplianceJson.Default.Item).Strip().Refine(item => item.Count != 3, "no", item => item.Count), "Item strip + refine");
         yield return Built.Of(Schema.Object(ComplianceJson.Default.Item).Property(item => item.Note, note => note.Trim().MinLength(1)), "Item + Note trim");
+        yield return Built.Of(Schema.Object(ComplianceJson.Default.Patch), "Schema.Object(Patch)");
+        yield return Built.Of(Schema.Object(ComplianceJson.Default.Patch).Property(patch => patch.Name, name => name.MinLength(1).Trim()).Property(patch => patch.Count, count => count.Minimum(0)), "Patch + Optional rules");
+        yield return Built.Of(Schema.Object(ComplianceJson.Default.Patch).Strip().Property(patch => patch.Nick, nick => nick.MaxLength(3)), "Patch strip + Nick rules");
         yield return Built.Of(Schema.Parsable<Guid>("uuid"), "Parsable<Guid>");
         yield return Built.Of(Schema.Parsable<DateOnly>("date"), "Parsable<DateOnly>");
         yield return Built.Of(Schema.Parsable<TimeSpan>(), "Parsable<TimeSpan>");
@@ -104,12 +107,6 @@ public sealed class FuzzTests
 
     private static void ImportAndCheck(string document, JsonSchemaImportDialect dialect, Random random, FuzzChecker checker, string origin)
     {
-        if (!KnownBugs.Included && KnownBugs.HasLoneSurrogate(document))
-        {
-            checker.Findings.Count("skipped: lone surrogate in a schema document");
-            return;
-        }
-
         JsonValueSchema schema;
 
         try

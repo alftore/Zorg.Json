@@ -10,13 +10,19 @@ namespace Zorg.Json.ComplianceTests.Fuzzing;
 /// <summary>JsonSchema.Net, wrapped so that its own failures count as "no opinion" instead of failing a run.</summary>
 internal static partial class Oracle
 {
+    /// <summary>
+    /// A registry of its own for each schema. The global one keeps every <c>$id</c> it has seen, so across thousands of
+    /// iterations in a long run a <c>$ref</c> could resolve to another iteration's schema and the oracle would judge the wrong one.
+    /// </summary>
+    private static BuildOptions Fresh() => new() { SchemaRegistry = new SchemaRegistry() };
+
     /// <summary>Null when JsonSchema.Net can't load the schema.</summary>
     public static JsonSchema? TryBuild(JsonObject schema)
     {
         try
         {
             RemoveInertKeywords(schema);
-            return JsonSchema.FromText(schema.ToJsonString());
+            return JsonSchema.FromText(schema.ToJsonString(), Fresh());
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
@@ -28,7 +34,7 @@ internal static partial class Oracle
     {
         try
         {
-            return JsonSchema.FromText(text);
+            return JsonSchema.FromText(text, Fresh());
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
