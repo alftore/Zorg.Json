@@ -66,7 +66,7 @@ public static class ProblemDetailsExtensions
             });
         }
 
-        if (truncated && !issues.Any(issue => issue.Code == TooManyIssuesCode))
+        if (truncated && !kept.Any(issue => issue.Code == TooManyIssuesCode))
         {
             kept.Add(new ParseIssue { Code = TooManyIssuesCode, InstanceLocation = string.Empty, Message = $"More than {MaxIssues} issues; the rest are left out." });
         }
