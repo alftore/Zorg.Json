@@ -452,7 +452,10 @@ public static class Rewriters
 
             // The document root is now the wrapper, so a pointer into the original has to go through the property.
             ImmutableArray<KeyValuePair<string, JsonElement>> lifted = [.. node.Extensions.Where(extension => extension.Key == "definitions")];
-            SchemaNode inner = Retarget(node with { Defs = [], Extensions = [.. node.Extensions.Except(lifted)] });
+            SchemaNode retargeted = Retarget(node with { Defs = [], Extensions = [.. node.Extensions.Except(lifted)] });
+
+            // Its references now name places in the wrapper's document, so it is no longer the root of the one it was imported from.
+            SchemaNode inner = retargeted with { Behavior = retargeted.Behavior with { Location = null } };
 
             return SchemaNode.True with
             {

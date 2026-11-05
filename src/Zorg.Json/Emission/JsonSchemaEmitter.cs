@@ -47,6 +47,7 @@ internal sealed class JsonSchemaEmitter
     private readonly SchemaExactness.Checker _exactness;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private List<JsonObject>? _fragments;
+    private ImportScope? _import;
     private int _emitted;
     private int _depth;
 
@@ -315,17 +316,23 @@ internal sealed class JsonSchemaEmitter
         return EmitObject(node, location);
     }
 
+    private string UniqueName(string requested)
+    {
+        string name = requested;
+
+        for (int suffix = 2; _definitions.ContainsKey(name); suffix++)
+        {
+            name = requested + suffix.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return name;
+    }
+
     private string Reference(SchemaNode target, string requested)
     {
         if (!_definitionNames.TryGetValue(target, out string? name))
         {
-            name = requested;
-
-            for (int suffix = 2; _definitions.ContainsKey(name); suffix++)
-            {
-                name = requested + suffix.ToString(CultureInfo.InvariantCulture);
-            }
-
+            name = UniqueName(requested);
             _definitionNames.Add(target, name);
             _definitions[name] = new JsonObject();
 
@@ -367,17 +374,54 @@ internal sealed class JsonSchemaEmitter
     private JsonObject EmitObject(SchemaNode source, string location)
     {
         List<JsonObject>? outer = _fragments;
+        ImportScope? outerImport = _import;
         _fragments = null;
 
         try
         {
-            return EmitFields(source, location);
+            return EmitFields(IsEmbeddedImport(source, location) ? EnterImport(source, location) : source, location);
         }
         finally
         {
             _fragments = outer;
+            _import = outerImport;
         }
     }
+
+    /// <summary>
+    /// The root of an imported document is the base of its references. Written inside another schema, or with a
+    /// <see cref="JsonSchemaOptions.ReferencePrefix"/> that keeps definitions elsewhere, it no longer is, so its references are moved.
+    /// </summary>
+    private bool IsEmbeddedImport(SchemaNode node, string location) =>
+        node.Behavior.Location is { Length: 0 } && (location.Length > 0 || _options.ReferencePrefix is not null);
+
+    /// <summary>
+    /// Moves the definitions of an imported root to the definitions of the whole document, under names that are free there,
+    /// and remembers where the root went, so that a reference to the document root or into it can follow.
+    /// </summary>
+    private SchemaNode EnterImport(SchemaNode root, string location)
+    {
+        Dictionary<string, string> names = new(StringComparer.Ordinal);
+
+        foreach (SchemaProperty definition in root.Defs)
+        {
+            string name = UniqueName(definition.Name);
+            names[definition.Name] = name;
+            _definitions[name] = new JsonObject();
+        }
+
+        _import = new ImportScope(location, names);
+
+        foreach (SchemaProperty definition in root.Defs)
+        {
+            string name = names[definition.Name];
+            _definitions[name] = EmitNode(definition.Schema, $"/{_profile.DefinitionsKeyword}/{Escape(name)}");
+        }
+
+        return root.Defs.IsEmpty ? root : root with { Defs = [] };
+    }
+
+    private sealed record ImportScope(string Location, Dictionary<string, string> Names);
 
     private JsonObject EmitFields(SchemaNode source, string location)
     {
@@ -549,8 +593,53 @@ internal sealed class JsonSchemaEmitter
 
     private string? WrittenReference(string? reference)
     {
+        if (reference is not null && _import is { } scope && reference.StartsWith('#'))
+        {
+            return Rebase(reference, scope);
+        }
+
         string? written = reference?.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal);
         return IsDraft07 && written is not null ? ToDraft07Pointer(written) : written;
+    }
+
+    /// <summary>
+    /// A reference in an imported document is relative to that document's root. A definition moved to the definitions of the
+    /// whole document is named by its new place, and any other pointer is read from where the root was written.
+    /// </summary>
+    private string Rebase(string reference, ImportScope scope)
+    {
+        const string Definitions = "/$defs/";
+        string pointer = reference[1..];
+
+        // An anchor is found by name, wherever it was written.
+        if (pointer.Length > 0 && pointer[0] != '/')
+        {
+            return reference;
+        }
+
+        if (pointer.StartsWith(Definitions, StringComparison.Ordinal))
+        {
+            string rest = pointer[Definitions.Length..];
+            int slash = rest.IndexOf('/', StringComparison.Ordinal);
+            string token = slash < 0 ? rest : rest[..slash];
+            string name = Uri.UnescapeDataString(token).Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
+
+            if (scope.Names.TryGetValue(name, out string? moved))
+            {
+                string relocated = "#/$defs/" + FragmentEscape(Escape(moved)) + (slash < 0 ? string.Empty : rest[slash..]);
+                string spelled = relocated.Replace("#/$defs/", ReferencePrefix, StringComparison.Ordinal);
+                return IsDraft07 ? ToDraft07Pointer(spelled) : spelled;
+            }
+        }
+
+        // With a prefix, the schema is going to another document, and a place in this one means nothing there.
+        if (_options.ReferencePrefix is not null || scope.Location.Length == 0)
+        {
+            return reference;
+        }
+
+        string translated = IsDraft07 ? ToDraft07Pointer(reference)[1..] : pointer;
+        return "#" + FragmentEscape(scope.Location) + translated;
     }
 
     /// <summary>

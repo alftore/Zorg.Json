@@ -285,6 +285,102 @@ public sealed class EmissionReviewTests
     public void OpenAPI_30_spellings_are_never_stricter_than_parsing(string document, string[] instances) =>
         AssertNeverStricter(document, Import(document), instances);
 
+    // 4 and 5. An imported schema is a document of its own, and its references are relative to its root.
+
+    /// <summary>Parsing and the emitted schema give the same verdict on every instance.</summary>
+    private static void AssertAgrees<T>(string name, Schema<T> schema, params string[] instances)
+    {
+        foreach (JsonSchemaProfile profile in Profiles)
+        {
+            string text = schema.Emit(new JsonSchemaOptions { Target = profile }).Schema.ToJsonString();
+
+            foreach (string instance in instances)
+            {
+                Assert.True(
+                    schema.SafeParse(instance).IsSuccess == Accepts(text, profile, instance),
+                    $"{name} in {profile.Name} disagrees with parsing on {instance}: {text}");
+            }
+        }
+    }
+
+    [Fact]
+    public void An_imported_schema_with_definitions_works_inside_a_fluent_one() =>
+        AssertAgrees(
+            "defs",
+            Z.Array(Import("""{"$defs":{"a":{"type":"string"}},"$ref":"#/$defs/a"}""")),
+            "[\"x\"]",
+            "[1]",
+            "[]");
+
+    [Fact]
+    public void A_root_reference_in_an_imported_schema_means_the_imported_root() =>
+        AssertAgrees(
+            "root ref",
+            Z.Array(Import("""{"type":"object","properties":{"n":{"$ref":"#"}}}""")),
+            "[{\"n\":{\"n\":{}}}]",
+            "[{\"n\":{\"n\":1}}]",
+            "[{\"n\":1}]");
+
+    [Fact]
+    public void A_pointer_in_an_imported_schema_is_relative_to_where_the_schema_sits() =>
+        AssertAgrees(
+            "pointer",
+            Z.Object().Property("p", Import("""{"properties":{"a":{"type":"string"},"b":{"$ref":"#/properties/a"}}}""")),
+            """{"p":{"b":"x"}}""",
+            """{"p":{"b":1}}""");
+
+    [Fact]
+    public void Two_imported_schemas_with_the_same_definition_name_stay_apart() =>
+        AssertAgrees(
+            "same name",
+            Z.Object()
+                .Property("x", Import("""{"$defs":{"a":{"type":"string"}},"$ref":"#/$defs/a"}"""))
+                .Property("y", Import("""{"$defs":{"a":{"type":"number"}},"$ref":"#/$defs/a"}""")),
+            """{"x":"s","y":1}""",
+            """{"x":1,"y":1}""",
+            """{"x":"s","y":"s"}""");
+
+    [Fact]
+    public void An_imported_schema_used_twice_works_in_both_places() =>
+        AssertAgrees(
+            "twice",
+            Z.Object()
+                .Property("x", Import("""{"$defs":{"a":{"type":"string"}},"properties":{"v":{"$ref":"#/$defs/a"}}}"""))
+                .Property("y", Z.Array(Import("""{"$defs":{"a":{"type":"string"}},"properties":{"v":{"$ref":"#/$defs/a"}}}"""))),
+            """{"x":{"v":"s"},"y":[{"v":"s"}]}""",
+            """{"x":{"v":1},"y":[]}""",
+            """{"x":{},"y":[{"v":1}]}""");
+
+    [Fact]
+    public void An_imported_legacy_schema_with_definitions_works_inside_a_fluent_one() =>
+        AssertAgrees(
+            "draft-07",
+            Z.Array(Import("""{"$schema":"http://json-schema.org/draft-07/schema#","definitions":{"a":{"type":"string"}},"$ref":"#/definitions/a"}""")),
+            "[\"x\"]",
+            "[1]");
+
+    [Fact]
+    public void A_reference_prefix_moves_the_definitions_of_an_imported_schema_out()
+    {
+        JsonValueSchema schema = Import("""{"$defs":{"a":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/a"}}""");
+        EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+        string text = result.Schema.ToJsonString();
+
+        Assert.Equal("a", Assert.Single(result.Definitions).Key);
+        Assert.DoesNotContain("$defs", text, StringComparison.Ordinal);
+        Assert.Contains("\"$ref\":\"#/components/schemas/a\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reference_prefix_moves_the_definitions_of_a_nested_imported_schema_out()
+    {
+        ObjectSchema schema = Z.Object().Property("list", Import("""{"$defs":{"a":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/a"}}"""));
+        EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+
+        Assert.Equal("a", Assert.Single(result.Definitions).Key);
+        Assert.DoesNotContain("$defs", result.Schema.ToJsonString(), StringComparison.Ordinal);
+    }
+
     // 12 and 13. Definition names.
 
     [Fact]
