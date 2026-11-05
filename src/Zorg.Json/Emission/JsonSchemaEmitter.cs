@@ -329,7 +329,8 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
-        return current is JsonObject or JsonValue { } && current is not JsonArray;
+        // A schema is an object or a boolean.
+        return current is JsonObject || (current is JsonValue value && value.TryGetValue(out bool _));
     }
 
     private static void Redirect(JsonNode node, Dictionary<string, string> moved, bool isRoot)
