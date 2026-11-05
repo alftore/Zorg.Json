@@ -445,6 +445,7 @@ internal static class EcmaRegexTranslator
         private readonly Stack<Frame> _frames = new([new Frame(false, null)]);
         private readonly List<string?> _groups = [];
         private readonly Dictionary<string, string> _groupNames = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _usedNames = new(StringComparer.Ordinal);
         private readonly List<Backreference> _backreferences = [];
         private int _position;
         private bool _quantifiable;
@@ -742,9 +743,20 @@ internal static class EcmaRegexTranslator
         {
             if (!_groupNames.TryGetValue(name, out string? translated))
             {
-                translated = name.All(character => char.IsLetterOrDigit(character) || character == '_')
-                    ? name
-                    : string.Create(CultureInfo.InvariantCulture, $"group_{_groups.Count + 1}");
+                translated = name;
+
+                // A replacement must not meet a real name, whether that was read before it or comes after.
+                if (!name.All(character => char.IsLetterOrDigit(character) || character == '_') || _usedNames.Contains(name))
+                {
+                    translated = string.Create(CultureInfo.InvariantCulture, $"group_{_groups.Count + 1}");
+
+                    while (_usedNames.Contains(translated))
+                    {
+                        translated += "_";
+                    }
+                }
+
+                _usedNames.Add(translated);
                 _groupNames.Add(name, translated);
             }
 
@@ -827,12 +839,32 @@ internal static class EcmaRegexTranslator
         /// </summary>
         private void ResolveBackreferences()
         {
-            for (int i = _backreferences.Count - 1; i >= 0; i--)
+            if (_backreferences.Count == 0)
+            {
+                return;
+            }
+
+            string[] groups = new string[_backreferences.Count];
+
+            for (int i = groups.Length - 1; i >= 0; i--)
             {
                 Backreference reference = _backreferences[i];
-                string group = reference.Name is null ? GroupByNumber(reference.Number) : GroupByName(reference.Name);
-                _output.Insert(reference.Position, $@"(?({group})\k<{group}>)");
+                groups[i] = reference.Name is null ? GroupByNumber(reference.Number) : GroupByName(reference.Name);
             }
+
+            // One pass: inserting each reference into the builder would move the rest of the pattern every time.
+            string text = _output.ToString();
+            _output.Clear();
+            int copied = 0;
+
+            for (int i = 0; i < groups.Length; i++)
+            {
+                int position = _backreferences[i].Position;
+                _output.Append(text, copied, position - copied).Append("(?(").Append(groups[i]).Append(@")\k<").Append(groups[i]).Append(">)");
+                copied = position;
+            }
+
+            _output.Append(text, copied, text.Length - copied);
         }
 
         private string GroupByName(string name) =>

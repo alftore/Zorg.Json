@@ -439,7 +439,7 @@ public sealed class SampleGeneratorTests
     }
 
     [Fact]
-    public void A_cycle_with_no_value_in_between_terminates() => Assert.Equal("\"string\"", Valid(InPlaceCycle));
+    public void A_cycle_with_no_value_in_between_terminates() => Assert.False(InPlaceCycle.GenerateSample().IsValid);
 
     [Fact]
     public void A_wide_recursive_schema_stays_bounded()

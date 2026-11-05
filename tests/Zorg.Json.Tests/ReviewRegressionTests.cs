@@ -4,9 +4,12 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Xunit;
 using Zorg.Json.Emission;
+using Zorg.Json.Sampling;
+using Zorg.Json.Validation;
 
 namespace Zorg.Json.Tests;
 
@@ -432,6 +435,259 @@ public sealed class ReviewRegressionTests
     {
         Assert.True(Z.Tuple(Z.String().Trim(), Z.Any()).SafeParse("[\" a \", \"\\ud800\"]").IsSuccess);
         Assert.True(Z.Object().Property("x", Z.String().Trim()).Property("y", Z.Any()).SafeParse("{ \"x\": \" a \", \"y\": \"\\ud800\" }").IsSuccess);
+    }
+
+    private static string Integers(int count) => $"[{string.Join(',', Enumerable.Repeat("1", count))}]";
+
+    private static string Union(int branches, string failing, string last) =>
+        $"{{\"anyOf\":[{string.Concat(Enumerable.Repeat($"{{\"type\":\"{failing}\"}},", branches - 1))}{{\"type\":\"{last}\"}}]}}";
+
+    private static JsonValueSchema Open(string schema) => Z.FromJsonSchema(schema);
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(12000)]
+    public void A_condition_that_runs_out_of_budget_fails_the_parse(int count)
+    {
+        JsonValueSchema schema = Open($"{{\"if\":{{\"items\":{Union(40, "string", "integer")}}},\"then\":false}}");
+
+        ParseResult<JsonElement> result = schema.SafeParse(Integers(count));
+
+        Assert.False(result.IsSuccess);
+        Assert.NotEmpty(result.Issues);
+    }
+
+    [Fact]
+    public void A_oneOf_that_runs_out_of_budget_fails_the_parse()
+    {
+        string x = Union(40, "string", "integer");
+
+        Assert.False(Open($"{{\"oneOf\":[{{\"items\":{x}}},{{\"items\":{x}}}]}}").SafeParse(Integers(5000)).IsSuccess);
+    }
+
+    [Fact]
+    public void Contains_that_runs_out_of_budget_fails_the_parse()
+    {
+        string schema = $"{{\"contains\":{Union(120, "integer", "boolean")},\"minContains\":0,\"maxContains\":5}}";
+        string json = $"[{string.Concat(Enumerable.Repeat("\"\",", 12000))}{string.Join(',', Enumerable.Repeat("true", 10))}]";
+
+        Assert.False(Open(schema).SafeParse(json).IsSuccess);
+    }
+
+    private const string SlowPattern = @"^(a+)+$|b\b";
+
+    private static string SlowInput => new string('a', 40) + "b";
+
+    [Fact]
+    public void A_regex_timeout_fails_the_parse_wherever_it_happens()
+    {
+        string pattern = JsonSerializer.Serialize(SlowPattern);
+        string input = JsonSerializer.Serialize(SlowInput);
+
+        Assert.False(Open($"{{\"not\":{{\"pattern\":{pattern}}}}}").SafeParse(input).IsSuccess);
+        Assert.False(Open($"{{\"if\":{{\"pattern\":{pattern}}},\"then\":false}}").SafeParse(input).IsSuccess);
+        Assert.False(Open($"{{\"if\":{{\"pattern\":{pattern}}},\"else\":true}}").SafeParse(input).IsSuccess);
+        Assert.False(Open($"{{\"patternProperties\":{{{pattern}:true}}}}").SafeParse($"{{{input}:1}}").IsSuccess);
+        Assert.False(Open($"{{\"patternProperties\":{{{pattern}:true}},\"unevaluatedProperties\":false}}").SafeParse($"{{{input}:1}}").IsSuccess);
+    }
+
+    [Fact]
+    public void One_regex_timeout_ends_the_parse()
+    {
+        string input = JsonSerializer.Serialize(SlowInput);
+        string json = $"[{string.Join(',', Enumerable.Repeat(input, 50))}]";
+        JsonValueSchema schema = Open($"{{\"items\":{{\"pattern\":{JsonSerializer.Serialize(SlowPattern)}}}}}");
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(schema.SafeParse(json).IsSuccess);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+    }
+
+    private static string Nested(int depth) => string.Concat(Enumerable.Repeat("{\"a\":", depth)) + "1" + new string('}', depth);
+
+    [Fact]
+    public void Total_budget_stops_a_small_hostile_document()
+    {
+        JsonValueSchema schema = Open("""{"properties":{"a":{"allOf":[{"$ref":"#"},{"$ref":"#"}]}}}""");
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<JsonElement> result = schema.SafeParse(Nested(24));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(IssueCodes.InvalidValue, result.Issues[0].Code);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Total_budget_stops_doubling_allOfs_in_an_array()
+    {
+        string defs = string.Concat(Enumerable.Range(0, 16).Select(n => $"\"d{n}\":{{\"allOf\":[{{\"$ref\":\"#/$defs/d{n + 1}\"}},{{\"$ref\":\"#/$defs/d{n + 1}\"}}]}},"));
+        JsonValueSchema schema = Open($"{{\"$defs\":{{{defs}\"d16\":{{\"type\":\"integer\"}}}},\"items\":{{\"$ref\":\"#/$defs/d0\"}}}}");
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(schema.SafeParse(Integers(100)).IsSuccess);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Total_budget_leaves_room_for_a_large_honest_document()
+    {
+        JsonValueSchema schema = Open("""
+            {"items":{"allOf":[{"type":"object"},{"required":["id"]},{"properties":{"id":{"allOf":[{"type":"integer"},{"minimum":0},{"maximum":999999999}]}}}],
+             "if":{"required":["id"]},"then":{"properties":{"id":{"type":"integer"}}}}}
+            """);
+        string json = $"[{string.Join(',', Enumerable.Range(0, 100_000).Select(n => $"{{\"id\":{n}}}"))}]";
+
+        Assert.True(schema.SafeParse(json).IsSuccess);
+    }
+
+    [Fact]
+    public void Regex_format_has_a_length_cap()
+    {
+        JsonValueSchema schema = Open("""{"format":"regex"}""");
+        string letters = JsonSerializer.Serialize(string.Concat(Enumerable.Repeat(@"\p{L}", 100_000)));
+        string references = JsonSerializer.Serialize("(a)" + string.Concat(Enumerable.Repeat(@"\1", 30_000)));
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.Equal(IssueCodes.InvalidFormat, schema.SafeParse(letters).Issues[0].Code);
+        Assert.Equal(IssueCodes.InvalidFormat, schema.SafeParse(references).Issues[0].Code);
+        Assert.True(schema.SafeParse(JsonSerializer.Serialize(@"^(a)\1$")).IsSuccess);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Regex_formats_are_charged_against_the_budget()
+    {
+        string pattern = JsonSerializer.Serialize(string.Concat(Enumerable.Repeat(@"\p{L}", 150)));
+        string json = $"[{string.Join(',', Enumerable.Repeat(pattern, 100))}]";
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<JsonElement> result = Open("""{"items":{"format":"regex"}}""").SafeParse(json);
+
+        Assert.False(result.IsSuccess);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Issues_are_capped_with_a_final_issue()
+    {
+        var result = Z.Array(Z.String()).SafeParse(Integers(1_000_000));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ValidationContext.MaxIssues + 1, result.Issues.Length);
+        Assert.Equal(IssueCodes.TooManyIssues, result.Issues[^1].Code);
+        Assert.All(result.Issues.Take(ValidationContext.MaxIssues), issue => Assert.Equal(IssueCodes.InvalidType, issue.Code));
+    }
+
+    [Fact]
+    public void Exactly_the_cap_is_not_too_many()
+    {
+        var result = Z.Array(Z.String()).SafeParse(Integers(ValidationContext.MaxIssues));
+
+        Assert.Equal(ValidationContext.MaxIssues, result.Issues.Length);
+        Assert.DoesNotContain(result.Issues, issue => issue.Code == IssueCodes.TooManyIssues);
+    }
+
+    [Fact]
+    public void Unrecognized_keys_are_capped()
+    {
+        string json = $"{{{string.Join(',', Enumerable.Range(0, 5000).Select(n => $"\"k{n}\":1"))}}}";
+
+        ParseIssue issue = Assert.Single(Z.Object().SafeParse(json).Issues);
+
+        Assert.Equal(IssueCodes.UnrecognizedKeys, issue.Code);
+        Assert.Equal(ValidationContext.MaxListedKeys, ((string[])issue.Parameters["keys"]!).Length);
+        Assert.True(issue.Message.Length < 1000);
+    }
+
+    [Fact]
+    public void A_given_regex_is_never_stated_as_its_own_text()
+    {
+        Regex dollar = new("^[a-z]+$");
+        Regex digits = new(@"^\d+$");
+
+        Assert.False(Z.String().Pattern(dollar).ToJsonSchema().ContainsKey("pattern"));
+        Assert.False(Z.String().Pattern(digits).ToJsonSchema().ContainsKey("pattern"));
+        Assert.True(Z.String().Pattern(dollar).SafeParse("\"abc\\n\"").IsSuccess);
+        Assert.True(Z.String().Pattern(digits).SafeParse("\"١٢\"").IsSuccess);
+        Assert.Equal("^[a-z]+\\n?$", Z.String().Pattern(dollar, "^[a-z]+\\n?$").ToJsonSchema()["pattern"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("uuid", "12345678-1234-1234-1234-123456789abc", true)]
+    [InlineData("uuid", "ABCDEF01-1234-1234-1234-123456789ABC", true)]
+    [InlineData("uuid", "0x345678-1234-1234-1234-123456789abc", false)]
+    [InlineData("uuid", "+2345678-1234-1234-1234-123456789abc", false)]
+    [InlineData("uuid", "12345678-0x34-1234-1234-123456789abc", false)]
+    [InlineData("uuid", "12345678-1234-1234-1234-12345678-abc", false)]
+    [InlineData("iri", "http://example.com/\U0001F600", true)]
+    [InlineData("iri", "http://example.com/\U000E1000", true)]
+    [InlineData("iri", "http://example.com/\U000E0001", false)]
+    [InlineData("iri-reference", "/\U000E0001", false)]
+    [InlineData("uri-template", "http://example.com/{var}/{+path,x*}", true)]
+    [InlineData("uri-template", "a'b", true)]
+    [InlineData("uri-template", "a b", false)]
+    [InlineData("idn-hostname", "a。b", true)]
+    [InlineData("idn-hostname", "a․b", false)]
+    [InlineData("relative-json-pointer", "0+1/a", true)]
+    [InlineData("relative-json-pointer", "1-1", true)]
+    [InlineData("relative-json-pointer", "2+10#", true)]
+    [InlineData("relative-json-pointer", "1/a", true)]
+    [InlineData("relative-json-pointer", "+1/a", false)]
+    [InlineData("relative-json-pointer", "1+/a", false)]
+    [InlineData("relative-json-pointer", "1+01/a", false)]
+    [InlineData("relative-json-pointer", "1+1+1/a", false)]
+    public void Format_verdicts(string format, string value, bool valid)
+    {
+        JsonValueSchema schema = Open($"{{\"format\":\"{format}\"}}");
+
+        Assert.Equal(valid, schema.SafeParse(JsonSerializer.Serialize(value)).IsSuccess);
+    }
+
+    [Fact]
+    public void A_generated_group_name_never_meets_a_real_one()
+    {
+        StringSchema generatedFirst = Z.String().Pattern(@"^(?<$a>x)(?<group_1>y)\k<$a>$");
+        StringSchema realFirst = Z.String().Pattern(@"^(?<group_2>y)(?<$a>x)\k<$a>$");
+
+        Assert.True(generatedFirst.SafeParse("\"xyx\"").IsSuccess);
+        Assert.False(generatedFirst.SafeParse("\"xyy\"").IsSuccess);
+        Assert.True(realFirst.SafeParse("\"yxx\"").IsSuccess);
+        Assert.False(realFirst.SafeParse("\"yxy\"").IsSuccess);
+    }
+
+    [Fact]
+    public void Many_backreferences_translate_in_linear_time()
+    {
+        string pattern = "(a)" + string.Concat(Enumerable.Repeat(@"\1", 30_000));
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        _ = EcmaRegexTranslator.Translate(pattern);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"Took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void Astral_property_names_are_encoded_by_code_point()
+    {
+        ParseIssue issue = Assert.Single(Z.Object().Property("\U0001F600", Z.String()).SafeParse("{\"\U0001F600\":1}").Issues);
+
+        Assert.Equal("#/properties/%F0%9F%98%80/type", issue.SchemaLocation);
+    }
+
+    [Fact]
+    public void The_sample_generator_judges_with_the_budget_of_a_parse()
+    {
+        string expensive = $"{{\"allOf\":[{string.Join(',', Enumerable.Repeat("{\"type\":\"integer\"}", 150))}]}}";
+        JsonValueSchema schema = Open($"{{\"type\":\"array\",\"minItems\":4000,\"items\":{expensive}}}");
+
+        SampleResult sample = schema.GenerateSample();
+
+        Assert.True(sample.IsValid);
+        Assert.True(schema.SafeParse(sample.Value).IsSuccess);
     }
 
     private static class Ast

@@ -8,6 +8,11 @@
 - Imported schemas report `additionalProperties: false` as `unrecognized_keys`, with the keys listed, like fluent schemas.
 - Fixed `SafeParse` throwing when a rewrite sat next to a string with a lone surrogate.
 - Packages now link to the repository.
+- Exceeding an evaluation limit now fails the whole parse. Before, a branch under `if`, `oneOf` or `contains` that ran out of budget, or a regex that timed out under `not` or `if`, counted as "didn't match" and could turn into acceptance. There is now a budget over all steps as well as the speculative one, and the guide lists the limits.
+- Added the issue code `too_many_issues`. A context keeps 100 issues, and `unrecognized_keys` lists 20 names.
+- `format: regex` accepts at most 1,024 characters and is charged to the budget.
+- `Pattern(Regex)` no longer takes `regex.ToString()` as the ECMA-262 `pattern`. Pass `ecmaPattern` to state one.
+- Fixed `uuid`, `iri`, `uri-template`, `idn-hostname` and `relative-json-pointer` verdicts, translated regex group names that collided, and percent-encoded astral property names in `SchemaLocation`.
 
 ## 0.1.0-preview.1
 

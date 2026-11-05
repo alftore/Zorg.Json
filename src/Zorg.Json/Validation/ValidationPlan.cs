@@ -168,7 +168,7 @@ internal sealed class ValidationPlan
             {
                 value = RunApplicators(value, context);
 
-                if (context.IssueCount == issues)
+                if (context.IssueCount == issues && !context.Halted)
                 {
                     RunRefinements(value, context);
                 }
@@ -327,7 +327,7 @@ internal sealed class ValidationPlan
             CheckPattern(text, context);
         }
 
-        if (_format is not null && !_format(text))
+        if (_format is not null && !(_node.Format == "regex" ? StringFormats.IsRegex(text, context) : _format(text)))
         {
             context.Report(IssueCodes.InvalidFormat, "format", "invalid_format.format", "format", _node.Format, _node.Format);
         }
@@ -344,7 +344,7 @@ internal sealed class ValidationPlan
         }
         catch (RegexMatchTimeoutException)
         {
-            context.Report(IssueCodes.InvalidFormat, "pattern", "invalid_format.timeout", "pattern", _node.Pattern, _node.Pattern);
+            context.ReportTimeout("pattern", _node.Pattern ?? _pattern!.ToString());
         }
     }
 
@@ -447,6 +447,11 @@ internal sealed class ValidationPlan
 
         foreach (JsonElement item in value.EnumerateArray())
         {
+            if (context.Halted)
+            {
+                return value;
+            }
+
             ValidationPlan? plan = index < _prefixItems.Length ? _prefixItems[index] : _items;
             JsonElement result = item;
 
@@ -544,6 +549,11 @@ internal sealed class ValidationPlan
 
         foreach (JsonElement item in value.EnumerateArray())
         {
+            if (context.Halted)
+            {
+                return;
+            }
+
             ValidationContext fork = context.Fork();
             _contains!.Run(item, fork);
 
@@ -584,6 +594,11 @@ internal sealed class ValidationPlan
 
         foreach (JsonProperty property in value.EnumerateObject())
         {
+            if (context.Halted)
+            {
+                return value;
+            }
+
             count++;
             string name;
 
@@ -628,7 +643,7 @@ internal sealed class ValidationPlan
                 }
                 catch (RegexMatchTimeoutException)
                 {
-                    context.Report(IssueCodes.InvalidFormat, "patternProperties", "invalid_format.timeout", "pattern", pattern.ToString(), pattern.ToString());
+                    context.ReportTimeout("patternProperties", pattern.ToString());
                     covered = true;
                 }
             }
@@ -673,7 +688,7 @@ internal sealed class ValidationPlan
 
             if (context.RewriteCount != rewrites)
             {
-                rewritten ??= [.. value.EnumerateObject().Take(count - 1).Where(earlier => Kept(earlier.Name)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
+                rewritten ??= [.. value.EnumerateObject().Take(count - 1).Where(earlier => Kept(earlier.Name, context)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
             }
 
             if (keep)
@@ -684,7 +699,8 @@ internal sealed class ValidationPlan
 
         if (unknown is not null)
         {
-            context.Report(IssueCodes.UnrecognizedKeys, _closedBy ?? "additionalProperties", IssueCodes.UnrecognizedKeys, "keys", unknown.ToArray(), string.Join(", ", unknown));
+            string[] keys = [.. unknown.Take(ValidationContext.MaxListedKeys)];
+            context.Report(IssueCodes.UnrecognizedKeys, _closedBy ?? "additionalProperties", IssueCodes.UnrecognizedKeys, "keys", keys, string.Join(", ", keys) + (unknown.Count > keys.Length ? $", and {unknown.Count - keys.Length} more" : string.Empty));
         }
 
         CheckRequired(value, context);
@@ -703,7 +719,7 @@ internal sealed class ValidationPlan
         {
             if (!value.TryGetProperty(name, out _))
             {
-                rewritten ??= [.. value.EnumerateObject().Where(earlier => Kept(earlier.Name)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
+                rewritten ??= [.. value.EnumerateObject().Where(earlier => Kept(earlier.Name, context)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
                 rewritten.Add(KeyValuePair.Create(name, node.Default!.Value));
                 context.Rewritten();
             }
@@ -724,13 +740,13 @@ internal sealed class ValidationPlan
         return rewritten is null ? value : JsonStrings.ToObject(rewritten);
     }
 
-    private bool Kept(string name) =>
+    private bool Kept(string name, ValidationContext context) =>
         _node.Behavior.UnknownProperties != UnknownProperties.Strip
         || _additionalProperties is not null
         || _properties.ContainsKey(name)
-        || _patternProperties.Any(entry => MatchesWithoutTimeout(entry.Pattern, name));
+        || _patternProperties.Any(entry => Matches(entry.Pattern, name, context));
 
-    private static bool MatchesWithoutTimeout(Regex pattern, string name)
+    private static bool Matches(Regex pattern, string name, ValidationContext context)
     {
         try
         {
@@ -738,6 +754,7 @@ internal sealed class ValidationPlan
         }
         catch (RegexMatchTimeoutException)
         {
+            context.ReportTimeout("patternProperties", pattern.ToString());
             return true;
         }
     }
@@ -797,7 +814,7 @@ internal sealed class ValidationPlan
             context.Unwalk();
         }
 
-        for (int index = 0; index < _allOf.Length; index++)
+        for (int index = 0; index < _allOf.Length && !context.Halted; index++)
         {
             context.Walk("allOf", index);
             Keep(_allOf[index].Run(value, context));
@@ -819,7 +836,7 @@ internal sealed class ValidationPlan
             ValidationContext fork = context.Fork();
             _not.Run(value, fork);
 
-            if (!fork.HasIssues || context.LimitExceeded)
+            if (!fork.HasIssues)
             {
                 context.Report(IssueCodes.InvalidValue, "not", "invalid_value.not", "expected", "not");
             }
@@ -867,7 +884,7 @@ internal sealed class ValidationPlan
     {
         List<ImmutableArray<ParseIssue>> failures = [];
 
-        for (int index = 0; index < _anyOf.Length; index++)
+        for (int index = 0; index < _anyOf.Length && !context.Halted; index++)
         {
             ValidationContext fork = context.Fork();
             context.Walk("anyOf", index);
@@ -894,7 +911,7 @@ internal sealed class ValidationPlan
         JsonElement result = value;
         int matches = 0;
 
-        for (int index = 0; index < _oneOf.Length; index++)
+        for (int index = 0; index < _oneOf.Length && !context.Halted; index++)
         {
             ValidationContext fork = context.Fork();
             context.Walk("oneOf", index);

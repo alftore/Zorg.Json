@@ -16,6 +16,12 @@ internal sealed class ValidationContext
 {
     private const int MaxDepth = 512;
 
+    /// <summary>The most issues a context keeps. The next one is replaced by a single <c>too_many_issues</c> issue and evaluation stops.</summary>
+    internal const int MaxIssues = 100;
+
+    /// <summary>The most property names an <c>unrecognized_keys</c> issue lists, in its message and its parameters.</summary>
+    internal const int MaxListedKeys = 20;
+
     /// <summary>
     /// Union branches re-evaluate the same value, which is exponential for a recursive schema. The budget
     /// grows with the document, so that a small hostile one stops quickly and a large honest one has room.
@@ -23,22 +29,36 @@ internal sealed class ValidationContext
     private const long BaseSpeculativeSteps = 100_000;
     private const long SpeculativeStepsPerByte = 16;
 
+    /// <summary>
+    /// The same bound over every step, speculative or not, because a schema of <c>$ref</c>s and <c>allOf</c>s costs
+    /// exponential time without a single fork.
+    /// </summary>
+    private const long BaseTotalSteps = 500_000;
+    private const long TotalStepsPerByte = 48;
+
     private readonly List<PathSegment> _path;
     private readonly List<Step> _steps;
     private readonly Limits _limits;
     private readonly bool _isFork;
     private List<ParseIssue>? _issues;
+    private bool _stopped;
     private List<PendingRefinement>? _pending;
 
     public ValidationContext()
-        : this([], [], new Limits { MaxSpeculativeSteps = BaseSpeculativeSteps }, isFork: false)
+        : this([], [], Scaled(0), isFork: false)
     {
     }
 
     public ValidationContext(JsonElement document)
-        : this([], [], new Limits { MaxSpeculativeSteps = BaseSpeculativeSteps + (SpeculativeStepsPerByte * JsonMarshal.GetRawUtf8Value(document).Length) }, isFork: false)
+        : this([], [], Scaled(JsonMarshal.GetRawUtf8Value(document).Length), isFork: false)
     {
     }
+
+    private static Limits Scaled(long bytes) => new()
+    {
+        MaxSpeculativeSteps = BaseSpeculativeSteps + (SpeculativeStepsPerByte * bytes),
+        MaxTotalSteps = BaseTotalSteps + (TotalStepsPerByte * bytes),
+    };
 
     private ValidationContext(List<PathSegment> path, List<Step> steps, Limits limits, bool isFork)
     {
@@ -48,42 +68,105 @@ internal sealed class ValidationContext
         _isFork = isFork;
     }
 
-    public int IssueCount => _issues?.Count ?? 0;
+    /// <summary>
+    /// What the caller sees. Once a limit was hit anywhere, the main context fails even if no branch said so: a fork's
+    /// verdict means nothing then, and it mustn't turn into acceptance.
+    /// </summary>
+    public int IssueCount => (_issues?.Count ?? 0) + (LimitIssuePending ? 1 : 0);
 
     public bool HasIssues => IssueCount > 0;
 
+    private bool LimitIssuePending => !_isFork && _limits.Exceeded && !_limits.Reported;
+
+    /// <summary>Set once evaluation should stop: a limit was hit, or this context has all the issues it keeps.</summary>
+    public bool Halted => _limits.Exceeded || _stopped;
+
     public bool HasPendingRefinements => _pending is not null;
 
-    /// <summary>Set once evaluation stopped early. A fork's verdict then means nothing, so <c>not</c> mustn't invert it.</summary>
+    /// <summary>Set once evaluation stopped early, whichever context hit the limit.</summary>
     public bool LimitExceeded => _limits.Exceeded;
 
     public int RewriteCount { get; private set; }
 
     public int Depth { get; private set; }
 
-    public ImmutableArray<ParseIssue> ToIssues() => _issues is null ? [] : [.. _issues];
+    public ImmutableArray<ParseIssue> ToIssues()
+    {
+        if (LimitIssuePending)
+        {
+            _limits.Reported = true;
+            (_issues ??= []).Add(_limits.Issue!);
+        }
+
+        return _issues is null ? [] : [.. _issues];
+    }
 
     public void Rewritten() => RewriteCount++;
 
     public bool Enter()
     {
+        if (Halted)
+        {
+            return false;
+        }
+
         if (++Depth > MaxDepth)
         {
             Depth--;
-            _limits.Exceeded = true;
-            Report(IssueCodes.InvalidValue, "$ref", "invalid_value.depth", "maximum", MaxDepth);
+            Exceed(IssueCodes.InvalidValue, "$ref", "invalid_value.depth", "maximum", MaxDepth);
+            return false;
+        }
+
+        if (++_limits.TotalSteps > _limits.MaxTotalSteps)
+        {
+            Depth--;
+            Exceed(IssueCodes.InvalidValue, "$ref", "invalid_value.complex", "maximum", _limits.MaxTotalSteps);
             return false;
         }
 
         if (_isFork && ++_limits.SpeculativeSteps > _limits.MaxSpeculativeSteps)
         {
             Depth--;
-            _limits.Exceeded = true;
-            Report(IssueCodes.InvalidValue, "anyOf", "invalid_value.complex", "maximum", _limits.MaxSpeculativeSteps);
+            Exceed(IssueCodes.InvalidValue, "anyOf", "invalid_value.complex", "maximum", _limits.MaxSpeculativeSteps);
             return false;
         }
 
         return true;
+    }
+
+    /// <summary>A regular expression took too long. That ends the parse as a failure, like any other limit.</summary>
+    public void ReportTimeout(string keyword, string pattern) =>
+        Exceed(IssueCodes.InvalidFormat, keyword, "invalid_format.timeout", "pattern", pattern, pattern);
+
+    /// <summary>Spends steps on work that isn't a schema evaluation, such as compiling a pattern the input supplied.</summary>
+    public bool Spend(long steps)
+    {
+        if (Halted)
+        {
+            return false;
+        }
+
+        _limits.TotalSteps += steps;
+
+        if (_limits.TotalSteps > _limits.MaxTotalSteps)
+        {
+            Exceed(IssueCodes.InvalidValue, "format", "invalid_value.complex", "maximum", _limits.MaxTotalSteps);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Records a limit. The issue goes to this context, and to the main one whichever fork hit it, so that no branch
+    /// outcome can hide it.
+    /// </summary>
+    private void Exceed(string code, string keyword, string messageKey, string parameter, object? value, params object?[] messageArguments)
+    {
+        _limits.Exceeded = true;
+        ParseIssue issue = Create(code, keyword, messageKey, parameter, value, messageArguments);
+        _limits.Issue ??= issue;
+        Add(issue, limit: true);
     }
 
     public void Leave() => Depth--;
@@ -109,7 +192,7 @@ internal sealed class ValidationContext
     public void Unwalk() => _steps.RemoveAt(_steps.Count - 1);
 
     /// <summary>Evaluates a branch whose issues only count if the caller says so. Shares the path.</summary>
-    public ValidationContext Fork() => new(_path, _steps, _limits, isFork: true) { Depth = Depth };
+    public ValidationContext Fork() => new(_path, _steps, _limits, isFork: true) { Depth = Depth, _stopped = _stopped };
 
     public void Adopt(ValidationContext fork)
     {
@@ -130,7 +213,10 @@ internal sealed class ValidationContext
     }
 
     public void Report(string code, string keyword, string messageKey, string parameter, object? value, params object?[] messageArguments) =>
-        Add(new ParseIssue
+        Add(Create(code, keyword, messageKey, parameter, value, messageArguments));
+
+    private ParseIssue Create(string code, string keyword, string messageKey, string parameter, object? value, object?[] messageArguments) =>
+        new()
         {
             Code = code,
             Message = Messages.Get(messageKey, messageArguments),
@@ -139,7 +225,7 @@ internal sealed class ValidationContext
             SchemaLocation = SchemaLocation(keyword),
             Keyword = keyword,
             Parameters = ImmutableDictionary<string, object?>.Empty.Add(parameter, value),
-        });
+        };
 
     /// <summary>The <c>false</c> schema is the failing schema itself, so no keyword is added to the paths.</summary>
     public void ReportFalse() =>
@@ -220,7 +306,30 @@ internal sealed class ValidationContext
     private static ImmutableDictionary<string, object?> Detail(Exception exception) =>
         ImmutableDictionary<string, object?>.Empty.Add("detail", exception.Message);
 
-    private void Add(ParseIssue issue) => (_issues ??= []).Add(issue);
+    private void Add(ParseIssue issue, bool limit = false)
+    {
+        if (limit && !_isFork)
+        {
+            _limits.Reported = true;
+        }
+        else if (_stopped)
+        {
+            return;
+        }
+        else if ((_issues?.Count ?? 0) >= MaxIssues)
+        {
+            _stopped = true;
+            issue = new ParseIssue
+            {
+                Code = IssueCodes.TooManyIssues,
+                Message = Messages.Get("too_many_issues", MaxIssues),
+                InstanceLocation = string.Empty,
+                Parameters = ImmutableDictionary<string, object?>.Empty.Add("maximum", MaxIssues),
+            };
+        }
+
+        (_issues ??= []).Add(issue);
+    }
 
     private string Pointer()
     {
@@ -314,8 +423,10 @@ internal sealed class ValidationContext
 
         path.Append('/');
 
-        foreach (char character in token)
+        for (int index = 0; index < token.Length; index++)
         {
+            char character = token[index];
+
             switch (character)
             {
                 case '~':
@@ -333,10 +444,15 @@ internal sealed class ValidationContext
                 default:
                     if (fragment)
                     {
-                        foreach (byte value in Encoding.UTF8.GetBytes(character.ToString()))
+                        // A surrogate pair is one code point, so it's encoded together.
+                        int length = char.IsHighSurrogate(character) && index + 1 < token.Length && char.IsLowSurrogate(token[index + 1]) ? 2 : 1;
+
+                        foreach (byte value in Encoding.UTF8.GetBytes(token.Substring(index, length)))
                         {
                             path.Append('%').Append(value.ToString("X2", CultureInfo.InvariantCulture));
                         }
+
+                        index += length - 1;
                     }
                     else
                     {
@@ -372,9 +488,18 @@ internal sealed class ValidationContext
     {
         public required long MaxSpeculativeSteps { get; init; }
 
+        public required long MaxTotalSteps { get; init; }
+
         public long SpeculativeSteps { get; set; }
 
+        public long TotalSteps { get; set; }
+
         public bool Exceeded { get; set; }
+
+        /// <summary>The first limit that was hit, which the main context reports if no branch did.</summary>
+        public ParseIssue? Issue { get; set; }
+
+        public bool Reported { get; set; }
 
         public long PathBudget { get; set; } = 2_000_000;
     }
