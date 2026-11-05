@@ -192,7 +192,7 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
 
     /// <summary>A number that isn't zero but reads as zero has lost its value, so it doesn't fit the type, as an overflow doesn't.</summary>
     private static bool Underflows(string text, TNumber number) =>
-        TNumber.IsZero(number) && !Validation.ExactNumber.Parse(text).Mantissa.IsZero;
+        TNumber.IsZero(number) && !Validation.ExactNumber.IsZeroText(text);
 
     internal override TNumber Materialize(JsonElement value) =>
         TNumber.Parse(value.GetRawText(), NumberStyles.Float, CultureInfo.InvariantCulture);

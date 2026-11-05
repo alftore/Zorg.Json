@@ -99,6 +99,63 @@ public sealed class ReviewFollowUpTests
     }
 
     [Fact]
+    public void Decimal_constants_with_equal_values_are_a_plain_one_of()
+    {
+        ObjectSchema one = Z.Object().Property("k", Z.Number<decimal>().Const(1m));
+        ObjectSchema other = Z.Object().Property("k", Z.Number<decimal>().Const(1.0m));
+        JsonValueSchema union = Z.DiscriminatedUnion("k", one, other);
+
+        Assert.False(union.SafeParse("""{"k":1}""").IsSuccess);
+    }
+
+    private static void Quick(Action action, double seconds = 5)
+    {
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        action();
+        Assert.True(watch.Elapsed.TotalSeconds < seconds, watch.Elapsed.ToString());
+    }
+
+    [Fact]
+    public void Long_numbers_are_read_in_linear_time()
+    {
+        string digits = new('7', 8_000_000);
+
+        Quick(() => Assert.True(Z.Number().Minimum(0).SafeParse("0." + digits).IsSuccess));
+        Quick(() => Assert.False(J("""{"const":1}""").SafeParse(digits).IsSuccess));
+        Quick(() => Assert.False(Z.Array().UniqueItems().SafeParse("[" + digits + "," + digits + "]").IsSuccess));
+        Quick(() => Assert.True(J("""{"multipleOf":3}""").SafeParse(new string('3', 1_000_000)).IsSuccess));
+    }
+
+    [Fact]
+    public void A_number_with_a_long_zero_tail_is_not_a_type_error()
+    {
+        // Z.Number() reads 0.7...7e-99999999 as zero in a double, so it doesn't fit, and that must be quick.
+        string text = "0." + new string('7', 8_000_000) + "e-99999999";
+
+        Quick(() => Assert.False(Z.Number().SafeParse(text).IsSuccess));
+    }
+
+    [Fact]
+    public void Exponents_are_compared_exactly()
+    {
+        Assert.False(J("""{"const":1e2000000000}""").SafeParse("1e3000000000").IsSuccess);
+        Assert.False(J("""{"const":1e1073741823}""").SafeParse("1e1073741824").IsSuccess);
+        Assert.True(J("""{"const":1e2000000000}""").SafeParse("1e2000000000").IsSuccess);
+        Assert.True(Z.Array().UniqueItems().SafeParse("[1e2000000000,1e3000000000]").IsSuccess);
+        Assert.False(J("""{"maximum":1e2000000000}""").SafeParse("1e3000000000").IsSuccess);
+        Assert.True(J("""{"const":1.5e99999999999}""").SafeParse("15e99999999998").IsSuccess);
+    }
+
+    [Fact]
+    public void An_exponent_too_long_to_hold_fails_the_parse()
+    {
+        Assert.False(J("""{"maximum":10}""").SafeParse("1e99999999999999999999").IsSuccess);
+        Assert.False(Z.Not(J("""{"const":1}""")).SafeParse("1e99999999999999999999").IsSuccess);
+        Assert.False(Z.Not(J("""{"maximum":10}""")).SafeParse("1e99999999999999999999").IsSuccess);
+        Assert.True(Z.Any().SafeParse("1e99999999999999999999").IsSuccess);
+    }
+
+    [Fact]
     public void Invalid_utf8_inside_an_element_does_not_throw()
     {
         ObjectSchema strip = Z.Object().Strip().Property("a", Z.Any());

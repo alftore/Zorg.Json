@@ -246,7 +246,7 @@ internal sealed class ValidationPlan
             return value;
         }
 
-        if (ExactNumber.TryParse(text, out _))
+        if (ExactNumber.TryParse(text, out _, out _))
         {
             context.Rewritten();
             return JsonElement.Parse(text);
@@ -320,7 +320,7 @@ internal sealed class ValidationPlan
 
     private void CheckValue(JsonElement value, ValidationContext context)
     {
-        if (_node.Const is { } constant && !JsonEquality.AreEqual(constant, value))
+        if (_node.Const is { } constant && !JsonEquality.AreEqual(constant, value, context))
         {
             if (!HoldsUnreadableText(constant.ValueKind, value, context, "const"))
             {
@@ -328,7 +328,7 @@ internal sealed class ValidationPlan
             }
         }
 
-        if (_enum is not null && !_enum.Contains(value))
+        if (_enum is not null && !_enum.Contains(value, context))
         {
             if (!HoldsUnreadableText(_enum.HoldsText ? JsonValueKind.String : JsonValueKind.Null, value, context, "enum"))
             {
@@ -411,9 +411,9 @@ internal sealed class ValidationPlan
 
         public string Message { get; }
 
-        public bool Contains(JsonElement value) => _index is null
-            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value))
-            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value));
+        public bool Contains(JsonElement value, ValidationContext context) => _index is null
+            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value, context))
+            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value, context));
     }
 
     private void CheckString(JsonElement value, ValidationContext context)
@@ -470,6 +470,11 @@ internal sealed class ValidationPlan
         }
     }
 
+    /// <summary>A bound with an exponent too long to hold can't be compared with, so a number against it ends the parse.</summary>
+    private bool BoundsOutOfRange() =>
+        _minimum?.IsOutOfRange == true || _maximum?.IsOutOfRange == true || _exclusiveMinimum?.IsOutOfRange == true
+        || _exclusiveMaximum?.IsOutOfRange == true || _multipleOf?.IsOutOfRange == true;
+
     private void CheckNumber(JsonElement value, ValidationContext context)
     {
         string text = value.GetRawText();
@@ -486,7 +491,19 @@ internal sealed class ValidationPlan
             return;
         }
 
+        // Reading the digits takes time in proportion to their number, so a long number is charged for it.
+        if (!context.Spend((text.Length / 32) + 1))
+        {
+            return;
+        }
+
         ExactNumber number = ExactNumber.Parse(text);
+
+        if (number.IsOutOfRange || BoundsOutOfRange())
+        {
+            context.ReportTooComplex("type");
+            return;
+        }
 
         if (_node.Types.HasFlag(JsonTypes.Integer) && !_node.Types.HasFlag(JsonTypes.Number) && !number.IsInteger)
         {
@@ -518,7 +535,7 @@ internal sealed class ValidationPlan
             context.Report(IssueCodes.TooBig, "exclusiveMaximum", "too_big.exclusive", "maximum", limit, limit);
         }
 
-        if (_multipleOf is { } multipleOf && !number.IsMultipleOf(multipleOf))
+        if (_multipleOf is { } multipleOf && context.Spend(number.MultipleOfCost(multipleOf)) && !number.IsMultipleOf(multipleOf))
         {
             string divisor = _node.MultipleOf!.Value.GetRawText();
             context.Report(IssueCodes.NotMultipleOf, "multipleOf", IssueCodes.NotMultipleOf, "divisor", divisor, divisor);
@@ -625,7 +642,7 @@ internal sealed class ValidationPlan
                     return;
                 }
 
-                if (JsonEquality.AreEqual(items[candidate], item))
+                if (JsonEquality.AreEqual(items[candidate], item, context))
                 {
                     context.Report(IssueCodes.InvalidValue, "uniqueItems", "invalid_value.unique", "indexes", new[] { candidate, index }, candidate, index);
                     return;
@@ -1071,7 +1088,7 @@ internal sealed class ValidationPlan
 
         if (JsonText.TryGetProperty(value, discriminator, out JsonElement selected)
             && _discriminated!.TryGetValue(JsonEquality.Hash(selected), out List<(JsonElement Value, ValidationPlan Plan, int Index)>? bucket)
-            && bucket.FindIndex(entry => JsonEquality.AreEqual(entry.Value, selected)) is >= 0 and int found)
+            && bucket.FindIndex(entry => JsonEquality.AreEqual(entry.Value, selected, context)) is >= 0 and int found)
         {
             (_, ValidationPlan plan, int index) = bucket[found];
             context.Walk("oneOf", index);

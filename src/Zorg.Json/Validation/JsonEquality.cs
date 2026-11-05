@@ -11,7 +11,11 @@ namespace Zorg.Json.Validation;
 /// </summary>
 internal static class JsonEquality
 {
-    public static bool AreEqual(JsonElement left, JsonElement right)
+    /// <summary>
+    /// Compares two values. A number whose exponent is too long to hold can't be compared, so with a <paramref name="context"/>
+    /// that ends the parse as a failure and the result is false. The context is also charged for long numbers.
+    /// </summary>
+    public static bool AreEqual(JsonElement left, JsonElement right, ValidationContext? context = null)
     {
         Stack<(JsonElement Left, JsonElement Right)> pending = new();
         pending.Push((left, right));
@@ -36,7 +40,7 @@ internal static class JsonEquality
                     break;
 
                 case JsonValueKind.Number:
-                    if (ExactNumber.Parse(first.GetRawText()).CompareTo(ExactNumber.Parse(second.GetRawText())) != 0)
+                    if (!NumbersEqual(first, second, context))
                     {
                         return false;
                     }
@@ -126,6 +130,33 @@ internal static class JsonEquality
         }
     }
 
+    private static bool NumbersEqual(JsonElement first, JsonElement second, ValidationContext? context)
+    {
+        string left = first.GetRawText();
+        string right = second.GetRawText();
+
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (context is not null && !context.Spend(((left.Length + right.Length) / 32) + 1))
+        {
+            return false;
+        }
+
+        ExactNumber a = ExactNumber.Parse(left);
+        ExactNumber b = ExactNumber.Parse(right);
+
+        if (a.IsOutOfRange || b.IsOutOfRange)
+        {
+            context?.ReportTooComplex("const");
+            return false;
+        }
+
+        return a.CompareTo(b) == 0;
+    }
+
     private static bool IsBoolean(JsonElement element) => element.ValueKind is JsonValueKind.True or JsonValueKind.False;
 
     private static bool StringsEqual(JsonElement first, JsonElement second)
@@ -175,8 +206,7 @@ internal static class JsonEquality
 
     private static int Number(JsonElement element)
     {
-        ExactNumber number = ExactNumber.Parse(element.GetRawText());
-        return HashCode.Combine(number.Mantissa.GetHashCode(), number.Exponent);
+        return ExactNumber.Parse(element.GetRawText()).GetHash();
     }
 
     private static int Mix(string? name, int value) => HashCode.Combine(name?.GetHashCode(StringComparison.Ordinal) ?? 0, value);
