@@ -156,6 +156,20 @@ public sealed class ReviewRegressionTests
         Assert.True(Z.DiscriminatedUnion("k", Z.Lazy("x", () => target)).SafeParse("""{ "k": "a" }""").IsSuccess);
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("1")]
+    [InlineData("[]")]
+    public void Discriminated_union_reports_a_non_object_at_the_root(string json)
+    {
+        JsonValueSchema union = Z.DiscriminatedUnion("k", Z.Object().Property("k", Z.String().Const("a")));
+
+        ParseIssue issue = Assert.Single(union.SafeParse(json).Issues);
+
+        Assert.Equal(IssueCodes.InvalidType, issue.Code);
+        Assert.Equal(string.Empty, issue.InstanceLocation);
+    }
+
     [Fact]
     public void Integer_discriminators_select_the_type() =>
         Assert.IsType<NumberedOne>(Schema.Object<Numbered>().Parse("""{ "t": 1, "a": 1 }"""));

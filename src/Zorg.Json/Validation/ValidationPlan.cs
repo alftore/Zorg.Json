@@ -934,8 +934,13 @@ internal sealed class ValidationPlan
     {
         string discriminator = _node.Behavior.Discriminator!;
 
-        if (value.ValueKind == JsonValueKind.Object
-            && value.TryGetProperty(discriminator, out JsonElement selected)
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            context.Report(IssueCodes.InvalidType, "type", IssueCodes.InvalidType, "expected", "object", "object", TypeName(value.ValueKind));
+            return value;
+        }
+
+        if (value.TryGetProperty(discriminator, out JsonElement selected)
             && DiscriminatorKeys.Key(selected) is { } key
             && _discriminated!.TryGetValue(key, out (ValidationPlan Plan, int Index) branch))
         {

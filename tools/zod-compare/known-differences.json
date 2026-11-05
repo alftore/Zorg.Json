@@ -6,9 +6,18 @@
       "status": "design",
       "reason": "Zod sees JSON.parse output, where the last duplicate wins. Zorg reads the text and reports invalid_json.",
       "link": "docs/guide.md#parsing",
-      "cases": ["*"],
-      "docTags": ["duplicate-key"],
-      "kinds": ["verdict", "code", "path", "output"]
+      "cases": [
+        "*"
+      ],
+      "docTags": [
+        "duplicate-key"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "path",
+        "output"
+      ]
     },
     {
       "id": "invalid-unicode",
@@ -16,9 +25,18 @@
       "status": "design",
       "reason": "A lone surrogate is a valid JS string, so Zod accepts it. Zorg rejects it as invalid Unicode (invalid_value) before any rule runs.",
       "link": "docs/guide.md#issues",
-      "cases": ["*"],
-      "docTags": ["lone-surrogate"],
-      "kinds": ["verdict", "code", "path", "output"]
+      "cases": [
+        "*"
+      ],
+      "docTags": [
+        "lone-surrogate"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "path",
+        "output"
+      ]
     },
     {
       "id": "literal-wrong-type-code",
@@ -26,8 +44,16 @@
       "status": "undocumented-design",
       "reason": "Zod reports invalid_value for any input that is not the literal or enum member. Zorg reports invalid_type when the JSON type is already wrong.",
       "link": "docs/guide.md#issues",
-      "cases": ["number-literal5", "number-enum", "literal-string", "literal-true", "enum-colors"],
-      "kinds": ["code"],
+      "cases": [
+        "number-literal5",
+        "number-enum",
+        "literal-string",
+        "literal-true",
+        "enum-colors"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod invalid_value@ / zorg (invalid_type@|invalid_value@ invalid_type@)$"
     },
     {
@@ -36,20 +62,13 @@
       "status": "undocumented-design",
       "reason": "Zod reports invalid_type for z.never(). Zorg's Z.Never() is the JSON Schema false schema and reports invalid_value.",
       "link": "docs/reference.md#types",
-      "cases": ["never"],
-      "kinds": ["code"],
+      "cases": [
+        "never"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod invalid_type@ / zorg invalid_value@$"
-    },
-    {
-      "id": "discriminated-union-non-object-location",
-      "category": "issue-locations",
-      "status": "suspected_bug",
-      "reason": "For an input that is not an object, Zorg reports invalid_union at /kind, a location the document does not have. Zod reports invalid_type at the root.",
-      "repro": "Z.DiscriminatedUnion(\"kind\", A, B).SafeParse(\"null\") returns invalid_union at /kind. Expected invalid_type at the root, as for any non-object.",
-      "link": "docs/guide.md#unions-and-recursion",
-      "cases": ["discriminated-two", "discriminated-three"],
-      "kinds": ["code"],
-      "detail": "^zod invalid_type@ / zorg invalid_union@/kind$"
     },
     {
       "id": "unknown-keys-default",
@@ -57,8 +76,14 @@
       "status": "design",
       "reason": "z.object() strips unknown keys by default. Z.Object() rejects them with unrecognized_keys. The catalogue pairs them on purpose; object-strict, object-strip and object-passthrough pair the explicit modes.",
       "link": "docs/guide.md#unknown-properties",
-      "cases": ["object-default-mode"],
-      "kinds": ["verdict", "code", "output"]
+      "cases": [
+        "object-default-mode"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "output"
+      ]
     },
     {
       "id": "zod-checks-run-after-type-error",
@@ -66,8 +91,14 @@
       "status": "zod-behaviour",
       "reason": "Zod runs length checks on a value whose type is already wrong, so an array given to z.string().min(n) also gets too_small or too_big. Zorg reports only the type error.",
       "link": "https://zod.dev/api#strings",
-      "cases": ["string-*", "array-*", "intersection-string-lengths"],
-      "kinds": ["code"],
+      "cases": [
+        "string-*",
+        "array-*",
+        "intersection-string-lengths"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod invalid_type@ (too_small@|too_big@)( invalid_type@)? / zorg invalid_type@( invalid_type@)?$"
     },
     {
@@ -76,9 +107,26 @@
       "status": "undocumented-design",
       "reason": "Zod and Zorg accept different sets for the same format. Zod uses its own regexes or the WHATWG URL parser (z.url accepts non-ASCII hosts and surrounding spaces, z.iso.datetime is UTC-only, z.iso.time has no offset, z.uuid checks version and variant). Zorg follows the RFCs (3986, 3339, 5321 with a 64-character local part, 1123).",
       "link": "docs/reference.md#strings",
-      "cases": ["string-email", "string-uuid", "string-guid", "string-url", "string-datetime", "string-datetime-offset", "string-time", "string-date", "string-hostname", "string-ipv4", "string-ipv6"],
-      "docTags": ["format"],
-      "kinds": ["verdict", "code"]
+      "cases": [
+        "string-email",
+        "string-uuid",
+        "string-guid",
+        "string-url",
+        "string-datetime",
+        "string-datetime-offset",
+        "string-time",
+        "string-date",
+        "string-hostname",
+        "string-ipv4",
+        "string-ipv6"
+      ],
+      "docTags": [
+        "format"
+      ],
+      "kinds": [
+        "verdict",
+        "code"
+      ]
     },
     {
       "id": "regex-unicode-mode",
@@ -86,9 +134,15 @@
       "status": "design",
       "reason": "Patterns run in ECMA-262 Unicode mode, so . matches an astral character as one code point. Zod passes a JS RegExp without the u flag, where it is two UTF-16 units.",
       "link": "docs/import.md#patterns",
-      "cases": ["string-regex-dot2"],
-      "docTags": ["astral"],
-      "kinds": ["verdict"]
+      "cases": [
+        "string-regex-dot2"
+      ],
+      "docTags": [
+        "astral"
+      ],
+      "kinds": [
+        "verdict"
+      ]
     },
     {
       "id": "integer-range",
@@ -96,9 +150,25 @@
       "status": "undocumented-design",
       "reason": "Z.Integer() is a .NET long (Z.Number<int>() an int) and exact: it accepts integers up to 2^63-1 and reports out-of-range as invalid_type. Zod parses to a double, so z.int() stops at 2^53-1 and reports too_big or too_small.",
       "link": "docs/reference.md#types",
-      "cases": ["integer", "integer-0-100", "integer-int32", "integer-multipleof3", "union-string-int-null", "coerce-integer", "refine-even", "xor-number-int"],
-      "docTags": ["bigint", "int-edge", "large-double"],
-      "kinds": ["verdict", "code"]
+      "cases": [
+        "integer",
+        "integer-0-100",
+        "integer-int32",
+        "integer-multipleof3",
+        "union-string-int-null",
+        "coerce-integer",
+        "refine-even",
+        "xor-number-int"
+      ],
+      "docTags": [
+        "bigint",
+        "int-edge",
+        "large-double"
+      ],
+      "kinds": [
+        "verdict",
+        "code"
+      ]
     },
     {
       "id": "int32-range-code",
@@ -106,8 +176,12 @@
       "status": "undocumented-design",
       "reason": "Out of range for Z.Number<int>() is invalid_type in Zorg, and too_big or too_small for z.int32() in Zod.",
       "link": "docs/reference.md#types",
-      "cases": ["integer-int32"],
-      "kinds": ["code"],
+      "cases": [
+        "integer-int32"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod too_(small|big)@ / zorg invalid_type@$"
     },
     {
@@ -116,9 +190,18 @@
       "status": "undocumented-design",
       "reason": "Zorg reads numbers as exact decimals. Zod sees a JS double, where 1e400 is Infinity (rejected), 1e-400 is 0 and 5e-324 is the smallest double.",
       "link": "docs/guide.md#what-a-typed-schema-includes",
-      "cases": ["*"],
-      "docTags": ["overflow", "underflow"],
-      "kinds": ["verdict", "code", "path"]
+      "cases": [
+        "*"
+      ],
+      "docTags": [
+        "overflow",
+        "underflow"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "path"
+      ]
     },
     {
       "id": "zod-multipleof-large-values",
@@ -126,8 +209,14 @@
       "status": "zod-behaviour",
       "reason": "Zod 4 multipleOf uses a float remainder that accepts non-multiples near and above 1e15 (9007199254740991 passes multipleOf(5) and multipleOf(3)), and 0.30000000000000004 passes multipleOf(0.1). Zorg computes exactly.",
       "link": "https://zod.dev/api#numbers",
-      "cases": ["number-multipleof5", "number-multipleof-tenth", "integer-multipleof3"],
-      "kinds": ["verdict"],
+      "cases": [
+        "number-multipleof5",
+        "number-multipleof-tenth",
+        "integer-multipleof3"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -137,8 +226,12 @@
       "status": "undocumented-design",
       "reason": "1e308 is a multiple of 0.1 to Zorg's exact decimal arithmetic, and not to Zod's float remainder.",
       "link": "docs/guide.md#what-a-typed-schema-includes",
-      "cases": ["number-multipleof-tenth"],
-      "kinds": ["verdict"],
+      "cases": [
+        "number-multipleof-tenth"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -148,9 +241,17 @@
       "status": "undocumented-design",
       "reason": "Trim uses the .NET whitespace set and Zod the JS one: JS trims U+FEFF and keeps U+0085, .NET the reverse.",
       "link": "docs/reference.md#strings",
-      "cases": ["string-trim-min1", "string-trim-max3", "string-max3-trim"],
-      "docTags": ["whitespace"],
-      "kinds": ["output"]
+      "cases": [
+        "string-trim-min1",
+        "string-trim-max3",
+        "string-max3-trim"
+      ],
+      "docTags": [
+        "whitespace"
+      ],
+      "kinds": [
+        "output"
+      ]
     },
     {
       "id": "case-mapping",
@@ -158,8 +259,13 @@
       "status": "undocumented-design",
       "reason": "ToUpperInvariant and ToLowerInvariant map one character to one, while JS toUpperCase and toLowerCase use full mappings: the German sharp s becomes SS, the fi ligature becomes FI, and capital I with dot above becomes i plus a combining dot.",
       "link": "docs/reference.md#strings",
-      "cases": ["string-lowercase", "string-uppercase"],
-      "kinds": ["output"]
+      "cases": [
+        "string-lowercase",
+        "string-uppercase"
+      ],
+      "kinds": [
+        "output"
+      ]
     },
     {
       "id": "constraints-after-normalize",
@@ -167,8 +273,12 @@
       "status": "design",
       "reason": "Zorg normalizes first, then checks: Z.String().MaxLength(3).Trim() accepts \"  abc  \". Zod runs checks in the order written, so max(3).trim() rejects it.",
       "link": "docs/guide.md#changing-values-while-parsing",
-      "cases": ["string-max3-trim"],
-      "kinds": ["verdict"],
+      "cases": [
+        "string-max3-trim"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -178,8 +288,14 @@
       "status": "design",
       "reason": "Two closed objects in Z.AllOf reject each other's properties, which the guide says not to do (use Extend). This Zod version accepts the same intersection, so verdicts and issues differ.",
       "link": "docs/guide.md#unions-and-recursion",
-      "cases": ["intersection-strict-objects"],
-      "kinds": ["verdict", "code", "path"]
+      "cases": [
+        "intersection-strict-objects"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "path"
+      ]
     },
     {
       "id": "intersection-strip-objects-last-wins",
@@ -187,8 +303,12 @@
       "status": "design",
       "reason": "With Strip objects in Z.AllOf each branch strips the other branch's properties and the last change wins, so {\"a\":1,\"b\":\"y\"} comes back as {\"b\":\"y\"}. Zod merges the branch outputs. Documented, but it drops data without a warning.",
       "link": "docs/guide.md#changing-values-while-parsing",
-      "cases": ["intersection-strip-objects"],
-      "kinds": ["output"]
+      "cases": [
+        "intersection-strip-objects"
+      ],
+      "kinds": [
+        "output"
+      ]
     },
     {
       "id": "coerce-number-js-semantics",
@@ -196,8 +316,14 @@
       "status": "design",
       "reason": "Zod coerces with JS Number(): null, true, \"\", \" 42\", \"0x10\" and [5] all become numbers. Zorg coerces only numeric strings.",
       "link": "docs/guide.md#changing-values-while-parsing",
-      "cases": ["coerce-number", "coerce-integer", "coerce-number-prop"],
-      "kinds": ["verdict"]
+      "cases": [
+        "coerce-number",
+        "coerce-integer",
+        "coerce-number-prop"
+      ],
+      "kinds": [
+        "verdict"
+      ]
     },
     {
       "id": "coerce-boolean-js-semantics",
@@ -205,8 +331,13 @@
       "status": "design",
       "reason": "Zod coerces with JS Boolean(): every truthy value is true, including the string \"false\". Zorg accepts true, false and the strings \"true\" and \"false\".",
       "link": "docs/guide.md#changing-values-while-parsing",
-      "cases": ["coerce-boolean"],
-      "kinds": ["verdict", "output"]
+      "cases": [
+        "coerce-boolean"
+      ],
+      "kinds": [
+        "verdict",
+        "output"
+      ]
     },
     {
       "id": "coerce-missing-property-code",
@@ -214,8 +345,12 @@
       "status": "zod-behaviour",
       "reason": "A missing property under z.coerce.number() becomes NaN, so Zod reports invalid_type instead of a missing property. Zorg reports required.",
       "link": "https://zod.dev/api#coercion",
-      "cases": ["coerce-number-prop"],
-      "kinds": ["code"],
+      "cases": [
+        "coerce-number-prop"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod invalid_type@/n.* / zorg .*required@/n"
     },
     {
@@ -224,8 +359,12 @@
       "status": "zod-behaviour",
       "reason": "Zod coerces null to 0, so the only issue is the unknown key. Zorg also rejects the null.",
       "link": "https://zod.dev/api#coercion",
-      "cases": ["coerce-number-prop"],
-      "kinds": ["code"],
+      "cases": [
+        "coerce-number-prop"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod unrecognized_keys@ / zorg invalid_type@/n unrecognized_keys@$"
     },
     {
@@ -234,9 +373,21 @@
       "status": "zod-behaviour",
       "reason": "Zod skips an own property named __proto__ in records and catchalls, so {\"__proto__\":1} passes z.record(z.string(), z.number()) with the key dropped, and {\"__proto__\":{\"x\":1}} does too. Zorg validates the key like any other.",
       "link": "https://zod.dev/api#records",
-      "cases": ["record-number", "record-object", "record-lower-keys", "object-catchall"],
-      "docTags": ["proto-key"],
-      "kinds": ["verdict", "code", "path", "output"]
+      "cases": [
+        "record-number",
+        "record-object",
+        "record-lower-keys",
+        "object-catchall"
+      ],
+      "docTags": [
+        "proto-key"
+      ],
+      "kinds": [
+        "verdict",
+        "code",
+        "path",
+        "output"
+      ]
     },
     {
       "id": "tuple-extra-items-code",
@@ -244,8 +395,14 @@
       "status": "undocumented-design",
       "reason": "Items beyond a tuple are one too_big at the root for Zod. Zorg reports each as invalid_value at the item (items: false), plus the type errors Zod leaves out.",
       "link": "docs/reference.md#types",
-      "cases": ["tuple-string-int", "tuple-three", "tuple-empty"],
-      "kinds": ["code"],
+      "cases": [
+        "tuple-string-int",
+        "tuple-three",
+        "tuple-empty"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod too_big@.* / zorg .*invalid_value@/\\d"
     },
     {
@@ -254,19 +411,14 @@
       "status": "undocumented-design",
       "reason": "Zod reports only too_small for a short tuple. Zorg also reports the type errors of the items that are present.",
       "link": "docs/guide.md#issues",
-      "cases": ["tuple-string-int", "tuple-three"],
-      "kinds": ["code"],
+      "cases": [
+        "tuple-string-int",
+        "tuple-three"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod too_small@ / zorg too_small@ invalid_type@/\\d"
-    },
-    {
-      "id": "array-item-and-length-errors",
-      "category": "issue-reporting",
-      "status": "undocumented-design",
-      "reason": "Zorg reports item errors beside a length violation. Zod stops at the length violation.",
-      "link": "docs/guide.md#issues",
-      "cases": ["array-number-1-3", "tuple-string-int", "tuple-three"],
-      "kinds": ["code"],
-      "detail": "^zod too_big@.* / zorg (too_big@ )?invalid_type@/\\d"
     },
     {
       "id": "unique-items-code",
@@ -274,8 +426,12 @@
       "status": "undocumented-design",
       "reason": "Zorg UniqueItems reports invalid_value (uniqueItems) and also checks it when items have type errors. The Zod side is a refine, which reports custom and runs only on valid items.",
       "link": "docs/guide.md#issues",
-      "cases": ["array-unique"],
-      "kinds": ["code"]
+      "cases": [
+        "array-unique"
+      ],
+      "kinds": [
+        "code"
+      ]
     },
     {
       "id": "record-key-issue",
@@ -283,8 +439,12 @@
       "status": "undocumented-design",
       "reason": "A key that fails the key schema is invalid_key at the key for Zod. Zorg reports the propertyNames failure as invalid_format at the object.",
       "link": "docs/reference.md#objects",
-      "cases": ["record-lower-keys"],
-      "kinds": ["code"],
+      "cases": [
+        "record-lower-keys"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "invalid_key@"
     },
     {
@@ -293,8 +453,12 @@
       "status": "undocumented-design",
       "reason": "When no union branch matches, Zorg reports invalid_union. Zod reports the issues of the closest branch.",
       "link": "docs/guide.md#issues",
-      "cases": ["union-objects"],
-      "kinds": ["code"],
+      "cases": [
+        "union-objects"
+      ],
+      "kinds": [
+        "code"
+      ],
       "detail": "^zod unrecognized_keys@ / zorg invalid_union@$"
     },
     {
@@ -304,9 +468,15 @@
       "status": "undocumented-design",
       "reason": "A number schema read from JSON Schema is exact, so 1e400 passes type: number. Zod sees Infinity and rejects it.",
       "link": "docs/import.md",
-      "cases": ["*"],
-      "docTags": ["overflow"],
-      "kinds": ["verdict"],
+      "cases": [
+        "*"
+      ],
+      "docTags": [
+        "overflow"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -317,9 +487,15 @@
       "status": "design",
       "reason": "Zod's output can hold a lone surrogate, which Zorg rejects as invalid Unicode before the schema runs.",
       "link": "docs/guide.md#issues",
-      "cases": ["*"],
-      "docTags": ["lone-surrogate"],
-      "kinds": ["verdict"]
+      "cases": [
+        "*"
+      ],
+      "docTags": [
+        "lone-surrogate"
+      ],
+      "kinds": [
+        "verdict"
+      ]
     },
     {
       "id": "in-draft04-integer",
@@ -328,10 +504,19 @@
       "status": "design",
       "reason": "In Draft-04 an integer has no fraction or exponent, so 1.0 and 1e2 are not integers there. Zod sees JS numbers, where 1.0 is 1.",
       "link": "docs/import.md#draft-04",
-      "cases": ["*"],
-      "targets": ["draft-04"],
-      "docTags": ["integer-valued-float", "negative-zero"],
-      "kinds": ["verdict"]
+      "cases": [
+        "*"
+      ],
+      "targets": [
+        "draft-04"
+      ],
+      "docTags": [
+        "integer-valued-float",
+        "negative-zero"
+      ],
+      "kinds": [
+        "verdict"
+      ]
     },
     {
       "id": "in-draft04-property-names",
@@ -340,9 +525,15 @@
       "status": "design",
       "reason": "Draft-04 has no propertyNames, so Zod's key rule does nothing there.",
       "link": "docs/import.md#draft-04",
-      "cases": ["record-lower-keys"],
-      "targets": ["draft-04"],
-      "kinds": ["verdict"],
+      "cases": [
+        "record-lower-keys"
+      ],
+      "targets": [
+        "draft-04"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -353,8 +544,14 @@
       "status": "zod-behaviour",
       "reason": "z.toJSONSchema leaves out refine() checks, so the document accepts what the refinement rejects. Zorg's own emitter does the same, as the guide says.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["array-unique", "refine-even", "refine-min-max"],
-      "kinds": ["verdict"],
+      "cases": [
+        "array-unique",
+        "refine-even",
+        "refine-min-max"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -365,8 +562,14 @@
       "status": "zod-behaviour",
       "reason": "z.toJSONSchema writes constraints that Zod checks after trim or toLowerCase as if they applied to the input. string-trim-min1 and string-trim-max3 therefore disagree with Zod about whitespace-only and padded strings, and the pattern after toLowerCase rejects uppercase input that Zod accepts. This is the limitation Zorg documents for its own emitter.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["string-trim-min1", "string-trim-max3", "string-lowercase-pattern"],
-      "kinds": ["verdict"]
+      "cases": [
+        "string-trim-min1",
+        "string-trim-max3",
+        "string-lowercase-pattern"
+      ],
+      "kinds": [
+        "verdict"
+      ]
     },
     {
       "id": "in-coerce-input-schema",
@@ -375,8 +578,15 @@
       "status": "zod-behaviour",
       "reason": "With io: input Zod still writes type: number or boolean for z.coerce.*, though the schema accepts strings and more. The document is stricter than the Zod schema.",
       "link": "https://zod.dev/json-schema",
-      "cases": ["coerce-number", "coerce-integer", "coerce-boolean", "coerce-number-prop"],
-      "kinds": ["verdict"],
+      "cases": [
+        "coerce-number",
+        "coerce-integer",
+        "coerce-boolean",
+        "coerce-number-prop"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -387,9 +597,15 @@
       "status": "zod-behaviour",
       "reason": "Zod writes a pattern for ipv6 that rejects the IPv4-embedded forms its own z.ipv6() accepts.",
       "link": "https://zod.dev/json-schema",
-      "cases": ["string-ipv6"],
-      "docTags": ["format"],
-      "kinds": ["verdict"],
+      "cases": [
+        "string-ipv6"
+      ],
+      "docTags": [
+        "format"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -400,8 +616,12 @@
       "status": "zod-behaviour",
       "reason": "Zod writes prefixItems: [] for z.tuple([]), which Draft 2020-12 does not allow (a non-empty array of schemas). Zorg refuses it as invalid_schema. It accepts items: [] in Draft-07 and Draft-04, where the metaschema also requires a non-empty array.",
       "link": "docs/import.md#what-s-supported",
-      "cases": ["tuple-empty"],
-      "kinds": ["refused"]
+      "cases": [
+        "tuple-empty"
+      ],
+      "kinds": [
+        "refused"
+      ]
     },
     {
       "id": "openapi-30-not-detected",
@@ -411,8 +631,12 @@
       "reason": "The docs say an OpenAPI 3.0 document is refused with unsupported_dialect. The document Zod writes for target openapi-3.0 has no $schema, so nothing identifies it, and it is imported as Draft 2020-12.",
       "repro": "Z.FromJsonSchema(\"{\\\"type\\\":\\\"string\\\",\\\"nullable\\\":true}\") imports without error and SafeParse(\"null\") fails. In OpenAPI 3.0, null is allowed.",
       "link": "docs/import.md#what-s-supported",
-      "cases": ["*"],
-      "kinds": ["refused"]
+      "cases": [
+        "*"
+      ],
+      "kinds": [
+        "refused"
+      ]
     },
     {
       "id": "openapi-30-nullable-ignored",
@@ -422,8 +646,18 @@
       "reason": "Because the OpenAPI 3.0 document is read as Draft 2020-12, nullable: true is an unknown keyword that is kept but not honoured, so null is rejected where Zod, and OpenAPI, accept it. Same cause as openapi-30-not-detected.",
       "repro": "Z.FromJsonSchema(\"{\\\"type\\\":\\\"string\\\",\\\"nullable\\\":true}\").SafeParse(\"null\").IsSuccess is false. OpenAPI 3.0 says it should pass.",
       "link": "docs/import.md#what-s-supported",
-      "cases": ["string-nullable", "number-nullable", "null", "array-nullable", "object-nullable-prop", "object-nullable", "union-string-int-null"],
-      "kinds": ["verdict"],
+      "cases": [
+        "string-nullable",
+        "number-nullable",
+        "null",
+        "array-nullable",
+        "object-nullable-prop",
+        "object-nullable",
+        "union-string-int-null"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -434,8 +668,15 @@
       "status": "design",
       "reason": "Zorg checks length and pattern after Trim, ToLowerInvariant and similar steps, which JSON Schema cannot say, so the emitted input schema leaves them out (noted in description). Zod reads the looser document and accepts what Zorg rejects.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["string-trim-min1", "string-trim-max3", "string-max3-trim", "string-lowercase-pattern"],
-      "kinds": ["verdict"],
+      "cases": [
+        "string-trim-min1",
+        "string-trim-max3",
+        "string-max3-trim",
+        "string-lowercase-pattern"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -446,8 +687,13 @@
       "status": "design",
       "reason": "A .NET numeric range (int, long) is not emitted, and oneOf over a subschema that cannot be stated exactly becomes anyOf. So the int32 bounds are gone, and Z.OneOf(Z.Number(), Z.Integer()) accepts integers in the emitted document.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["integer-int32", "xor-number-int"],
-      "kinds": ["verdict"],
+      "cases": [
+        "integer-int32",
+        "xor-number-int"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -458,8 +704,13 @@
       "status": "design",
       "reason": "Refinements are C# and are not emitted.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["refine-even", "refine-min-max"],
-      "kinds": ["verdict"],
+      "cases": [
+        "refine-even",
+        "refine-min-max"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -470,8 +721,12 @@
       "status": "design",
       "reason": "Coerce().Integer accepts numeric strings, so the emitted schema allows any numeric-looking string. A string such as \"1.5\" matches it, and Zorg rejects it after coercion.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["coerce-integer"],
-      "kinds": ["verdict"],
+      "cases": [
+        "coerce-integer"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "accept",
       "zorg": "reject"
     },
@@ -482,8 +737,12 @@
       "status": "undocumented-design",
       "reason": "Zod reads format: uuid as z.uuid(), which checks version and variant, so it rejects UUIDs that Zorg's Uuid() accepts and that the emitted document therefore claims are valid. The guide only warns about validators that ignore format.",
       "link": "docs/guide.md#the-input-guarantee",
-      "cases": ["string-guid"],
-      "kinds": ["verdict"],
+      "cases": [
+        "string-guid"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     },
@@ -494,8 +753,14 @@
       "status": "zod-behaviour",
       "reason": "OpenAPI 3.0 has no positional items and no propertyNames, so Zod writes an approximation (items as anyOf of the positions, and no key pattern). The document accepts more than the Zod schema.",
       "link": "https://zod.dev/json-schema",
-      "cases": ["tuple-string-int", "tuple-three", "record-lower-keys"],
-      "kinds": ["verdict"],
+      "cases": [
+        "tuple-string-int",
+        "tuple-three",
+        "record-lower-keys"
+      ],
+      "kinds": [
+        "verdict"
+      ],
       "zod": "reject",
       "zorg": "accept"
     }

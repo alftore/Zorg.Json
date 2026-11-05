@@ -20,7 +20,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
 
     /// <summary>
     /// Requires at least this many Unicode code points, so an emoji counts as one. JSON Schema: <c>minLength</c>.
-    /// Zod equivalent: <c>.min()</c>, which counts UTF-16 units instead.
+    /// Zod equivalent: <c>.min()</c>.
     /// </summary>
     /// <param name="length">The minimum length.</param>
     /// <returns>A new schema.</returns>
@@ -38,7 +38,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
 
     /// <summary>
     /// Allows at most this many Unicode code points, so an emoji counts as one. JSON Schema: <c>maxLength</c>.
-    /// Zod equivalent: <c>.max()</c>, which counts UTF-16 units instead.
+    /// Zod equivalent: <c>.max()</c>.
     /// </summary>
     /// <param name="length">The maximum length.</param>
     /// <returns>A new schema.</returns>

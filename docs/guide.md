@@ -383,4 +383,4 @@ An array longer than `maxItems`, or an object with more than `maxProperties` pro
 
 ## Strings are measured in code points
 
-`MinLength` and `MaxLength` count Unicode code points, as JSON Schema says, so an emoji counts as one. Zod counts UTF-16 units.
+`MinLength` and `MaxLength` count Unicode code points, as JSON Schema says, so an emoji counts as one. Zod 4 does the same.
