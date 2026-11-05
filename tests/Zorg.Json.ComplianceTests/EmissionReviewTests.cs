@@ -288,9 +288,12 @@ public sealed class EmissionReviewTests
     // 4 and 5. An imported schema is a document of its own, and its references are relative to its root.
 
     /// <summary>Parsing and the emitted schema give the same verdict on every instance.</summary>
-    private static void AssertAgrees<T>(string name, Schema<T> schema, params string[] instances)
+    private static void AssertAgrees<T>(string name, Schema<T> schema, params string[] instances) =>
+        AssertAgrees(name, schema, Profiles, instances);
+
+    private static void AssertAgrees<T>(string name, Schema<T> schema, IEnumerable<JsonSchemaProfile> profiles, params string[] instances)
     {
-        foreach (JsonSchemaProfile profile in Profiles)
+        foreach (JsonSchemaProfile profile in profiles)
         {
             string text = schema.Emit(new JsonSchemaOptions { Target = profile }).Schema.ToJsonString();
 
@@ -380,6 +383,85 @@ public sealed class EmissionReviewTests
         Assert.Equal("a", Assert.Single(result.Definitions).Key);
         Assert.DoesNotContain("$defs", result.Schema.ToJsonString(), StringComparison.Ordinal);
     }
+
+    // 9 (continued). A draft-07 document that carries `nullable`.
+
+    [Fact]
+    public void A_nullable_extension_of_a_draft_07_document_is_not_applied_by_OpenAPI_30() =>
+        AssertNeverStricter(
+            "nullable under not",
+            Import("""{"$schema":"http://json-schema.org/draft-07/schema#","not":{"type":"string","nullable":true}}"""),
+            "null",
+            "1",
+            "\"a\"");
+
+    // 10. Draft-07 spellings.
+
+    private const string Draft07Schema = "{\"$schema\":\"http://json-schema.org/draft-07/schema#\",";
+
+    [Fact]
+    public void A_draft_07_id_with_a_fragment_keeps_its_base() =>
+        AssertAgrees(
+            "id with fragment",
+            Import(Draft07Schema + """ "definitions":{"a":{"$id":"http://x/y#foo","definitions":{"z":{"type":"string"}},"properties":{"p":{"$ref":"#/definitions/z"}}}},"properties":{"q":{"$ref":"#/definitions/a"}}}"""),
+            """{"q":{"p":"s"}}""",
+            """{"q":{"p":1}}""");
+
+    [Fact]
+    public void A_2020_12_resource_with_an_id_and_an_anchor_keeps_its_base_in_draft_07() =>
+        AssertAgrees(
+            "id and anchor",
+            Import("""{"$id":"http://e.com/r","$defs":{"n":{"$id":"n","$anchor":"a","$defs":{"z":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/z"}}}},"properties":{"x":{"$ref":"#/$defs/n"}}}"""),
+            """{"x":{"p":"s"}}""",
+            """{"x":{"p":1}}""");
+
+    [Fact]
+    public void A_definitions_extension_does_not_replace_the_defs_of_a_2020_12_document_in_draft_07()
+    {
+        JsonValueSchema schema = Import("""{"$defs":{"a":{"type":"string"}},"definitions":{"b":{}},"properties":{"x":{"$ref":"#/$defs/a"}}}""");
+
+        AssertAgrees("defs and definitions", schema, """{"x":"s"}""", """{"x":1}""");
+        Assert.Contains("\"a\"", schema.Emit(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).Schema["definitions"]!.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Definitions_that_nothing_refers_to_are_inert_in_draft_07()
+    {
+        JsonValueSchema schema = Import("""{"definitions":{"d0":{"minLength":-1}},"type":"string"}""");
+        JsonObject emitted = schema.Emit(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).Schema;
+
+        Assert.True(MetaSchemas.Draft7.Evaluate(JsonElement.Parse(emitted.ToJsonString())).IsValid, emitted.ToJsonString());
+        Assert.True(emitted.ContainsKey("x-inert-definitions"));
+        Assert.False(emitted.ContainsKey("definitions"));
+    }
+
+    [Fact]
+    public void A_percent_encoded_pointer_is_translated_for_draft_07() =>
+        AssertAgrees("pct", Import("""{"$defs":{"a":{"type":"string"}},"$ref":"#/%24defs/a"}"""), "\"a\"", "1");
+
+    [Fact]
+    public void A_dependent_required_and_a_dependent_schema_of_one_name_both_apply_in_draft_07()
+    {
+        const string Document = """{"not":{"dependentRequired":{"a":["b"]},"dependentSchemas":{"a":{"maxProperties":5}}}}""";
+
+        // OpenAPI 3.0 has no dependencies at all, so it leaves the not out.
+        AssertAgrees("both dependencies", Import(Document), Profiles.Where(profile => profile != JsonSchemaProfile.OpenApi30), """{"a":1}""", """{"a":1,"b":2}""", """{"b":2}""", """{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6}""");
+    }
+
+    // 11. A reference into a location the dialect doesn't write.
+
+    [Theory]
+    [InlineData("""{"$schema":"http://json-schema.org/draft-04/schema#","not":{"type":"integer"},"properties":{"a":{"$ref":"#/not"}}}""", new[] { """{"a":1}""", """{"a":1.5}""", """{"a":"s"}""" })]
+    [InlineData("""{"$schema":"http://json-schema.org/draft-04/schema#","oneOf":[{"type":"integer"},{"type":"object"}],"properties":{"a":{"$ref":"#/oneOf/0"}}}""", new[] { """{"a":1}""", """{"a":"s"}""" })]
+    [InlineData("""{"if":{"type":"string"},"then":{"minLength":1},"properties":{"a":{"$ref":"#/if"}}}""", new[] { """{"a":"s"}""", """{"a":1}""" })]
+    [InlineData("""{"patternProperties":{"^x":{"type":"string"}},"properties":{"a":{"$ref":"#/patternProperties/^x"}}}""", new[] { """{"a":"s"}""", """{"a":1}""" })]
+    [InlineData("""{"prefixItems":[{"type":"string"}],"items":{"type":"number"},"properties":{"a":{"$ref":"#/items"}}}""", new[] { """{"a":1}""", """{"a":"s"}""" })]
+    [InlineData("""{"$schema":"http://json-schema.org/draft-07/schema#","items":[{"type":"string"}],"additionalItems":{"type":"number"},"properties":{"y":{"$ref":"#/additionalItems"}}}""", new[] { """{"y":1}""", """["a",1]""" })]
+    [InlineData("""{"definitions":{"a":{"const":"\ud800"}},"$ref":"#/definitions/a"}""", new[] { "\"\\ud800\"" })]
+    [InlineData("""{"definitions":{"a":{"anyOf":[{"const":"\ud800"},{"type":"number"}]}},"$ref":"#/definitions/a"}""", new[] { "1", "\"\\ud800\"" })]
+    [InlineData("""{"definitions":{"t":{"prefixItems":[{"type":"string"}],"items":{"type":"number"}}},"$ref":"#/definitions/t"}""", new[] { "[\"a\",1]", "[\"a\",\"b\"]" })]
+    public void A_reference_into_a_location_that_is_not_written_still_resolves(string document, string[] instances) =>
+        AssertNeverStricter(document, Import(document), instances);
 
     // 12 and 13. Definition names.
 
