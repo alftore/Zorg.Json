@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Zorg.Json.Emission;
 using Zorg.Json.Model;
 using Zorg.Json.Validation;
 
@@ -47,6 +48,9 @@ internal sealed class SampleGenerator
     private const long MaxSteps = 50_000;
 
     private const int RootAttempts = 8;
+
+    /// <summary>How deep the text of a document may nest for <c>SafeParse(string)</c> to read it.</summary>
+    private const int MaxTextDepth = 64;
 
     /// <summary>What a typed <see cref="DateTime"/>, <see cref="TimeOnly"/> or <see cref="TimeSpan"/> reads. Their nodes are plain strings.</summary>
     private static readonly string[] TypedStrings = ["2024-01-15T12:00:00Z", "12:00:00"];
@@ -239,7 +243,68 @@ internal sealed class SampleGenerator
             return [new ParseIssue { Code = IssueCodes.Custom, Message = Messages.Get("sample.async_refinement"), InstanceLocation = string.Empty }];
         }
 
-        return _schema is ISampleTarget target ? target.FinishSample(value, context) : context.ToIssues();
+        ImmutableArray<ParseIssue> issues = _schema is ISampleTarget target ? target.FinishSample(value, context) : context.ToIssues();
+
+        // The text of the sample has to read back, and parsing text stops at 64 levels, where an element has no such limit.
+        return issues.IsEmpty && Depth(sample) > MaxTextDepth
+            ? [new ParseIssue { Code = IssueCodes.InvalidValue, Message = Messages.Get("sample.too_deep", MaxTextDepth), InstanceLocation = string.Empty }]
+            : issues;
+    }
+
+    /// <summary>How many levels of arrays and objects a document has. Iterative, because a constant can be deeper than the stack allows.</summary>
+    private static int Depth(JsonElement document)
+    {
+        int deepest = 0;
+        Stack<(JsonElement.ArrayEnumerator? Array, JsonElement.ObjectEnumerator? Object)> open = new();
+
+        void Enter(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                open.Push((element.EnumerateArray(), null));
+            }
+            else if (element.ValueKind == JsonValueKind.Object)
+            {
+                open.Push((null, element.EnumerateObject()));
+            }
+
+            deepest = Math.Max(deepest, open.Count);
+        }
+
+        Enter(document);
+
+        while (open.Count > 0)
+        {
+            (JsonElement.ArrayEnumerator? array, JsonElement.ObjectEnumerator? members) = open.Pop();
+            JsonElement child;
+
+            if (array is { } items)
+            {
+                if (!items.MoveNext())
+                {
+                    continue;
+                }
+
+                child = items.Current;
+                open.Push((items, null));
+            }
+            else
+            {
+                JsonElement.ObjectEnumerator properties = members!.Value;
+
+                if (!properties.MoveNext())
+                {
+                    continue;
+                }
+
+                child = properties.Current.Value;
+                open.Push((null, properties));
+            }
+
+            Enter(child);
+        }
+
+        return deepest;
     }
 
     /// <summary>
@@ -476,6 +541,8 @@ internal sealed class SampleGenerator
         List<SchemaNode> nodes = [];
         List<JsonElement> items = [];
         bool distinct = view.UniqueItems == true;
+        Dictionary<SchemaNode, Searcher> searches = new(ReferenceEqualityComparer.Instance);
+        Dictionary<int, List<JsonElement>> hashed = [];
         int wantIndex = 0;
         int wantUsed = 0;
         SchemaNode? previousSlot = null;
@@ -507,38 +574,83 @@ internal sealed class SampleGenerator
 
             (previousSlot, previousWant, previousNode) = (slot, want, node);
 
-            if (Pick(node, view, walk, breadth, items, distinct, avoidsContains) is not { } item)
+            if (Pick(node, view, walk, breadth, hashed, searches, distinct, avoidsContains) is not { } item)
             {
                 break;
             }
 
             nodes.Add(node);
             items.Add(item);
+
+            if (distinct)
+            {
+                int hash = JsonEquality.Hash(item);
+
+                if (!hashed.TryGetValue(hash, out List<JsonElement>? bucket))
+                {
+                    hashed[hash] = bucket = [];
+                }
+
+                bucket.Add(item);
+            }
+
             Charge(item, 0);
         }
 
         return (nodes, items);
     }
 
-    private JsonElement? Pick(SchemaNode node, SchemaNode view, Walk walk, int breadth, List<JsonElement> items, bool distinct, bool avoidsContains)
+    /// <summary>
+    /// A candidate that equals an item already taken, or that the <c>contains</c> schema accepts when it mustn't, never
+    /// becomes usable later. So each slot keeps one search and picks up where it left off, instead of starting over for every
+    /// item and testing it against all the items before it.
+    /// </summary>
+    private JsonElement? Pick(
+        SchemaNode node,
+        SchemaNode view,
+        Walk walk,
+        int breadth,
+        Dictionary<int, List<JsonElement>> taken,
+        Dictionary<SchemaNode, Searcher> searches,
+        bool distinct,
+        bool avoidsContains)
     {
         if (!distinct && !avoidsContains)
         {
             return Sample(node, walk) is { Value: { } value } ? value : null;
         }
 
-        Attempt attempt = new();
-
-        foreach (JsonElement value in Valid(node, walk, breadth, attempt))
+        if (!searches.TryGetValue(node, out Searcher? search))
         {
-            if ((!distinct || !items.Any(item => JsonEquality.AreEqual(item, value)))
+            Attempt attempt = new();
+            search = new Searcher(attempt, Valid(node, walk, breadth, attempt).GetEnumerator());
+            searches[node] = search;
+        }
+
+        // Without a need to differ, the first candidate that works serves every item.
+        if (!distinct && search.Accepted is { } accepted)
+        {
+            return accepted;
+        }
+
+        while (search.Candidates.MoveNext())
+        {
+            JsonElement value = search.Candidates.Current;
+
+            if ((!distinct || !(taken.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Any(item => JsonEquality.AreEqual(item, value))))
                 && (!avoidsContains || !Passes(view.Contains!, value, out _)))
             {
+                search.Accepted = value;
                 return value;
             }
         }
 
-        return attempt.Best;
+        return search.Attempt.Best;
+    }
+
+    private sealed record Searcher(Attempt Attempt, IEnumerator<JsonElement> Candidates)
+    {
+        public JsonElement? Accepted { get; set; }
     }
 
     private IEnumerable<JsonElement> Objects(SchemaNode view, Walk walk, int breadth)
@@ -694,7 +806,8 @@ internal sealed class SampleGenerator
         {
             foreach (JsonElement name in Valid(names, walk, breadth, new Attempt()))
             {
-                if (name.ValueKind == JsonValueKind.String)
+                // Text with an unpaired surrogate has no spelling as a .NET string, and parsing refuses it as a name.
+                if (name.ValueKind == JsonValueKind.String && !SchemaExactness.IsUnwritable(name))
                 {
                     yield return name.GetString()!;
                 }

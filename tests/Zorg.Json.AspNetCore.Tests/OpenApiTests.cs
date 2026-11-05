@@ -151,6 +151,20 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task Definitions_of_an_imported_schema_become_components()
+    {
+        JsonValueSchema imported = Z.FromJsonSchema("""{"$defs":{"item":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/item"}}""");
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/items", ([FromBody] JsonElement body) => body).ValidateBody(imported));
+
+        JsonElement written = RequestSchema(document, "/items");
+
+        Assert.False(written.TryGetProperty("$defs", out _));
+        Assert.Equal("#/components/schemas/item", written.GetProperty("items").GetProperty("$ref").GetString());
+        Assert.Equal("string", document.GetProperty("components").GetProperty("schemas").GetProperty("item").GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task Other_endpoints_are_untouched()
     {
         JsonElement document = await DocumentAsync(a =>

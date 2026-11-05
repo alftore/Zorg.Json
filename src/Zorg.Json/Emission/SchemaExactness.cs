@@ -13,31 +13,91 @@ namespace Zorg.Json.Emission;
 /// </summary>
 internal static class SchemaExactness
 {
-    public static bool IsExact(SchemaNode node, JsonSchemaDialect dialect) => IsExact(node, dialect, new(ReferenceEqualityComparer.Instance));
+    /// <summary>
+    /// Tells whether every subschema reachable from <paramref name="node"/> is exact. The walk is iterative, because a chain of
+    /// references can be longer than the stack allows, and it follows each subschema once, so a cycle ends the walk.
+    /// </summary>
+    public static bool IsExact(SchemaNode node, JsonSchemaDialect dialect) => new Checker(dialect).IsExact(node);
 
-    private static bool IsExact(SchemaNode node, JsonSchemaDialect dialect, HashSet<object> visited)
+    /// <summary>
+    /// Remembers what it has judged. Whether a subschema is exact doesn't depend on where it's used, and a schema used a
+    /// thousand times would otherwise be walked a thousand times.
+    /// </summary>
+    internal sealed class Checker(JsonSchemaDialect dialect)
     {
-        if (!visited.Add(node))
+        private readonly Dictionary<SchemaNode, bool> _known = new(ReferenceEqualityComparer.Instance);
+
+        public bool IsExact(SchemaNode root)
         {
+            if (_known.TryGetValue(root, out bool judged))
+            {
+                return judged;
+            }
+
+            HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+            Stack<SchemaNode> pending = new();
+            pending.Push(root);
+
+            while (pending.TryPop(out SchemaNode? node))
+            {
+                if (_known.TryGetValue(node, out bool known))
+                {
+                    if (known)
+                    {
+                        continue;
+                    }
+
+                    _known[root] = false;
+                    return false;
+                }
+
+                if (!visited.Add(node))
+                {
+                    continue;
+                }
+
+                if (!IsLocallyExact(node, dialect))
+                {
+                    _known[node] = false;
+                    _known[root] = false;
+                    return false;
+                }
+
+                foreach (SchemaNode child in node.Children)
+                {
+                    pending.Push(child);
+                }
+
+                if (node.Behavior.Target is { } target)
+                {
+                    pending.Push(target());
+                }
+            }
+
+            // Every subschema the walk reached is exact, so none of them needs another walk.
+            foreach (SchemaNode node in visited)
+            {
+                _known[node] = true;
+            }
+
             return true;
         }
+    }
 
+    private static bool IsLocallyExact(SchemaNode node, JsonSchemaDialect dialect)
+    {
         SchemaBehavior behavior = node.Behavior;
 
-        bool exact = behavior.Normalizers.IsEmpty
+        return behavior.Normalizers.IsEmpty
             && behavior.Refinements.IsEmpty
             && behavior.Coercion == SchemaCoercion.None
             && behavior.NumberCheck is null
             && behavior.PatternRegex is null
             && !behavior.IgnoresNameCase
-            && !(behavior.FormatIsFluent && node.Format is not null && StringFormats.IsKnown(node.Format))
+            && !(node.Format is not null && !behavior.FormatIsAnnotation && StringFormats.IsKnown(node.Format))
             && !CountsChange(node)
             && !HasUnwritableValue(node)
             && !LeavesOut(node, dialect);
-
-        return exact
-            && node.Children.All(child => IsExact(child, dialect, visited))
-            && (behavior.Target is not { } target || IsExact(target(), dialect, visited));
     }
 
     /// <summary>Property counts apply after Strip and Default, which the input schema can't see, so it leaves them out.</summary>
@@ -71,6 +131,9 @@ internal static class SchemaExactness
             || node.PropertyNames is not null
             || !node.DependentRequired.IsEmpty
             || !node.DependentSchemas.IsEmpty
+            || (node.Minimum is not null && node.ExclusiveMinimum is not null)
+            || (node.Maximum is not null && node.ExclusiveMaximum is not null)
+            || (node.Const is not null && !node.Enum.IsEmpty)
             || node.If is not null
             || node.Then is not null
             || node.Else is not null

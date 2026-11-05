@@ -114,6 +114,9 @@
   <data name="deserialization_failed" xml:space="preserve">
     <value>The value could not be deserialized.</value>
   </data>
+  <data name="sample.too_deep" xml:space="preserve">
+    <value>The sample nests more than {0} levels deep, which parsing its text refuses.</value>
+  </data>
   <data name="sample.async_refinement" xml:space="preserve">
     <value>The sample wasn't checked against async refinements, which need SafeParseAsync.</value>
   </data>
