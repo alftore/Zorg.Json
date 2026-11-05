@@ -11,6 +11,30 @@ namespace Zorg.Json.Tests;
 [Collection(AllocationSensitive.Name)]
 public sealed class ReviewFollowUpTests
 {
+    [Fact]
+    public void A_very_deep_fluent_schema_does_not_end_the_process()
+    {
+        ISchema inner = Z.Integer();
+
+        for (int level = 0; level < 30_000; level++)
+        {
+            inner = Z.Object().Property("a", inner);
+        }
+
+        Assert.False(((ObjectSchema)inner).SafeParse("{}").IsSuccess);
+        Assert.False(((ObjectSchema)inner).SafeParse(string.Concat(Enumerable.Repeat("{\"a\":", 600)) + "1" + new string('}', 600)).IsSuccess);
+    }
+
+    [Fact]
+    public void A_long_reference_chain_does_not_end_the_process()
+    {
+        const int Links = 4_900;
+        string defs = string.Join(',', Enumerable.Range(0, Links).Select(n => $"\"a{n}\":{{\"properties\":{{\"x\":{{\"$ref\":\"#/$defs/a{n + 1}\"}}}}}}"));
+        JsonValueSchema schema = Z.FromJsonSchema($"{{\"$ref\":\"#/$defs/a0\",\"$defs\":{{{defs},\"a{Links}\":{{}}}}}}");
+
+        Assert.True(schema.SafeParse("{}").IsSuccess);
+    }
+
     private static JsonValueSchema J(string schema) => Z.FromJsonSchema(schema);
 
     private static JsonDocument Bytes(params object[] parts)

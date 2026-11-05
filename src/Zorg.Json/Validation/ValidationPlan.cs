@@ -3,6 +3,8 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -16,6 +18,8 @@ namespace Zorg.Json.Validation;
 /// </summary>
 internal sealed class ValidationPlan
 {
+    private const int NewStackSize = 16 * 1024 * 1024;
+
     private readonly SchemaNode _node;
     private readonly Regex? _pattern;
     private readonly Func<string, bool>? _format;
@@ -208,8 +212,46 @@ internal sealed class ValidationPlan
         return value;
     }
 
-    private static ValidationPlan Get(SchemaNode node, Dictionary<SchemaNode, ValidationPlan> plans) =>
-        plans.TryGetValue(node, out ValidationPlan? plan) ? plan : new ValidationPlan(node, plans);
+    private static ValidationPlan Get(SchemaNode node, Dictionary<SchemaNode, ValidationPlan> plans)
+    {
+        if (plans.TryGetValue(node, out ValidationPlan? plan))
+        {
+            return plan;
+        }
+
+        return RuntimeHelpers.TryEnsureSufficientExecutionStack() ? new ValidationPlan(node, plans) : OnNewStack(node, plans);
+    }
+
+    /// <summary>
+    /// Plans recurse over the schema, and a schema can be any depth: a chain of <c>$ref</c> needs no nesting. A stack overflow
+    /// ends the process, so when the stack runs low the work moves to a thread with a new stack. The caller waits, so only one thread touches <paramref name="plans"/>.
+    /// </summary>
+    private static ValidationPlan OnNewStack(SchemaNode node, Dictionary<SchemaNode, ValidationPlan> plans)
+    {
+        ValidationPlan? plan = null;
+        ExceptionDispatchInfo? failure = null;
+
+        Thread thread = new(
+            () =>
+            {
+                try
+                {
+                    plan = new ValidationPlan(node, plans);
+                }
+#pragma warning disable CA1031 // Rethrown on the caller's thread below.
+                catch (Exception exception)
+#pragma warning restore CA1031
+                {
+                    failure = ExceptionDispatchInfo.Capture(exception);
+                }
+            },
+            NewStackSize);
+
+        thread.Start();
+        thread.Join();
+        failure?.Throw();
+        return plan!;
+    }
 
     private static ExactNumber? Number(JsonElement? value) => value is { } number ? ExactNumber.Parse(number.GetRawText()) : null;
 
@@ -492,7 +534,7 @@ internal sealed class ValidationPlan
         }
 
         // Reading the digits takes time in proportion to their number, so a long number is charged for it.
-        if (!context.Spend((text.Length / 32) + 1))
+        if (!context.Spend(text.Length / 32))
         {
             return;
         }
