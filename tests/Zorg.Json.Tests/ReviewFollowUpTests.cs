@@ -8,6 +8,7 @@ using Xunit;
 namespace Zorg.Json.Tests;
 
 /// <summary>Regressions from a second code review.</summary>
+[Collection(AllocationSensitive.Name)]
 public sealed class ReviewFollowUpTests
 {
     private static JsonValueSchema J(string schema) => Z.FromJsonSchema(schema);
@@ -218,7 +219,8 @@ public sealed class ReviewFollowUpTests
         bool fromStream = (await Z.Any().SafeParseAsync(new System.IO.MemoryStream(bytes), TestContext.Current.CancellationToken)).IsSuccess;
 
         Assert.Equal(fromStream, fromBytes);
-        Assert.True(fromBytes);
+        Assert.False(fromBytes);
+        Assert.False(Z.Any().SafeParse("Feff1").IsSuccess);
     }
 
     [Fact]

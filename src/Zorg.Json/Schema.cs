@@ -78,8 +78,7 @@ public abstract class Schema<T> : ISchema, ISampleTarget
 
         try
         {
-            // The stream overload skips a byte order mark, so this one does too.
-            element = JsonElement.Parse(utf8Json.StartsWith<byte>([0xEF, 0xBB, 0xBF]) ? utf8Json[3..] : utf8Json, DocumentOptions);
+            element = JsonElement.Parse(utf8Json, DocumentOptions);
         }
         catch (Exception exception) when (IsUnreadable(exception))
         {
@@ -133,14 +132,22 @@ public abstract class Schema<T> : ISchema, ISampleTarget
         ArgumentNullException.ThrowIfNull(utf8Json);
 
         JsonDocument document;
+        using ByteOrderMarkStream sniffer = new(utf8Json);
 
         try
         {
-            document = await JsonDocument.ParseAsync(utf8Json, DocumentOptions, cancellationToken).ConfigureAwait(false);
+            document = await JsonDocument.ParseAsync(sniffer, DocumentOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (IsUnreadable(exception))
         {
             return InvalidJson(exception);
+        }
+
+        // The parser skips a byte order mark, but the string and byte overloads refuse it, so this one does too.
+        if (sniffer.StartsWithMark)
+        {
+            document.Dispose();
+            return InvalidJson(new JsonException("A byte order mark is not allowed."));
         }
 
         using (document)
