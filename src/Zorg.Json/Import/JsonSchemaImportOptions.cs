@@ -62,6 +62,9 @@ public enum JsonSchemaImportDialect
 
     /// <summary>JSON Schema Draft-06.</summary>
     Draft06,
+
+    /// <summary>JSON Schema Draft-04, as written by Zod for <c>target: "draft-04"</c>.</summary>
+    Draft04,
 }
 
 /// <summary>What to do with keywords no dialect defines. Zod keeps them as metadata, as <see cref="Preserve"/> does.</summary>

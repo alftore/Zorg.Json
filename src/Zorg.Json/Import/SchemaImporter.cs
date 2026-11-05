@@ -36,6 +36,12 @@ internal sealed class SchemaImporter
         "$comment", "readOnly", "writeOnly", "if", "then", "else", "contentEncoding", "contentMediaType",
     }.ToFrozenSet(StringComparer.Ordinal);
 
+    /// <summary>What Draft-04 lacks on top of <see cref="SinceDraft07"/>. It spells <c>$id</c> as <c>id</c>.</summary>
+    private static readonly FrozenSet<string> SinceDraft06 = new[]
+    {
+        "$id", "$vocabulary", "const", "contains", "deprecated", "examples", "propertyNames",
+    }.ToFrozenSet(StringComparer.Ordinal);
+
     private static readonly FrozenSet<string> UntilDraft07 = new[]
     {
         "definitions", "additionalItems", "dependencies",
@@ -83,6 +89,8 @@ internal sealed class SchemaImporter
     }
 
     private bool IsLegacy => _dialect != JsonSchemaImportDialect.Draft202012;
+
+    private bool IsDraft04 => _dialect == JsonSchemaImportDialect.Draft04;
 
     public static SchemaNode Import(JsonElement schema, JsonSchemaImportOptions? options)
     {
@@ -149,7 +157,7 @@ internal sealed class SchemaImporter
         }
 
         return ToDialect(declared.GetString()!)
-            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{declared.GetString()}\" can't be imported. Use Draft 2020-12, draft-07 or draft-06.");
+            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{declared.GetString()}\" can't be imported. Use Draft 2020-12, draft-07, draft-06 or draft-04.");
     }
 
     private static JsonSchemaImportDialect? ToDialect(string uri) => uri.TrimEnd('#') switch
@@ -157,6 +165,7 @@ internal sealed class SchemaImporter
         "https://json-schema.org/draft/2020-12/schema" => JsonSchemaImportDialect.Draft202012,
         "http://json-schema.org/draft-07/schema" or "https://json-schema.org/draft-07/schema" => JsonSchemaImportDialect.Draft07,
         "http://json-schema.org/draft-06/schema" or "https://json-schema.org/draft-06/schema" => JsonSchemaImportDialect.Draft06,
+        "http://json-schema.org/draft-04/schema" or "https://json-schema.org/draft-04/schema" => JsonSchemaImportDialect.Draft04,
         _ => null,
     };
 
@@ -174,6 +183,9 @@ internal sealed class SchemaImporter
         name.Length > 0
         && (char.IsAsciiLetter(name[0]) || name[0] == '_')
         && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+
+    /// <summary>Draft-04 calls an integer a number without a fraction or exponent part, so <c>1.0</c> isn't one.</summary>
+    private static bool IsDraft04Integer(string number) => number.AsSpan().IndexOfAny('.', 'e', 'E') < 0;
 
     private static bool IsKeyword(string keyword) =>
         AnyDialect.Contains(keyword) || SinceDraft07.Contains(keyword) || UntilDraft07.Contains(keyword);
@@ -303,7 +315,7 @@ internal sealed class SchemaImporter
         }
     }
 
-    private SchemaNode Build(JsonElement schema, Scope at)
+    private SchemaNode Build(JsonElement schema, Scope at, bool allowsBoolean = false)
     {
         if (at.Depth > _options.MaxDepth)
         {
@@ -315,12 +327,14 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.LimitExceeded, at.Pointer, $"The document has more than {_options.MaxNodes} subschemas.");
         }
 
+        bool isBooleanLegal = allowsBoolean || !IsDraft04;
+
         SchemaNode node = schema.ValueKind switch
         {
-            JsonValueKind.True => SchemaNode.True,
-            JsonValueKind.False => SchemaNode.False,
+            JsonValueKind.True when isBooleanLegal => SchemaNode.True,
+            JsonValueKind.False when isBooleanLegal => SchemaNode.False,
             JsonValueKind.Object => BuildObject(schema, at),
-            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, "A schema must be an object or a boolean."),
+            _ => throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, isBooleanLegal ? "A schema must be an object or a boolean." : "A schema must be an object in draft-04."),
         };
 
         _nodes.TryAdd(at.Pointer, node);
@@ -371,6 +385,14 @@ internal sealed class SchemaImporter
         (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> dependentRequired, ImmutableArray<SchemaProperty> dependentSchemas) = ReadDependencies(keywords, scope);
         bool rejectsEverything = keywords.Peek("enum", out JsonElement declared) && declared.ValueKind == JsonValueKind.Array && declared.GetArrayLength() == 0;
         ImmutableArray<SchemaNode> allOf = keywords.NonEmptyList("allOf", scope);
+        (JsonElement? minimum, JsonElement? exclusiveMinimum) = ReadLimit(keywords, "minimum", "exclusiveMinimum", at);
+        (JsonElement? maximum, JsonElement? exclusiveMaximum) = ReadLimit(keywords, "maximum", "exclusiveMaximum", at);
+        JsonTypes types = ReadTypes(keywords);
+
+        if (IsDraft04 && types.HasFlag(JsonTypes.Integer) && !types.HasFlag(JsonTypes.Number))
+        {
+            behavior = behavior with { NumberCheck = IsDraft04Integer, NumberType = "integer" };
+        }
 
         SchemaNode node = new()
         {
@@ -386,13 +408,13 @@ internal sealed class SchemaImporter
             Deprecated = keywords.Boolean("deprecated"),
             ReadOnly = keywords.Boolean("readOnly"),
             WriteOnly = keywords.Boolean("writeOnly"),
-            Types = ReadTypes(keywords),
+            Types = types,
             Const = keywords.Element("const"),
             Enum = keywords.Elements("enum"),
-            Minimum = keywords.Number("minimum"),
-            Maximum = keywords.Number("maximum"),
-            ExclusiveMinimum = keywords.Number("exclusiveMinimum"),
-            ExclusiveMaximum = keywords.Number("exclusiveMaximum"),
+            Minimum = minimum,
+            Maximum = maximum,
+            ExclusiveMinimum = exclusiveMinimum,
+            ExclusiveMaximum = exclusiveMaximum,
             MultipleOf = keywords.PositiveNumber("multipleOf"),
             MinLength = keywords.Count("minLength"),
             MaxLength = keywords.Count("maxLength"),
@@ -437,7 +459,7 @@ internal sealed class SchemaImporter
 
     private (string? Id, string? Anchor, Scope Scope) ReadIdentity(Keywords keywords, Scope at)
     {
-        string? id = keywords.String("$id");
+        string? id = keywords.String(IsDraft04 ? "id" : "$id");
         string? anchor = keywords.String("$anchor");
         Scope scope = at;
 
@@ -512,6 +534,26 @@ internal sealed class SchemaImporter
         return types != JsonTypes.None ? types : throw Error(JsonSchemaImportCodes.InvalidSchema, location, "type can't be an empty array.");
     }
 
+    /// <summary>In draft-04 the exclusive keyword is a boolean that changes what the inclusive one means.</summary>
+    private (JsonElement? Inclusive, JsonElement? Exclusive) ReadLimit(Keywords keywords, string inclusive, string exclusive, Scope at)
+    {
+        JsonElement? limit = keywords.Number(inclusive);
+
+        if (!IsDraft04)
+        {
+            return (limit, keywords.Number(exclusive));
+        }
+
+        bool? isExclusive = keywords.Boolean(exclusive);
+
+        if (isExclusive is not null && limit is null)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(exclusive), $"{exclusive} needs {inclusive} beside it in draft-04.");
+        }
+
+        return isExclusive == true ? (null, limit) : (limit, null);
+    }
+
     private (ImmutableArray<SchemaNode> PrefixItems, SchemaNode? Items) ReadItems(Keywords keywords, Scope scope)
     {
         if (!IsLegacy)
@@ -580,7 +622,8 @@ internal sealed class SchemaImporter
                 CheckNestedDialect(value, at);
             }
 
-            bool isUnknown = !IsKeyword(keyword) && !Only202012.Contains(keyword) && !keyword.StartsWith("x-", StringComparison.Ordinal);
+            bool isIgnoredId = IsDraft04 && keyword == "id";
+            bool isUnknown = !isIgnoredId && !IsKeyword(keyword) && !Only202012.Contains(keyword) && !keyword.StartsWith("x-", StringComparison.Ordinal);
 
             if (isUnknown && _options.UnknownKeywords == UnknownKeywordHandling.Error)
             {
@@ -616,7 +659,8 @@ internal sealed class SchemaImporter
 
         return keyword == "$schema"
             || Only202012.Contains(keyword)
-            || (_dialect == JsonSchemaImportDialect.Draft06 && SinceDraft07.Contains(keyword))
+            || (_dialect is JsonSchemaImportDialect.Draft06 or JsonSchemaImportDialect.Draft04 && SinceDraft07.Contains(keyword))
+            || (IsDraft04 && SinceDraft06.Contains(keyword))
             || (ignoresSiblings && IsKeyword(keyword));
     }
 
@@ -631,7 +675,8 @@ internal sealed class SchemaImporter
         {
             JsonSchemaImportDialect.Draft202012 => !UntilDraft07.Contains(keyword),
             JsonSchemaImportDialect.Draft07 => !Only202012.Contains(keyword),
-            _ => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword),
+            JsonSchemaImportDialect.Draft06 => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword),
+            _ => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword) && !SinceDraft06.Contains(keyword),
         };
     }
 
@@ -677,7 +722,8 @@ internal sealed class SchemaImporter
                 _ => (token, Position.Opaque),
             };
 
-            written.Add(spelled);
+            // The keyword moves under the prefix when it's emitted, so a pointer into it has to follow.
+            written.Add(position == Position.Schema && IsInert(name, ignoresSiblings: false, hasDefinitions: false) ? InertPrefix + spelled : spelled);
             position = next;
             current = current is { } element ? Step(element, name) : null;
         }
@@ -975,7 +1021,9 @@ internal sealed class SchemaImporter
         }
 
         public SchemaNode? Schema(string keyword, Scope scope) =>
-            Take(keyword, out JsonElement value, out _) ? importer.Build(value, scope.Child(keyword)) : null;
+            Take(keyword, out JsonElement value, out _)
+                ? importer.Build(value, scope.Child(keyword), allowsBoolean: keyword is "additionalProperties" or "additionalItems")
+                : null;
 
         public ImmutableArray<SchemaNode> List(string keyword, Scope scope)
         {

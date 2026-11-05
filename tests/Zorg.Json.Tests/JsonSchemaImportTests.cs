@@ -60,12 +60,17 @@ public sealed class JsonSchemaImportTests
     }
 
     [Theory]
-    [InlineData("http://json-schema.org/draft-04/schema#")]
+    [InlineData("http://json-schema.org/draft-03/schema#")]
     [InlineData("https://json-schema.org/draft/2019-09/schema")]
     [InlineData("https://spec.openapis.org/oas/3.0/schema/2021-09-28")]
     [InlineData("https://example.com/my-meta-schema")]
-    public void Other_dialects_are_refused(string dialect) =>
-        AssertFails($$"""{ "$schema": "{{dialect}}" }""", JsonSchemaImportCodes.UnsupportedDialect, "/$schema");
+    public void Other_dialects_are_refused(string dialect)
+    {
+        string schema = $$"""{ "$schema": "{{dialect}}" }""";
+
+        AssertFails(schema, JsonSchemaImportCodes.UnsupportedDialect, "/$schema");
+        Assert.Contains("Draft 2020-12, draft-07, draft-06 or draft-04", Failure(schema).Message, System.StringComparison.Ordinal);
+    }
 
     [Fact]
     public void A_subschema_cant_change_the_dialect() =>

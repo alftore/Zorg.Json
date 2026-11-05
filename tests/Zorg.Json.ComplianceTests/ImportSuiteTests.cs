@@ -45,7 +45,8 @@ public sealed class ImportSuiteTests
             int failed = draft.Sum(result => result.Failures.Count);
             int roundTripped = draft.Sum(result => result.RoundTripped);
             int roundTripFailed = draft.Sum(result => result.RoundTripFailures.Count);
-            report.AppendLine(FormattableString.Invariant($"{draft.Key}: passed {passed}, refused at import {refused}, excluded {skipped}, failed {failed}; round trip passed {roundTripped}, failed {roundTripFailed}"));
+            int loosened = draft.Sum(result => result.Loosened);
+            report.AppendLine(FormattableString.Invariant($"{draft.Key}: passed {passed}, refused at import {refused}, excluded {skipped}, failed {failed}; round trip passed {roundTripped}, looser {loosened}, failed {roundTripFailed}"));
         }
 
         foreach (FileResult result in SuiteRunner.Results.Where(result => result.Failures.Count + result.RoundTripFailures.Count + result.NowPassing.Count > 0))
