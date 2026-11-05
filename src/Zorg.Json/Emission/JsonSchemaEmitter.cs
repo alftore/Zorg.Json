@@ -28,6 +28,8 @@ internal sealed class JsonSchemaEmitter
         _profile = options.Target;
     }
 
+    private List<JsonObject>? _fragments;
+
     private bool IsInput => _options.Direction == SchemaDirection.Input;
 
     private bool IsDraft07 => _profile.Dialect == JsonSchemaDialect.Draft07;
@@ -40,8 +42,26 @@ internal sealed class JsonSchemaEmitter
     {
         ArgumentNullException.ThrowIfNull(options.Target);
 
+        if (options.Unrepresentable == UnrepresentablePolicy.Callback && options.UnrepresentableHandler is null)
+        {
+            throw new ArgumentException("UnrepresentablePolicy.Callback needs an UnrepresentableHandler.", nameof(options));
+        }
+
         JsonSchemaEmitter emitter = new(options);
         return emitter.EmitRoot(emitter.Rewrite(node, isRoot: true));
+    }
+
+    /// <summary>Records a rule that can't be stated and, with the callback policy, collects the handler's fragment for the current subschema.</summary>
+    private void Unrepresentable(string? keyword, string message, string location, JsonNode? value = null)
+    {
+        _diagnostics.Add(new EmitDiagnostic(keyword, message, location));
+
+        if (_options.Unrepresentable == UnrepresentablePolicy.Callback
+            && _options.UnrepresentableHandler is { } handler
+            && handler(new UnrepresentableContext(keyword, message, location, value)) is { } fragment)
+        {
+            (_fragments ??= []).Add(fragment);
+        }
     }
 
     private static void Add(JsonObject schema, string keyword, string? value)
@@ -227,6 +247,21 @@ internal sealed class JsonSchemaEmitter
 
     private JsonObject EmitObject(SchemaNode source, string location)
     {
+        List<JsonObject>? outer = _fragments;
+        _fragments = null;
+
+        try
+        {
+            return EmitFields(source, location);
+        }
+        finally
+        {
+            _fragments = outer;
+        }
+    }
+
+    private JsonObject EmitFields(SchemaNode source, string location)
+    {
         List<string> notes = [];
         SchemaNode node = IsInput ? RelocateCounts(Relocate(source, notes, location), notes, location) : source;
         JsonObject schema = [];
@@ -267,7 +302,7 @@ internal sealed class JsonSchemaEmitter
         WriteTypes(schema, node);
         WriteValues(schema, node);
         WriteNumbers(schema, node);
-        WriteStrings(schema, node, location);
+        WriteStrings(schema, node, notes, location);
         WriteArrays(schema, node, notes, location);
         WriteObjects(schema, node, notes, location);
         int applicatorsIndex = schema.Count;
@@ -279,7 +314,7 @@ internal sealed class JsonSchemaEmitter
             if (IsDraft07 && keyword is "additionalItems" or "dependencies")
             {
                 // Inert in the 2020-12 document it came from, but draft-07 would apply it.
-                _diagnostics.Add(new EmitDiagnostic(keyword, $"{keyword} is an unknown keyword here, but draft-07 would apply it.", location));
+                Unrepresentable(keyword, $"{keyword} is an unknown keyword here, but draft-07 would apply it.", location, ToNode(value));
             }
             else
             {
@@ -290,8 +325,10 @@ internal sealed class JsonSchemaEmitter
         foreach (SchemaRefinement refinement in node.Behavior.Refinements)
         {
             notes.Add(refinement.Hint ?? $"Refinement: {refinement.Message}");
-            _diagnostics.Add(new EmitDiagnostic(null, $"The refinement \"{refinement.Message}\" can't be expressed in JSON Schema.", location));
+            Unrepresentable(null, $"The refinement \"{refinement.Message}\" can't be expressed in JSON Schema.", location, refinement.Message);
         }
+
+        MergeFragments(schema);
 
         string? description = _options.Unrepresentable == UnrepresentablePolicy.Annotate && notes.Count > 0
             ? string.Join(' ', node.Description is null ? notes : notes.Prepend(node.Description))
@@ -304,6 +341,26 @@ internal sealed class JsonSchemaEmitter
         }
 
         return (IsDraft07 || IsOpenApi30) && schema.ContainsKey("$ref") && schema.Count > 1 ? WrapReference(schema, applicatorsIndex) : schema;
+    }
+
+    /// <summary>Adds what the handler returned. A keyword Zorg already wrote stays as it is.</summary>
+    private void MergeFragments(JsonObject schema)
+    {
+        if (_fragments is null)
+        {
+            return;
+        }
+
+        foreach (JsonObject fragment in _fragments)
+        {
+            foreach ((string keyword, JsonNode? value) in fragment)
+            {
+                if (!schema.ContainsKey(keyword))
+                {
+                    schema[keyword] = value?.DeepClone();
+                }
+            }
+        }
     }
 
     /// <summary>Before 2019-09, keywords beside <c>$ref</c> are ignored, so <c>$ref</c> moves into an <c>allOf</c>.</summary>
@@ -381,42 +438,42 @@ internal sealed class JsonSchemaEmitter
         string steps = coerced ? "Coerce" : string.Join(", ", node.Behavior.Normalizers.Select(normalizer => normalizer.Name));
         List<string> relocated = [];
 
-        void Note(string keyword, string value)
+        void Note(string keyword, string value, JsonNode? node)
         {
             relocated.Add($"{keyword} {value}");
-            _diagnostics.Add(new EmitDiagnostic(keyword, $"{keyword} applies after {steps}, so the input schema can't state it.", location));
+            Unrepresentable(keyword, $"{keyword} applies after {steps}, so the input schema can't state it.", location, node);
         }
 
         if (node.Const is { } constant)
         {
-            Note("const", constant.GetRawText());
+            Note("const", constant.GetRawText(), ToNode(constant));
         }
 
         if (!node.Enum.IsEmpty)
         {
-            Note("enum", $"[{string.Join(", ", node.Enum.Select(value => value.GetRawText()))}]");
+            Note("enum", $"[{string.Join(", ", node.Enum.Select(value => value.GetRawText()))}]", ToArray(node.Enum));
         }
 
         if (normalized)
         {
             if (node.MinLength is { } minLength)
             {
-                Note("minLength", minLength.ToString(CultureInfo.InvariantCulture));
+                Note("minLength", minLength.ToString(CultureInfo.InvariantCulture), minLength);
             }
 
             if (node.MaxLength is { } maxLength)
             {
-                Note("maxLength", maxLength.ToString(CultureInfo.InvariantCulture));
+                Note("maxLength", maxLength.ToString(CultureInfo.InvariantCulture), maxLength);
             }
 
             if (node.Pattern is { } pattern)
             {
-                Note("pattern", pattern);
+                Note("pattern", pattern, pattern);
             }
 
             if (node.Format is { } format)
             {
-                Note("format", format);
+                Note("format", format, format);
             }
         }
 
@@ -513,8 +570,14 @@ internal sealed class JsonSchemaEmitter
         Add(schema, "multipleOf", node.MultipleOf);
     }
 
-    private void WriteStrings(JsonObject schema, SchemaNode node, string location)
+    private void WriteStrings(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
+        if (node.Behavior.PatternIsUnstated && node.Behavior.PatternRegex is { } regex)
+        {
+            notes.Add($"Also matches the .NET regular expression {regex}.");
+            Unrepresentable("pattern", $"The regular expression {regex} has no ECMA-262 spelling, so pattern can't be stated.", location, regex.ToString());
+        }
+
         Add(schema, "minLength", node.MinLength);
         Add(schema, "maxLength", node.MaxLength);
         Add(schema, "pattern", CoercionPattern(node) ?? node.Pattern);
@@ -778,7 +841,7 @@ internal sealed class JsonSchemaEmitter
         }
         else if (node.AnyOf.IsEmpty)
         {
-            _diagnostics.Add(new EmitDiagnostic("oneOf", "Some branches can't be stated exactly, so oneOf is written as anyOf.", location));
+            Unrepresentable("oneOf", "Some branches can't be stated exactly, so oneOf is written as anyOf.", location);
             WriteList(schema, "anyOf", node.OneOf, location);
         }
         else
@@ -843,7 +906,7 @@ internal sealed class JsonSchemaEmitter
     private void Unsupported(string keyword, List<string> notes, string location)
     {
         notes.Add($"Also applies {keyword}, which {_profile.Name} can't state.");
-        _diagnostics.Add(new EmitDiagnostic(keyword, $"{_profile.Name} has no {keyword} keyword.", location));
+        Unrepresentable(keyword, $"{_profile.Name} has no {keyword} keyword.", location);
     }
 
     private enum PointerPosition

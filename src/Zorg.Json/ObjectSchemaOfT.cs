@@ -145,6 +145,107 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     }
 
     /// <summary>
+    /// Adds rules to an <see cref="Optional{T}"/> string property, which may be absent. It takes <c>Optional&lt;string&gt;</c> and
+    /// <c>Optional&lt;string?&gt;</c> alike; the type parameter only exists so that the nullable annotation of either compiles
+    /// cleanly, and the constraint limits it to <see cref="string"/>.
+    /// </summary>
+    /// <typeparam name="TText">Always <see cref="string"/>, inferred.</typeparam>
+    /// <param name="member">The property, such as <c>p => p.Name</c>.</param>
+    /// <param name="configure">Adds the rules.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// schema.Property(p => p.Name, s => s.MinLength(1).MaxLength(100));
+    /// </code>
+    /// </example>
+    [Pure]
+    public ObjectSchema<T> Property<TText>(Expression<Func<T, Optional<TText>>> member, Func<StringSchema, StringSchema> configure)
+        where TText : class?, IEquatable<string?>?
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        (string name, SchemaNode node) = Find(member);
+        return UpdateProperty(name, configure(new StringSchema(node)).ToNode());
+    }
+
+    /// <summary>Adds rules to an <see cref="Optional{T}"/> boolean property, which may be absent.</summary>
+    /// <param name="member">The property, such as <c>p => p.Active</c>.</param>
+    /// <param name="configure">Adds the rules.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// schema.Property(p => p.Active, s => s.Const(true));
+    /// </code>
+    /// </example>
+    [Pure]
+    public ObjectSchema<T> Property(Expression<Func<T, Optional<bool>>> member, Func<BooleanSchema, BooleanSchema> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        (string name, SchemaNode node) = Find(member);
+        return UpdateProperty(name, configure(new BooleanSchema(node)).ToNode());
+    }
+
+    /// <summary>Adds rules to an <see cref="Optional{T}"/> numeric property, which may be absent.</summary>
+    /// <typeparam name="TNumber">The property's underlying type.</typeparam>
+    /// <param name="member">The property, such as <c>p => p.Age</c>.</param>
+    /// <param name="configure">Adds the rules.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// schema.Property(p => p.Age, s => s.Minimum(0).Maximum(150));
+    /// </code>
+    /// </example>
+    [Pure]
+    public ObjectSchema<T> Property<TNumber>(Expression<Func<T, Optional<TNumber>>> member, Func<NumberSchema<TNumber>, NumberSchema<TNumber>> configure)
+        where TNumber : struct, INumber<TNumber>
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        (string name, SchemaNode node) = Find(member);
+        return UpdateProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
+    }
+
+    /// <summary>Adds rules to an <see cref="Optional{T}"/> nullable numeric property. <c>null</c> stays allowed.</summary>
+    /// <typeparam name="TNumber">The property's underlying type.</typeparam>
+    /// <param name="member">The property, such as <c>p => p.Height</c>.</param>
+    /// <param name="configure">Adds the rules.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// schema.Property(p => p.Height, s => s.Minimum(0));
+    /// </code>
+    /// </example>
+    [Pure]
+    public ObjectSchema<T> Property<TNumber>(Expression<Func<T, Optional<TNumber?>>> member, Func<NumberSchema<TNumber>, NumberSchema<TNumber>> configure)
+        where TNumber : struct, INumber<TNumber>
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        (string name, SchemaNode node) = Find(member);
+        return UpdateProperty(name, configure(new NumberSchema<TNumber>(node)).ToNode());
+    }
+
+    /// <summary>
+    /// Replaces the schema of an <see cref="Optional{T}"/> property, for nested objects and any other type. The property
+    /// stays nullable if the value type says so.
+    /// </summary>
+    /// <typeparam name="TValue">The type inside the <see cref="Optional{T}"/>.</typeparam>
+    /// <param name="member">The property, such as <c>p => p.Home</c>.</param>
+    /// <param name="schema">The schema.</param>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// schema.Property(p => p.Home, AddressSchema);
+    /// </code>
+    /// </example>
+    [Pure]
+    public ObjectSchema<T> Property<TValue>(Expression<Func<T, Optional<TValue>>> member, Schema<TValue> schema)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        (string name, SchemaNode seeded) = Find(member);
+        SchemaNode node = schema.ToNode();
+        bool nullable = seeded.Types.HasFlag(JsonTypes.Null) || seeded.AnyOf.Any(branch => branch.Types == JsonTypes.Null);
+        return UpdateProperty(name, nullable ? node.WithNull() : node);
+    }
+
+    /// <summary>
     /// Lets a property be absent. JSON Schema: removes it from <c>required</c>. Zod equivalent: <c>.optional()</c>.
     /// </summary>
     /// <typeparam name="TProperty">The property's type.</typeparam>
