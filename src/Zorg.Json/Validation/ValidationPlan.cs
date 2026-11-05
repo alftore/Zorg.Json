@@ -1026,7 +1026,7 @@ internal sealed class ValidationPlan
                 return result;
             }
 
-            failures.Add(fork.ToIssues());
+            failures.Add(context.Retain(fork));
         }
 
         context.Report(IssueCodes.InvalidUnion, "anyOf", "invalid_union.none", "errors", failures.ToImmutableArray());
@@ -1049,7 +1049,7 @@ internal sealed class ValidationPlan
 
             if (fork.HasIssues)
             {
-                failures.Add(fork.ToIssues());
+                failures.Add(context.Retain(fork));
                 continue;
             }
 

@@ -155,6 +155,48 @@ public sealed class ReviewFollowUpTests
         Assert.True(Z.Any().SafeParse("1e99999999999999999999").IsSuccess);
     }
 
+    private static JsonValueSchema? _tree;
+
+    [Fact]
+    public void Failures_kept_by_unions_are_bounded()
+    {
+        _tree = Z.AnyOf(Z.Boolean(), Z.Null(), Z.Array(Z.Lazy("t", () => _tree!)));
+        string json = "0";
+
+        for (int depth = 0; depth < 4; depth++)
+        {
+            json = "[" + string.Join(',', Enumerable.Repeat(json, 30)) + "]";
+        }
+
+        ParseResult<JsonElement> result = _tree.SafeParse(json);
+
+        Assert.False(result.IsSuccess);
+
+        long kept = Count(result.Issues);
+
+        Assert.True(kept < 60_000, $"{kept} issues kept for {json.Length / 1000} KB");
+    }
+
+    private static long Count(IEnumerable<ParseIssue> issues)
+    {
+        long count = 0;
+
+        foreach (ParseIssue issue in issues)
+        {
+            count++;
+
+            if (issue.Parameters.TryGetValue("errors", out object? errors) && errors is System.Collections.IEnumerable branches)
+            {
+                foreach (object? branch in branches)
+                {
+                    count += Count((IEnumerable<ParseIssue>)branch!);
+                }
+            }
+        }
+
+        return count;
+    }
+
     [Fact]
     public void Invalid_utf8_inside_an_element_does_not_throw()
     {

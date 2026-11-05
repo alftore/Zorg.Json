@@ -19,6 +19,9 @@ internal sealed class ValidationContext
     /// <summary>The most issues a context keeps. The next one is replaced by a single <c>too_many_issues</c> issue and evaluation stops.</summary>
     internal const int MaxIssues = 100;
 
+    /// <summary>The most issues that failed union branches keep, over a whole parse.</summary>
+    internal const int RetainedIssueBudget = 20_000;
+
     /// <summary>The most property names an <c>unrecognized_keys</c> issue lists, in its message and its parameters.</summary>
     internal const int MaxListedKeys = 20;
 
@@ -102,6 +105,18 @@ internal sealed class ValidationContext
         }
 
         return _issues is null ? [] : [.. _issues];
+    }
+
+    /// <summary>
+    /// The issues of a failed branch, for the union's own issue. A recursive schema over a large document can fail millions
+    /// of branches, and keeping every tree costs memory in proportion to the work, so only the first
+    /// <see cref="RetainedIssueBudget"/> issues of a parse are kept. A branch beyond that is listed with no issues.
+    /// </summary>
+    public ImmutableArray<ParseIssue> Retain(ValidationContext fork)
+    {
+        ImmutableArray<ParseIssue> issues = fork.ToIssues();
+        _limits.RetainBudget -= issues.Length;
+        return _limits.RetainBudget < 0 ? [] : issues;
     }
 
     public void Rewritten() => RewriteCount++;
@@ -532,6 +547,8 @@ internal sealed class ValidationContext
         public bool Reported { get; set; }
 
         public long PathBudget { get; set; } = 2_000_000;
+
+        public long RetainBudget { get; set; } = RetainedIssueBudget;
     }
 
     private readonly record struct PathSegment(string? Name, int Index);
