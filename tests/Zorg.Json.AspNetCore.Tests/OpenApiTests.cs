@@ -98,6 +98,36 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task Different_schemas_with_one_name_fail_clearly()
+    {
+        ObjectSchema first = Z.Object().Property("v", Z.String().Email().Named("x"));
+        ObjectSchema second = Z.Object().Property("v", Z.String().Uuid().Named("x"));
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => DocumentAsync(a =>
+        {
+            a.MapPost("/a", (JsonElement body) => body).ValidateBody(first);
+            a.MapPost("/b", (JsonElement body) => body).ValidateBody(second);
+        }));
+
+        Assert.Contains("'x'", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Identical_schemas_with_one_name_share_a_component()
+    {
+        ObjectSchema first = Z.Object().Property("v", Z.String().Email().Named("x"));
+        ObjectSchema second = Z.Object().Property("w", Z.String().Email().Named("x"));
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/a", (JsonElement body) => body).ValidateBody(first);
+            a.MapPost("/b", (JsonElement body) => body).ValidateBody(second);
+        });
+
+        Assert.Equal("email", document.GetProperty("components").GetProperty("schemas").GetProperty("x").GetProperty("format").GetString());
+    }
+
+    [Fact]
     public async Task Keywords_survive_the_conversion()
     {
         ObjectSchema schema = Z.Object()

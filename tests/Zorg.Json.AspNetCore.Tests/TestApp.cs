@@ -62,6 +62,12 @@ internal sealed record Person(string Name, int Age);
 
 internal sealed record Reply(string Text);
 
+internal sealed class Patch
+{
+    [JsonConverter(typeof(OptionalJsonConverter<string?>))]
+    public Optional<string?> Nick { get; init; }
+}
+
 internal sealed class SmtpOptions
 {
     public string Host { get; set; } = "";
@@ -72,6 +78,7 @@ internal sealed class SmtpOptions
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(Person))]
 [JsonSerializable(typeof(Reply))]
+[JsonSerializable(typeof(Patch))]
 [JsonSerializable(typeof(SmtpOptions))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class TestJson : JsonSerializerContext;

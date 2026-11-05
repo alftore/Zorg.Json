@@ -15,7 +15,9 @@ app.MapPost("/people", (Validated<Person> person) => Results.Ok(person.Value))
 app.MapPost("/people", (Person person) => Results.Ok(person)).ValidateBody(PersonSchema);
 ```
 
-The framework's binder still runs for a plain parameter, so the validated value is serialized again for it to read. That costs a round trip per request, and under Native AOT `T` must be in the app's JSON options.
+The framework's binder still runs for a plain parameter, so the validated JSON, with defaults, `Trim`, `Coerce` and `Strip` applied, is replayed for it to read. It's the JSON itself rather than a serialized `T`, so an absent `Optional<T>` stays absent and a PATCH that omits a field doesn't clear it. Under Native AOT `T` must be in the app's JSON options.
+
+The body must be UTF-8, which is what validation reads and what RFC 8259 requires. A `charset` other than `utf-8` gets a 415 problem, and the replayed request is given a plain `application/json` content type so the binder can't decode it differently.
 
 Validation wraps the endpoint rather than being an endpoint filter, because filters don't run when body binding fails, so they never see malformed JSON. Your own filters still run, after validation.
 
@@ -29,6 +31,8 @@ An invalid body gets a 400 with RFC 9457 problem details. `errors` and `codes` a
   "codes": { "/age": ["too_small"] }
 }
 ```
+
+At most 100 issues are written. If there were more, a `too_many_issues` entry under `""` says so. Pointers and messages are cut at 256 characters, because they can echo what the client sent.
 
 Malformed JSON is also a 400, with `invalid_json` under the key `""`. `issues.ToProblemDetails()` builds the same response yourself.
 
@@ -50,7 +54,7 @@ app.MapPost("/people", (Validated<Person> person) => Results.Ok(person.Value))
     .ProducesSchema(PersonSchema);
 ```
 
-Request bodies use `Direction = Input` and responses use `Output`, both with `JsonSchemaProfile.OpenApi31`. Schemas marked `.Named("x")` become components, and response ones get an `Output.` prefix because the two directions can differ.
+Request bodies use `Direction = Input` and responses use `Output`, both with `JsonSchemaProfile.OpenApi31`. Schemas marked `.Named("x")` become components, and response ones get an `Output.` prefix because the two directions can differ. Two different schemas with the same name in one document throw an `InvalidOperationException` that names the clash, rather than silently keeping the first.
 
 Reference `Microsoft.AspNetCore.OpenApi` directly from your app as well, because its MSBuild targets don't flow through this package. Under Native AOT the document needs `AddProblemDetails()`, because it describes the 400 response.
 

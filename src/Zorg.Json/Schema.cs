@@ -123,7 +123,11 @@ public abstract class Schema<T> : ISchema, ISampleTarget
     /// ParseResult&lt;string&gt; result = await schema.SafeParseAsync(request.Body, cancellationToken);
     /// </code>
     /// </example>
-    public async ValueTask<ParseResult<T>> SafeParseAsync(Stream utf8Json, CancellationToken cancellationToken = default)
+    public ValueTask<ParseResult<T>> SafeParseAsync(Stream utf8Json, CancellationToken cancellationToken = default) =>
+        SafeParseAsync(utf8Json, null, cancellationToken);
+
+    // The callback gets the element after the pipeline, while the document is still alive.
+    internal async ValueTask<ParseResult<T>> SafeParseAsync(Stream utf8Json, Action<JsonElement>? onValidated, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(utf8Json);
 
@@ -140,7 +144,7 @@ public abstract class Schema<T> : ISchema, ISampleTarget
 
         using (document)
         {
-            return await SafeParseAsync(document.RootElement, cancellationToken).ConfigureAwait(false);
+            return await SafeParseAsync(document.RootElement, onValidated, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -153,7 +157,10 @@ public abstract class Schema<T> : ISchema, ISampleTarget
     /// ParseResult&lt;string&gt; result = await schema.SafeParseAsync(document.RootElement, cancellationToken);
     /// </code>
     /// </example>
-    public async ValueTask<ParseResult<T>> SafeParseAsync(JsonElement json, CancellationToken cancellationToken = default)
+    public ValueTask<ParseResult<T>> SafeParseAsync(JsonElement json, CancellationToken cancellationToken = default) =>
+        SafeParseAsync(json, null, cancellationToken);
+
+    private async ValueTask<ParseResult<T>> SafeParseAsync(JsonElement json, Action<JsonElement>? onValidated, CancellationToken cancellationToken)
     {
         if (json.ValueKind == JsonValueKind.Undefined)
         {
@@ -168,7 +175,14 @@ public abstract class Schema<T> : ISchema, ISampleTarget
             await context.RunPendingAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        return Finish(value, context);
+        ParseResult<T> result = Finish(value, context);
+
+        if (result.IsSuccess)
+        {
+            onValidated?.Invoke(value);
+        }
+
+        return result;
     }
 
     /// <summary>Validates JSON text and throws if it's invalid. Zod equivalent: <c>parse</c>.</summary>
