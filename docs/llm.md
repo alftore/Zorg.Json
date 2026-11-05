@@ -14,7 +14,7 @@ JsonObject schema = emitted.Schema;                 // send this to the provider
 ParseResult<JsonElement> answer = Answer.ParseModelOutput(emitted, modelJson);
 ```
 
-Providers accept only part of JSON Schema. A profile sends a reduced schema to the model, and `ParseModelOutput` validates the answer against your **full** schema, so rules the provider can't enforce are still enforced. It also undoes lossy changes, such as turning `null` back into an absent property for what was optional.
+Providers accept only part of JSON Schema. A profile sends a reduced schema to the model, and `ParseModelOutput` validates the answer against your **full** schema, so rules the provider can't enforce are still enforced. It also undoes lossy changes, such as turning `null` back into an absent property for what was optional, including inside the values of a map. Like `SafeParse`, it never throws for malformed output: a lone surrogate, invalid UTF-8, duplicate keys or very deep nesting give issues, and nesting below 64 levels is left as the model wrote it.
 
 | Profile | For |
 |---|---|
@@ -28,7 +28,8 @@ Providers accept only part of JSON Schema. A profile sends a reduced schema to t
 - Objects are closed, and for OpenAI every property becomes required, with optional ones turned nullable.
 - Keywords the provider rejects move into `description`, so the model still sees them.
 - A root that isn't an object is wrapped in `{ "data": ... }` for OpenAI and Anthropic. `ParseModelOutput` unwraps it.
-- Recursion the provider can't take is cut to `{}`, which is looser, and reported. Pass `Unrepresentable = Throw` to fail instead.
+- Recursion the provider can't take is cut to `{}`, which is looser, and reported. Pass `Unrepresentable = Throw` to fail instead. So is a definition that would be inlined more than a few thousand times, such as definitions that each use the next twice.
+- References stay valid. A wrapped root moves `"$ref": "#"` to `#/properties/data`, `definitions` becomes `$defs` where the provider has no `definitions`, and `$anchor` references become pointers. A reference that can't be kept is reported as a `$ref` diagnostic, and `CheckCompatibility` lists it as an error of kind `Reference`.
 
 ## Checking compatibility
 
