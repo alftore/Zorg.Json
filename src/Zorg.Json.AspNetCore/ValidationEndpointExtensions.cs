@@ -1,5 +1,7 @@
 using System;
+using System.Buffers;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -10,9 +12,8 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using Zorg.Json.Emission;
-using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
 namespace Zorg.Json.AspNetCore;
 
@@ -36,9 +37,9 @@ public static class ValidationEndpointExtensions
     /// </para>
     /// <para>
     /// The parsed value reaches a <see cref="Validated{T}"/> parameter directly. A plain body parameter is bound from the
-    /// parsed value, serialized with the app's JSON options, so it sees defaults and normalization. That needs
-    /// <typeparamref name="T"/> in those options under Native AOT, and a round trip per request. Any other handler
-    /// can read the original bytes from <see cref="HttpRequest.Body"/>.
+    /// validated JSON, so it sees defaults and normalization, and an absent <see cref="Optional{T}"/> stays absent. That
+    /// needs <typeparamref name="T"/> in the app's JSON options under Native AOT. The body must be UTF-8: another
+    /// <c>charset</c> gets a 415. Any other handler can read the original bytes from <see cref="HttpRequest.Body"/>.
     /// </para>
     /// </remarks>
     /// <example>
@@ -98,6 +99,12 @@ public static class ValidationEndpointExtensions
             return;
         }
 
+        if (!IsUtf8(request.ContentType))
+        {
+            await WriteProblemAsync(context, Problem(StatusCodes.Status415UnsupportedMediaType, "The request body must be UTF-8 JSON.")).ConfigureAwait(false);
+            return;
+        }
+
         EndpointMetadataCollection? metadata = context.GetEndpoint()?.Metadata;
         bool takesValidated = metadata?.GetMetadata<ValidatedParameterMarker>() is not null;
         bool bindsBody = !takesValidated && metadata?.GetMetadata<IAcceptsMetadata>()?.RequestType is not null;
@@ -109,10 +116,14 @@ public static class ValidationEndpointExtensions
         }
 
         ParseResult<T> result;
+        byte[]? validated = null;
 
         try
         {
-            result = await schema.SafeParseAsync(request.Body, context.RequestAborted).ConfigureAwait(false);
+            result = await schema.SafeParseAsync(
+                request.Body,
+                bindsBody ? element => validated = Write(element) : null,
+                context.RequestAborted).ConfigureAwait(false);
         }
         catch (BadHttpRequestException exception)
         {
@@ -129,9 +140,9 @@ public static class ValidationEndpointExtensions
 
         context.Features.Set(new Validated<T>(result.Value));
 
-        if (bindsBody)
+        if (validated is not null)
         {
-            ReplayValue(context, result.Value);
+            ReplayValue(context.Request, validated);
         }
         else if (keepsRawBody)
         {
@@ -141,15 +152,94 @@ public static class ValidationEndpointExtensions
         await next(context).ConfigureAwait(false);
     }
 
-    // The original bytes won't do: the framework's binder would fail on input the schema accepts, such as a
-    // coerced string, an absent required property that has a default, or 1.0 for an integer.
-    private static void ReplayValue<T>(HttpContext context, T value)
+    // Validation always reads UTF-8, so a charset that says otherwise would make the handler see other text.
+    private static bool IsUtf8(string? contentType)
     {
-        JsonSerializerOptions options = context.RequestServices.GetRequiredService<IOptions<JsonOptions>>().Value.SerializerOptions;
-        byte[] body = JsonSerializer.SerializeToUtf8Bytes(value, (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T)));
+        if (!MediaTypeHeaderValue.TryParse(contentType, out MediaTypeHeaderValue? parsed))
+        {
+            return false;
+        }
 
-        context.Request.Body = new MemoryStream(body, writable: false);
-        context.Request.ContentLength = body.Length;
+        string? charset = HeaderUtilities.RemoveQuotes(parsed.Charset).Value;
+        return string.IsNullOrEmpty(charset) || string.Equals(charset, "utf-8", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static byte[] Write(JsonElement element)
+    {
+        ArrayBufferWriter<byte> buffer = new();
+
+        try
+        {
+            using Utf8JsonWriter writer = new(buffer);
+            WriteNormalized(writer, element);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            // Text that .NET strings can't hold, such as a lone surrogate: replay it as the client wrote it.
+            return Encoding.UTF8.GetBytes(element.GetRawText());
+        }
+
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    // 1.0 and 1e2 are integers to the schema, but not to the framework's binder.
+    private static void WriteNormalized(Utf8JsonWriter writer, JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    writer.WritePropertyName(property.Name);
+                    WriteNormalized(writer, property.Value);
+                }
+
+                writer.WriteEndObject();
+                break;
+
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    WriteNormalized(writer, item);
+                }
+
+                writer.WriteEndArray();
+                break;
+
+            case JsonValueKind.Number:
+                if (element.TryGetInt64(out long integer))
+                {
+                    writer.WriteNumberValue(integer);
+                }
+                else if (element.TryGetDecimal(out decimal number) && decimal.Truncate(number) == number && number >= long.MinValue && number <= long.MaxValue)
+                {
+                    writer.WriteNumberValue((long)number);
+                }
+                else
+                {
+                    element.WriteTo(writer);
+                }
+
+                break;
+
+            default:
+                element.WriteTo(writer);
+                break;
+        }
+    }
+
+    // The original bytes won't do: the framework's binder would fail on input the schema accepts, such as a
+    // coerced string, an absent required property that has a default, or 1.0 for an integer. The validated JSON is
+    // replayed as it is, not serialized from T, so an absent Optional<T> stays absent.
+    private static void ReplayValue(HttpRequest request, byte[] body)
+    {
+        request.Body = new MemoryStream(body, writable: false);
+        request.ContentLength = body.Length;
+        request.ContentType = "application/json";
     }
 
     private static ProblemDetails Problem(int statusCode, string detail) =>
