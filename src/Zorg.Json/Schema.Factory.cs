@@ -74,6 +74,7 @@ public static class Schema
     public static UnionSchema<T> Union<T>(string discriminator)
     {
         ArgumentNullException.ThrowIfNull(discriminator);
+        Validation.Arguments.WellFormed(discriminator);
         return new UnionSchema<T>(new SchemaNode { Behavior = new SchemaBehavior { Discriminator = discriminator } }, []);
     }
 
@@ -94,6 +95,7 @@ public static class Schema
     public static LazySchema<T> Lazy<T>(string name, Func<Schema<T>> schema)
     {
         ArgumentNullException.ThrowIfNull(name);
+        Validation.Arguments.WellFormed(name);
         ArgumentNullException.ThrowIfNull(schema);
         Lazy<Schema<T>> resolved = new(schema);
 
@@ -135,7 +137,7 @@ public sealed class ParsableSchema<T> : Schema<T, ParsableSchema<T>>
     private protected override ParsableSchema<T> With(SchemaNode node) => new(node);
 
     internal override T Materialize(JsonElement value) =>
-        T.TryParse(value.GetString(), CultureInfo.InvariantCulture, out T? result)
+        T.TryParse(Validation.JsonText.GetString(value), CultureInfo.InvariantCulture, out T? result)
             ? result
             : throw new JsonException($"The value isn't a valid {typeof(T).Name}.");
 

@@ -690,6 +690,186 @@ public sealed class ReviewRegressionTests
         Assert.True(schema.SafeParse(sample.Value).IsSuccess);
     }
 
+    [Fact]
+    public void A_lone_surrogate_property_name_does_not_throw_in_a_lookup()
+    {
+        JsonElement document = JsonElement.Parse("{\"\\ud800\":1}");
+        JsonValueSchema union = Z.DiscriminatedUnion("kind", Z.Object().Property("kind", Z.String().Const("square")));
+        ObjectSchema required = Z.Object().Passthrough().Property("a", Z.Integer());
+        JsonValueSchema dependent = Open("""{"dependentRequired":{"a":["b"]},"required":["a"]}""");
+
+        Assert.False(union.SafeParse(document).IsSuccess);
+        Assert.False(required.SafeParse(document).IsSuccess);
+        Assert.False(dependent.SafeParse(document).IsSuccess);
+        Assert.False(Open("""{"properties":{"a":true},"required":["a"]}""").SafeParse(document).IsSuccess);
+    }
+
+    [Fact]
+    public void A_constant_that_is_compared_with_an_undecodable_string_does_not_throw()
+    {
+        JsonElement document = JsonElement.Parse("{\"\\ud800\":1}");
+
+        Assert.False(Open("""{"const":{"a":1}}""").SafeParse(document).IsSuccess);
+        Assert.False(Open("""{"enum":[{"a":1}]}""").SafeParse(document).IsSuccess);
+        Assert.True(Open("""{"uniqueItems":true}""").SafeParse(JsonElement.Parse("[{\"\\ud800\":1},{\"a\":1}]")).IsSuccess);
+        Assert.False(Open("""{"uniqueItems":true}""").SafeParse(JsonElement.Parse("[\"\\ud800\",\"\\ud800\"]")).IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("""{"enum":[{"a":1}]}""")]
+    [InlineData("""{"const":"a"}""")]
+    [InlineData("""{"uniqueItems":true}""")]
+    [InlineData("""{"type":"string"}""")]
+    [InlineData("""{}""")]
+    public void Bytes_that_are_not_utf8_are_invalid_json(string schema)
+    {
+        foreach (byte[] bytes in new[] { new byte[] { 0x7B, 0x22, 0xFF, 0x22, 0x3A, 0x31, 0x7D }, [0x22, 0xFF, 0x22], [0x5B, 0x22, 0xC3, 0x28, 0x22, 0x5D] })
+        {
+            ParseResult<JsonElement> result = Open(schema).SafeParse(bytes);
+
+            Assert.Equal(IssueCodes.InvalidJson, Assert.Single(result.Issues).Code);
+        }
+
+        Assert.Equal(IssueCodes.InvalidJson, Assert.Single(Z.Any().SafeParse(new byte[] { 0x22, 0xFF, 0x22 }).Issues).Code);
+    }
+
+    [Fact]
+    public async Task A_stream_that_is_not_utf8_is_invalid_json()
+    {
+        using System.IO.MemoryStream stream = new([0x22, 0xFF, 0x22]);
+
+        ParseResult<JsonElement> result = await Z.Any().SafeParseAsync(stream, TestContext.Current.CancellationToken);
+
+        Assert.Equal(IssueCodes.InvalidJson, Assert.Single(result.Issues).Code);
+    }
+
+    [Fact]
+    public void An_escaped_lone_surrogate_is_still_valid_json_text()
+    {
+        Assert.True(Z.Any().SafeParse("\"\\ud800\"").IsSuccess);
+        Assert.True(Z.Any().SafeParse("\"\\ud800\""u8).IsSuccess);
+        Assert.True(Z.Any().SafeParse("\"\\ud83d\\ude00\""u8).IsSuccess);
+    }
+
+    [Fact]
+    public void Builders_reject_text_with_a_lone_surrogate()
+    {
+        const string Lone = "\ud800";
+
+        Assert.Throws<ArgumentException>(() => Z.Object().Property(Lone, Z.String()));
+        Assert.Throws<ArgumentException>(() => Z.String().Const(Lone));
+        Assert.Throws<ArgumentException>(() => Z.String().Enum("a", Lone));
+        Assert.Throws<ArgumentException>(() => Z.String().Title(Lone));
+        Assert.Throws<ArgumentException>(() => Z.String().Description(Lone));
+        Assert.Throws<ArgumentException>(() => Z.String().Pattern(Lone));
+        Assert.Throws<ArgumentException>(() => Z.Object().DependentRequired("a", Lone));
+        Assert.Throws<ArgumentException>(() => Z.DiscriminatedUnion(Lone));
+        Assert.Throws<ArgumentException>(() => Z.String().Meta("x-a", JsonElement.Parse("\"\\ud800\"")));
+        Assert.Throws<ArgumentException>(() => Z.String().Meta(Lone, JsonElement.Parse("1")));
+        Assert.NotNull(Z.String().Const("\U0001F600"));
+    }
+
+    [Fact]
+    public void A_negative_contains_count_is_rejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Z.Array().Contains(Z.Number(), minimum: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Z.Array().Contains(Z.Number(), maximum: -1));
+        Assert.NotNull(Z.Array().Contains(Z.Number(), minimum: 0, maximum: 0));
+    }
+
+    [Fact]
+    public void Deep_items_under_uniqueItems_do_not_throw()
+    {
+        JsonDocumentOptions deep = new() { MaxDepth = 60_000 };
+        string nested = new string('[', 50_000) + new string(']', 50_000);
+        JsonElement same = JsonElement.Parse($"[{nested},{nested}]", deep);
+        JsonElement different = JsonElement.Parse($"[{nested},[{nested}]]", deep);
+
+        Assert.False(Open("""{"uniqueItems":true}""").SafeParse(same).IsSuccess);
+        Assert.True(Open("""{"uniqueItems":true}""").SafeParse(different).IsSuccess);
+        Assert.False(Open("""{"const":[[[]]]}""").SafeParse(different.EnumerateArray().Last()).IsSuccess);
+        Assert.False(Open("""{"enum":[[[[]]]]}""").SafeParse(same.EnumerateArray().First()).IsSuccess);
+        Assert.True(Z.Any().SafeParse(same).IsSuccess);
+    }
+
+    [Fact]
+    public void Equality_ignores_property_order_and_number_spelling()
+    {
+        const string Schema = """{"enum":[{"a":1},{"b":[1,2]}]}""";
+        JsonValueSchema open = Open("""{"uniqueItems":true}""");
+
+        Assert.False(open.SafeParse("""[{"a":1,"b":[1.0,2]},{"b":[1,2e0],"a":10e-1}]""").IsSuccess);
+        Assert.True(open.SafeParse("""[{"a":1,"b":[1,2]},{"a":1,"b":[2,1]}]""").IsSuccess);
+        Assert.True(Open(Schema).SafeParse("""{"b":[1.0,2.0]}""").IsSuccess);
+    }
+
+    [Fact]
+    public void Not_a_string_rejects_a_string_that_can_not_be_read()
+    {
+        Assert.False(Z.Not(Z.String()).SafeParse("\"\\ud800\"").IsSuccess);
+        Assert.False(Open("""{"not":{"type":["null","string"]}}""").SafeParse("\"\\ud800\"").IsSuccess);
+        Assert.False(Open("""{"oneOf":[{"type":"string"},{"type":"integer"}]}""").SafeParse("\"\\ud800\"").IsSuccess);
+        Assert.True(Z.Not(Z.String()).SafeParse("1").IsSuccess);
+        Assert.True(Open("""{"not":{"type":"integer"}}""").SafeParse("\"\\ud800\"").IsSuccess);
+    }
+
+    [Fact]
+    public void Unicode_normalization_refuses_a_long_run_of_combining_marks()
+    {
+        string marks = "a" + string.Concat(Enumerable.Repeat("\u0301\u0316", 100_000));
+        JsonElement document = JsonSerializer.SerializeToElement(marks);
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<string> result = Z.String().NormalizeUnicode().SafeParse(document);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(IssueCodes.InvalidValue, Assert.Single(result.Issues).Code);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
+        Assert.True(Z.String().NormalizeUnicode().SafeParse("\"e\\u0301\"").IsSuccess);
+    }
+
+    [Fact]
+    public void Unique_objects_are_checked_in_linear_time()
+    {
+        string items = string.Join(',', Enumerable.Range(0, 50_000).Select(index => $"{{\"id\":{index},\"tags\":[\"a\",\"b\"]}}"));
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<JsonElement> result = Open("""{"uniqueItems":true}""").SafeParse($"[{items}]");
+
+        Assert.True(result.IsSuccess);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), watch.Elapsed.ToString());
+        Assert.False(Open("""{"uniqueItems":true}""").SafeParse($"[{items},{{\"tags\":[\"a\",\"b\"],\"id\":7}}]").IsSuccess);
+    }
+
+    [Fact]
+    public void A_big_enum_is_shared_between_issues()
+    {
+        string[] values = [.. Enumerable.Range(0, 100_000).Select(index => $"value{index}")];
+        StringSchema schema = Z.String().Enum(values);
+        ParseResult<IReadOnlyList<string>> result = Z.Array(schema).SafeParse(JsonSerializer.Serialize(Enumerable.Repeat("nope", 50)));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(50, result.Issues.Length);
+        Assert.Same(result.Issues[0].Parameters["values"], result.Issues[49].Parameters["values"]);
+        Assert.True(result.Issues[0].Message.Length < 2000);
+        Assert.True(schema.SafeParse("\"value99999\"").IsSuccess);
+    }
+
+    [Fact]
+    public void DependentRequired_on_many_keys_is_not_quadratic()
+    {
+        const int Count = 50_000;
+        string keys = string.Join(',', Enumerable.Range(0, Count).Select(index => $"\"k{index}\":[\"k{(index + 1) % Count}\"]"));
+        string properties = string.Join(',', Enumerable.Range(0, Count).Select(index => $"\"k{index}\":1"));
+        JsonValueSchema schema = Open($"{{\"dependentRequired\":{{{keys}}},\"required\":[{string.Join(',', Enumerable.Range(0, Count).Select(index => $"\"k{index}\""))}]}}");
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<JsonElement> result = schema.SafeParse($"{{{properties}}}");
+
+        Assert.True(result.IsSuccess);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
+    }
+
     private static class Ast
     {
         public static readonly ObjectSchema Schema = Z.Object()

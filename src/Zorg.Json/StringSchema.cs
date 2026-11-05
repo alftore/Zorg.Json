@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Contracts;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -70,6 +71,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     public StringSchema Pattern([StringSyntax(StringSyntaxAttribute.Regex)] string pattern)
     {
         ArgumentNullException.ThrowIfNull(pattern);
+        Validation.Arguments.WellFormed(pattern);
         _ = PatternCompiler.Compile(pattern);
         return With(Node with { Pattern = pattern, Behavior = Node.Behavior with { PatternRegex = null, PatternIsUnstated = false } });
     }
@@ -133,6 +135,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     public StringSchema Format(string format)
     {
         ArgumentNullException.ThrowIfNull(format);
+        Validation.Arguments.WellFormed(format);
         return With(Node with { Format = format, Behavior = Node.Behavior with { FormatIsFluent = true } });
     }
 
@@ -198,6 +201,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
     public StringSchema Const(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
+        Validation.Arguments.WellFormed(value);
         SchemaNode node = Node with { Const = JsonStrings.ToElement(value) };
         return With(Node.Types.HasFlag(JsonTypes.Null) ? node.WithNull() : node);
     }
@@ -218,6 +222,7 @@ public sealed class StringSchema : Schema<string, StringSchema>
         foreach (string value in values)
         {
             ArgumentNullException.ThrowIfNull(value);
+            Validation.Arguments.WellFormed(value);
             elements.Add(JsonStrings.ToElement(value));
         }
 
@@ -316,8 +321,16 @@ public sealed class StringSchema : Schema<string, StringSchema>
     /// </code>
     /// </example>
     [Pure]
-    public StringSchema NormalizeUnicode(NormalizationForm form = NormalizationForm.FormC) =>
-        Normalize(nameof(NormalizeUnicode), text => NormalizeOrKeep(text, form));
+    public StringSchema NormalizeUnicode(NormalizationForm form = NormalizationForm.FormC) => With(Node with
+    {
+        Behavior = Node.Behavior with
+        {
+            Normalizers = Node.Behavior.Normalizers.Add(new SchemaNormalizer(nameof(NormalizeUnicode), text => NormalizeOrKeep(text, form))
+            {
+                Admits = HasShortMarkRuns,
+            }),
+        },
+    });
 
     /// <summary>
     /// Replaces the value before the constraints run, keeping it a string. No keyword: constraints that it can affect
@@ -339,9 +352,38 @@ public sealed class StringSchema : Schema<string, StringSchema>
 
     private protected override StringSchema With(SchemaNode node) => new(node);
 
-    internal override string Materialize(JsonElement value) => value.GetString()!;
+    internal override string Materialize(JsonElement value) => Validation.JsonText.GetString(value);
 
     internal override JsonElement ToElement(string value) => JsonStrings.ToElement(value);
+
+    /// <summary>
+    /// The longest run of combining marks that normalization is applied to. The BCL reorders a run by comparing every
+    /// pair, so a long one costs quadratic time: minutes for a few hundred thousand marks. Text in the stream-safe
+    /// format has at most 30 in a row.
+    /// </summary>
+    private const int MaxMarkRun = 64;
+
+    private static bool HasShortMarkRuns(string text)
+    {
+        int run = 0;
+
+        foreach (Rune rune in text.EnumerateRunes())
+        {
+            if (Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
+            {
+                if (++run > MaxMarkRun)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                run = 0;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>Unicode noncharacters are valid in JSON, but <see cref="string.Normalize(NormalizationForm)"/> can refuse them.</summary>
     private static string NormalizeOrKeep(string text, NormalizationForm form)

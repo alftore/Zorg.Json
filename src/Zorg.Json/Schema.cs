@@ -85,7 +85,7 @@ public abstract class Schema<T> : ISchema, ISampleTarget
             return InvalidJson(exception);
         }
 
-        return SafeParse(element);
+        return IsUtf8(element) ? SafeParse(element) : InvalidJson(new JsonException(NotUtf8));
     }
 
     /// <summary>Validates an already parsed element and returns a result instead of throwing. Zod equivalent: <c>safeParse</c>.</summary>
@@ -144,6 +144,11 @@ public abstract class Schema<T> : ISchema, ISampleTarget
 
         using (document)
         {
+            if (!IsUtf8(document.RootElement))
+            {
+                return InvalidJson(new JsonException(NotUtf8));
+            }
+
             return await SafeParseAsync(document.RootElement, onValidated, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -392,6 +397,11 @@ public abstract class Schema<T> : ISchema, ISampleTarget
     private static bool IsUnreadable(Exception exception) =>
         exception is JsonException or InvalidOperationException or ArgumentException;
 
+    private const string NotUtf8 = "The input is not valid UTF-8.";
+
+    /// <summary>JSON is UTF-8, and the parser lets other bytes through inside a string.</summary>
+    private static bool IsUtf8(JsonElement element) => System.Text.Unicode.Utf8.IsValid(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(element));
+
     private static ParseResult<T> InvalidJson(Exception exception)
     {
         ValidationContext context = new();
@@ -423,6 +433,7 @@ public abstract class Schema<T, TSelf> : Schema<T>
     public TSelf Title(string title)
     {
         ArgumentNullException.ThrowIfNull(title);
+        Validation.Arguments.WellFormed(title);
         return With(Node with { Title = title });
     }
 
@@ -438,6 +449,7 @@ public abstract class Schema<T, TSelf> : Schema<T>
     public TSelf Description(string description)
     {
         ArgumentNullException.ThrowIfNull(description);
+        Validation.Arguments.WellFormed(description);
         return With(Node with { Description = description });
     }
 
@@ -464,6 +476,7 @@ public abstract class Schema<T, TSelf> : Schema<T>
     public TSelf Comment(string comment)
     {
         ArgumentNullException.ThrowIfNull(comment);
+        Validation.Arguments.WellFormed(comment);
         return With(Node with { Comment = comment });
     }
 
@@ -531,6 +544,8 @@ public abstract class Schema<T, TSelf> : Schema<T>
     public TSelf Meta(string keyword, JsonElement value)
     {
         ArgumentNullException.ThrowIfNull(keyword);
+        Validation.Arguments.WellFormed(keyword);
+        Validation.Arguments.WellFormed(value);
         return With(Node with { Extensions = Node.Extensions.Add(KeyValuePair.Create(keyword, value.Clone())) });
     }
 
@@ -549,6 +564,7 @@ public abstract class Schema<T, TSelf> : Schema<T>
     public TSelf Named(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
+        Validation.Arguments.WellFormed(name);
         return With(Node with { Behavior = Node.Behavior with { DefinitionName = name } });
     }
 
@@ -601,6 +617,13 @@ public abstract class Schema<T, TSelf> : Schema<T>
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(message);
+        Validation.Arguments.WellFormed(message);
+
+        if (hint is not null)
+        {
+            Validation.Arguments.WellFormed(hint);
+        }
+
         return AddRefinement(new SchemaRefinement<T>(Materialize, predicate, null, message, string.Empty, hint));
     }
 
@@ -622,6 +645,13 @@ public abstract class Schema<T, TSelf> : Schema<T>
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(message);
+        Validation.Arguments.WellFormed(message);
+
+        if (hint is not null)
+        {
+            Validation.Arguments.WellFormed(hint);
+        }
+
         return AddRefinement(new SchemaRefinement<T>(Materialize, null, predicate, message, string.Empty, hint));
     }
 

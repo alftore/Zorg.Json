@@ -299,6 +299,7 @@ public sealed class ObjectSchema<T> : ObjectSchemaBase<T, ObjectSchema<T>>
     {
         ArgumentNullException.ThrowIfNull(predicate);
         ArgumentNullException.ThrowIfNull(message);
+        Validation.Arguments.WellFormed(message);
         (string name, _) = Find(path);
         string pointer = "/" + name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
         return AddRefinement(new SchemaRefinement<T>(Materialize, predicate, null, message, pointer, null));

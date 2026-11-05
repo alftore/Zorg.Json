@@ -48,6 +48,8 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _else;
     private readonly Dictionary<SchemaNode, ValidationPlan> _plans;
     private readonly ImmutableArray<(string Name, SchemaNode Node)> _defaults;
+    private readonly int _lookups;
+    private readonly EnumTable? _enum;
     private ValidationPlan? _target;
     private string? _targetLocation;
 
@@ -100,7 +102,18 @@ internal sealed class ValidationPlan
         _defaults = [.. node.Properties
             .Where(property => property.Schema.Behavior.FillDefault && property.Schema.Default is not null)
             .Select(property => (property.Name, property.Schema))];
+        _lookups = CountLookups(node, _defaults.Length);
+        _enum = EnumTable.Create(node);
     }
+
+    private static int CountLookups(SchemaNode node, int defaults) =>
+        node.Required.Length + node.DependentRequired.Sum(entry => 1 + entry.Value.Length) + node.DependentSchemas.Length + defaults;
+
+    /// <summary>An enum with more values than this is looked up by hash, because a failing value would compare with every one.</summary>
+    private const int LinearEnum = 8;
+
+    /// <summary>The most values an <c>invalid_value</c> message for an enum lists. The issue's parameters have all of them, shared between issues.</summary>
+    private const int MaxListedValues = 50;
 
     private static int IndexOf(ImmutableArray<SchemaNode> nodes, SchemaNode node)
     {
@@ -204,16 +217,7 @@ internal sealed class ValidationPlan
             return value;
         }
 
-        string? text;
-
-        try
-        {
-            text = value.GetString();
-        }
-        catch (InvalidOperationException)
-        {
-            return value;
-        }
+        string text = JsonText.GetString(value);
 
         if (_node.Behavior.Coercion == SchemaCoercion.Boolean)
         {
@@ -226,7 +230,7 @@ internal sealed class ValidationPlan
             return value;
         }
 
-        if (text is not null && ExactNumber.TryParse(text, out _))
+        if (ExactNumber.TryParse(text, out _))
         {
             context.Rewritten();
             return JsonElement.Parse(text);
@@ -237,8 +241,14 @@ internal sealed class ValidationPlan
 
     private JsonElement Normalize(JsonElement value, ValidationContext context)
     {
-        if (_node.Behavior.Normalizers.IsEmpty || value.ValueKind != JsonValueKind.String || !TryGetString(value, context, out string? original))
+        if (_node.Behavior.Normalizers.IsEmpty || value.ValueKind != JsonValueKind.String)
         {
+            return value;
+        }
+
+        if (!JsonText.TryGetString(value, out string original))
+        {
+            context.ReportUndecodable("type");
             return value;
         }
 
@@ -246,6 +256,12 @@ internal sealed class ValidationPlan
 
         foreach (SchemaNormalizer normalizer in _node.Behavior.Normalizers)
         {
+            if (normalizer.Admits is { } admits && !admits(text))
+            {
+                context.ReportTooComplex(normalizer.Name);
+                return value;
+            }
+
             text = normalizer.Apply(text);
         }
 
@@ -293,17 +309,63 @@ internal sealed class ValidationPlan
             context.Report(IssueCodes.InvalidValue, "const", "invalid_value.const", "expected", constant.GetRawText(), constant.GetRawText());
         }
 
-        if (!_node.Enum.IsEmpty && !_node.Enum.Any(allowed => JsonEquality.AreEqual(allowed, value)))
+        if (_enum is not null && !_enum.Contains(value))
         {
-            string[] values = [.. _node.Enum.Select(allowed => allowed.GetRawText())];
-            context.Report(IssueCodes.InvalidValue, "enum", "invalid_value.enum", "values", values, string.Join(", ", values));
+            context.Report(IssueCodes.InvalidValue, "enum", "invalid_value.enum", "values", _enum.Texts, _enum.Message);
         }
+    }
+
+    /// <summary>The values of an <c>enum</c>, prepared once: the texts and the message are shared by every issue.</summary>
+    private sealed class EnumTable
+    {
+        private readonly ImmutableArray<JsonElement> _values;
+        private readonly Dictionary<int, List<JsonElement>>? _index;
+
+        public static EnumTable? Create(SchemaNode node) => node.Enum.IsEmpty ? null : new EnumTable(node.Enum);
+
+        private EnumTable(ImmutableArray<JsonElement> values)
+        {
+            _values = values;
+            Texts = [.. values.Select(allowed => allowed.GetRawText())];
+            Message = string.Join(", ", Texts.Take(MaxListedValues)) + (Texts.Length > MaxListedValues ? $", and {Texts.Length - MaxListedValues} more" : string.Empty);
+
+            if (Texts.Length > LinearEnum)
+            {
+                _index = [];
+
+                foreach (JsonElement allowed in values)
+                {
+                    int hash = JsonEquality.Hash(allowed);
+
+                    if (!_index.TryGetValue(hash, out List<JsonElement>? bucket))
+                    {
+                        _index[hash] = bucket = [];
+                    }
+
+                    bucket.Add(allowed);
+                }
+            }
+        }
+
+        public string[] Texts { get; }
+
+        public string Message { get; }
+
+        public bool Contains(JsonElement value) => _index is null
+            ? _values.Any(allowed => JsonEquality.AreEqual(allowed, value))
+            : _index.TryGetValue(JsonEquality.Hash(value), out List<JsonElement>? bucket) && bucket.Exists(allowed => JsonEquality.AreEqual(allowed, value));
     }
 
     private void CheckString(JsonElement value, ValidationContext context)
     {
-        if (!_readsStrings || !TryGetString(value, context, out string? text))
+        if (!_readsStrings)
         {
+            return;
+        }
+
+        if (!JsonText.TryGetString(value, out string text))
+        {
+            context.ReportUndecodable("type");
             return;
         }
 
@@ -345,21 +407,6 @@ internal sealed class ValidationPlan
         catch (RegexMatchTimeoutException)
         {
             context.ReportTimeout("pattern", _node.Pattern ?? _pattern!.ToString());
-        }
-    }
-
-    private static bool TryGetString(JsonElement value, ValidationContext context, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? text)
-    {
-        try
-        {
-            text = value.GetString()!;
-            return true;
-        }
-        catch (InvalidOperationException)
-        {
-            text = null;
-            context.Report(IssueCodes.InvalidValue, "type", "invalid_value.string", "expected", "string");
-            return false;
         }
     }
 
@@ -494,9 +541,8 @@ internal sealed class ValidationPlan
     }
 
     /// <summary>
-    /// Equal items share a bucket, so each item is only compared with the earlier items of its bucket. The hash is coarse
-    /// on purpose: it must agree with <see cref="JsonEquality"/> (<c>1</c> equals <c>1.0</c>, object order doesn't matter),
-    /// so objects and arrays only hash by kind. A long array of those is still quadratic.
+    /// Equal items share a hash (<see cref="JsonEquality.Hash"/>), so each item is only compared with the earlier items that
+    /// hash like it, and those comparisons are charged to the evaluation budget.
     /// </summary>
     private static void CheckUnique(JsonElement value, ValidationContext context)
     {
@@ -508,12 +554,17 @@ internal sealed class ValidationPlan
         foreach (JsonElement item in value.EnumerateArray())
         {
             items[index] = item;
-            int bucket = Bucket(item);
+            int bucket = JsonEquality.Hash(item);
             int candidate = latest.GetValueOrDefault(bucket, -1);
             previous[index] = candidate;
 
             for (; candidate >= 0; candidate = previous[candidate])
             {
+                if (!context.Spend(1))
+                {
+                    return;
+                }
+
                 if (JsonEquality.AreEqual(items[candidate], item))
                 {
                     context.Report(IssueCodes.InvalidValue, "uniqueItems", "invalid_value.unique", "indexes", new[] { candidate, index }, candidate, index);
@@ -523,23 +574,6 @@ internal sealed class ValidationPlan
 
             latest[bucket] = index;
             index++;
-        }
-    }
-
-    private static int Bucket(JsonElement item)
-    {
-        try
-        {
-            return item.ValueKind switch
-            {
-                JsonValueKind.String => item.GetString()!.GetHashCode(StringComparison.Ordinal),
-                JsonValueKind.Number => (double.Parse(item.GetRawText(), System.Globalization.CultureInfo.InvariantCulture) + 0.0).GetHashCode(),
-                _ => (int)item.ValueKind,
-            };
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or FormatException or OverflowException)
-        {
-            return 0;
         }
     }
 
@@ -600,15 +634,10 @@ internal sealed class ValidationPlan
             }
 
             count++;
-            string name;
 
-            try
+            if (!JsonText.TryGetName(property, out string name))
             {
-                name = property.Name;
-            }
-            catch (InvalidOperationException)
-            {
-                context.Report(IssueCodes.InvalidValue, "propertyNames", "invalid_value.string", "expected", "string");
+                context.ReportUndecodable("propertyNames");
                 return value;
             }
 
@@ -688,7 +717,7 @@ internal sealed class ValidationPlan
 
             if (context.RewriteCount != rewrites)
             {
-                rewritten ??= [.. value.EnumerateObject().Take(count - 1).Where(earlier => Kept(earlier.Name, context)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
+                rewritten ??= [.. Members(value, context, count - 1)];
             }
 
             if (keep)
@@ -703,11 +732,12 @@ internal sealed class ValidationPlan
             context.Report(IssueCodes.UnrecognizedKeys, _closedBy ?? "additionalProperties", IssueCodes.UnrecognizedKeys, "keys", keys, string.Join(", ", keys) + (unknown.Count > keys.Length ? $", and {unknown.Count - keys.Length} more" : string.Empty));
         }
 
-        CheckRequired(value, context);
+        Lookup? lookup = _lookups > 0 ? new Lookup(value, _lookups > 4) : null;
+        CheckRequired(lookup, context);
 
         foreach ((string name, ValidationPlan plan) in _dependentSchemas)
         {
-            if (value.TryGetProperty(name, out _))
+            if (lookup!.Has(name))
             {
                 context.Walk("dependentSchemas", name);
                 plan.Run(value, context);
@@ -717,9 +747,9 @@ internal sealed class ValidationPlan
 
         foreach ((string name, SchemaNode node) in _defaults)
         {
-            if (!value.TryGetProperty(name, out _))
+            if (!lookup!.Has(name))
             {
-                rewritten ??= [.. value.EnumerateObject().Where(earlier => Kept(earlier.Name, context)).Select(earlier => KeyValuePair.Create(earlier.Name, earlier.Value))];
+                rewritten ??= [.. Members(value, context)];
                 rewritten.Add(KeyValuePair.Create(name, node.Default!.Value));
                 context.Rewritten();
             }
@@ -738,6 +768,19 @@ internal sealed class ValidationPlan
         }
 
         return rewritten is null ? value : JsonStrings.ToObject(rewritten);
+    }
+
+    private IEnumerable<KeyValuePair<string, JsonElement>> Members(JsonElement value, ValidationContext context, int limit = int.MaxValue)
+    {
+        foreach (JsonProperty property in value.EnumerateObject().Take(limit))
+        {
+            string name = JsonText.GetName(property);
+
+            if (Kept(name, context))
+            {
+                yield return KeyValuePair.Create(name, property.Value);
+            }
+        }
     }
 
     private bool Kept(string name, ValidationContext context) =>
@@ -759,11 +802,20 @@ internal sealed class ValidationPlan
         }
     }
 
-    private void CheckRequired(JsonElement value, ValidationContext context)
+    /// <summary>Property lookups on an object. Many of them share one index, because each lookup on the element reads its properties in turn.</summary>
+    private sealed class Lookup(JsonElement element, bool indexed)
+    {
+        private Dictionary<string, JsonElement>? _index;
+
+        public bool Has(string name) =>
+            indexed ? (_index ??= JsonText.Index(element)).ContainsKey(name) : JsonText.TryGetProperty(element, name, out _);
+    }
+
+    private void CheckRequired(Lookup? lookup, ValidationContext context)
     {
         foreach (string name in _node.Required)
         {
-            if (!value.TryGetProperty(name, out _))
+            if (!lookup!.Has(name))
             {
                 context.Push(name);
                 context.Report(IssueCodes.Required, "required", IssueCodes.Required, "property", name, name);
@@ -773,11 +825,11 @@ internal sealed class ValidationPlan
 
         foreach ((string name, ImmutableArray<string> dependencies) in _node.DependentRequired)
         {
-            if (value.TryGetProperty(name, out _))
+            if (lookup!.Has(name))
             {
                 foreach (string dependency in dependencies)
                 {
-                    if (!value.TryGetProperty(dependency, out _))
+                    if (!lookup.Has(dependency))
                     {
                         context.Push(dependency);
                         context.Report(IssueCodes.Required, "dependentRequired", "required.dependent", "property", dependency, dependency, name);
@@ -957,7 +1009,7 @@ internal sealed class ValidationPlan
             return value;
         }
 
-        if (value.TryGetProperty(discriminator, out JsonElement selected)
+        if (JsonText.TryGetProperty(value, discriminator, out JsonElement selected)
             && DiscriminatorKeys.Key(selected) is { } key
             && _discriminated!.TryGetValue(key, out (ValidationPlan Plan, int Index) branch))
         {

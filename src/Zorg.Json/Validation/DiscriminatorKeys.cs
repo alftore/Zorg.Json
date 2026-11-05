@@ -59,14 +59,7 @@ internal static class DiscriminatorKeys
             return $"#{value.GetRawText()}";
         }
 
-        try
-        {
-            return $"${value.GetString()}";
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
+        return $"${JsonText.GetString(value)}";
     }
 
     private static SchemaNode Resolve(SchemaNode node)

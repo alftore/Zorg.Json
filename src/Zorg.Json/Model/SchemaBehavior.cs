@@ -94,7 +94,11 @@ public enum UnknownProperties
 /// <summary>A step that changes a string before its constraints are checked.</summary>
 /// <param name="Name">The fluent method that added the step, such as <c>Trim</c>.</param>
 /// <param name="Apply">The change itself.</param>
-public sealed record SchemaNormalizer(string Name, Func<string, string> Apply);
+public sealed record SchemaNormalizer(string Name, Func<string, string> Apply)
+{
+    /// <summary>Says whether a text is cheap enough to apply this step to. When it isn't, the parse fails as too complex.</summary>
+    internal Func<string, bool>? Admits { get; init; }
+}
 
 /// <summary>A C# check that JSON Schema can't express.</summary>
 public abstract class SchemaRefinement

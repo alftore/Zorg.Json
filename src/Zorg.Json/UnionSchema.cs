@@ -38,6 +38,7 @@ public sealed class UnionSchema<T> : Schema<T, UnionSchema<T>>
         where TCase : T
     {
         ArgumentNullException.ThrowIfNull(value);
+        Validation.Arguments.WellFormed(value);
         ArgumentNullException.ThrowIfNull(schema);
 
         string discriminator = Node.Behavior.Discriminator!;
@@ -71,9 +72,9 @@ public sealed class UnionSchema<T> : Schema<T, UnionSchema<T>>
     internal override T Materialize(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Object
-            && value.TryGetProperty(Node.Behavior.Discriminator!, out JsonElement selected)
+            && Validation.JsonText.TryGetProperty(value, Node.Behavior.Discriminator!, out JsonElement selected)
             && selected.ValueKind == JsonValueKind.String
-            && _cases.TryGetValue(selected.GetString()!, out UnionCase? union))
+            && _cases.TryGetValue(Validation.JsonText.GetString(selected), out UnionCase? union))
         {
             return union.Materialize(value);
         }
