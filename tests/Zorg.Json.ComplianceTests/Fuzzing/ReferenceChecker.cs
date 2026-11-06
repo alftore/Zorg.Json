@@ -204,6 +204,7 @@ internal static class ReferenceChecker
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             Fail(isSound && IsOracleLimit(exception) ? OracleLimit : "b-does-not-load", $"{exception.GetType().Name}: {exception.Message}");
+            ReadBack(@case, variant, document, container, instances, Fail, counters, failures);
             return failures;
         }
 
@@ -220,7 +221,51 @@ internal static class ReferenceChecker
             Judge(@case, oracle, instance, wraps, isExact, isSound, Fail);
         }
 
+        ReadBack(@case, variant, document, container, instances, Fail, counters, failures);
         return failures;
+    }
+
+    /// <summary>
+    /// Judge (g), for a document JsonSchema.Net gave up on, which would otherwise get judge (a) alone. Zorg's importer reads the
+    /// emitted document, and everything parsing accepted must still be accepted. The importer resolves references by a path of its
+    /// own, so a pointer aimed at the wrong schema shows up as a different verdict.
+    /// </summary>
+    private static void ReadBack(ReferenceCase @case, ReferenceVariant variant, JsonObject document, string? container, IReadOnlyList<JsonElement> instances, Action<string, string, string?> fail, ReferenceCounters? counters, List<ReferenceFailure> failures)
+    {
+        if (!failures.Any(failure => failure.Kind == OracleLimit) || !variant.IsInput || variant.WrapsRoot || container is not null)
+        {
+            return;
+        }
+
+        JsonValueSchema readBack;
+
+        try
+        {
+            readBack = Z.FromJsonSchema(document.ToJsonString(), new JsonSchemaImportOptions
+            {
+                DefaultDialect = variant.Target.Dialect switch
+                {
+                    JsonSchemaDialect.Draft07 => JsonSchemaImportDialect.Draft07,
+                    JsonSchemaDialect.OpenApi30 => JsonSchemaImportDialect.OpenApi30,
+                    _ => JsonSchemaImportDialect.Draft202012,
+                },
+            });
+        }
+        catch (JsonSchemaImportException exception)
+        {
+            counters?.Count($"read back refused: {exception.Code}");
+            return;
+        }
+
+        counters?.Count("read back judged");
+
+        foreach (JsonElement instance in instances)
+        {
+            if (@case.Probe.ParseElement(instance) && !readBack.SafeParse(instance.GetRawText()).IsSuccess)
+            {
+                fail("g-stricter-when-read-back", "SafeParse accepts the value, and the emitted schema read back rejects it", instance.GetRawText());
+            }
+        }
     }
 
     private static void Judge(ReferenceCase @case, JsonSchema oracle, JsonElement instance, bool wraps, bool isExact, bool isSound, Action<string, string, string?> fail)

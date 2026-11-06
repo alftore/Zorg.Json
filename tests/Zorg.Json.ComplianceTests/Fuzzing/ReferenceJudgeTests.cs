@@ -188,6 +188,25 @@ public sealed class ReferenceJudgeTests
     }
 
     [Fact]
+    public void Judge_g_catches_a_stricter_document_that_the_oracle_gave_up_on()
+    {
+        const string Refused = """{"$schema":"https://json-schema.org/draft/2020-12/schema","items":{"allOf":[{"$ref":"#/items/allOf/1/items"},{"items":{"$anchor":"a"}}]}}""";
+        ReferenceCase @case = ReferenceCase.Build("plain", Refused, "{}", JsonSchemaImportDialect.Draft202012)!;
+
+        EmitResult Stricter(JsonSchemaOptions options)
+        {
+            EmitResult result = @case.Probe.Emit(options);
+            result.Schema["type"] = "string";
+            return result;
+        }
+
+        List<ReferenceFailure> failures = ReferenceChecker.Check(@case, Base, [JsonElement.Parse("1")], Stricter);
+
+        Assert.Contains(ReferenceChecker.OracleLimit, Kinds(failures));
+        Assert.Contains("g-stricter-when-read-back", Kinds(failures));
+    }
+
+    [Fact]
     public void Each_profile_has_every_variant() =>
         Assert.Equal(4, ReferenceVariant.All.GroupBy(variant => variant.Profile).Count(group => group.Select(variant => variant.Name).Distinct().Count() == 7));
 }
