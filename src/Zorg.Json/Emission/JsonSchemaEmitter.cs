@@ -30,7 +30,7 @@ internal sealed class JsonSchemaEmitter
     {
         _options = options;
         _profile = options.Target;
-        _exactness = new SchemaExactness.Checker(_profile.Dialect);
+        _exactness = new SchemaExactness.Checker(_profile.Dialect, LeavesOutDynamic);
         _objectBranches = new ObjectBranchCheck(_profile.Dialect == JsonSchemaDialect.OpenApi30);
         _rewritten = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
         _rewrittenNegative = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
@@ -87,6 +87,9 @@ internal sealed class JsonSchemaEmitter
     private bool IsDraft07 => _profile.Dialect == JsonSchemaDialect.Draft07;
 
     private bool IsOpenApi30 => _profile.Dialect == JsonSchemaDialect.OpenApi30;
+
+    /// <summary>The dynamic scope needs resources that stay what they are, in a dialect that has it.</summary>
+    private bool LeavesOutDynamic => IsDraft07 || IsOpenApi30 || _options.ReferencePrefix is not null || !_profile.Rewriters.IsEmpty;
 
     private string ReferencePrefix => _options.ReferencePrefix ?? $"#/{_profile.DefinitionsKeyword}/";
 
@@ -1099,6 +1102,16 @@ internal sealed class JsonSchemaEmitter
             schema["$ref"] = WrittenReference(node.Ref);
         }
 
+        if (LeavesOutDynamic)
+        {
+            UnsupportedIf(node.DynamicRef is not null, "$dynamicRef", notes, location);
+        }
+        else
+        {
+            Add(schema, "$dynamicAnchor", node.DynamicAnchor);
+            Add(schema, "$dynamicRef", node.DynamicRef);
+        }
+
         Add(schema, "title", node.Title);
         int descriptionIndex = schema.Count;
         Add(schema, "$comment", node.Comment);
@@ -1871,7 +1884,7 @@ internal sealed class JsonSchemaEmitter
                 return true;
             }
 
-            if (OneOfIsLeftOut(node))
+            if (OneOfIsLeftOut(node) || (LeavesOutDynamic && node.DynamicRef is not null))
             {
                 return true;
             }

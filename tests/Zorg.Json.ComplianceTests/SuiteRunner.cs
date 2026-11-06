@@ -95,8 +95,47 @@ internal static class SuiteRunner
         return result;
     }
 
+    /// <summary>The remotes a schema names, and those they name in turn, by the URI the suite serves them at.</summary>
+    private static Dictionary<string, string> Remotes(string draft, string schema)
+    {
+        string root = Path.Combine(TestSuite.RootPath, "remotes");
+        Dictionary<string, string> candidates = [];
+
+        foreach (string path in Directory.GetFiles(root, "*.json", SearchOption.AllDirectories))
+        {
+            string name = Path.GetRelativePath(root, path).Replace('\\', '/');
+
+            if (!name.StartsWith("draft", StringComparison.Ordinal) && !name.StartsWith("v1", StringComparison.Ordinal) || name.StartsWith(draft + "/", StringComparison.Ordinal))
+            {
+                candidates[name] = File.ReadAllText(path);
+            }
+        }
+
+        Dictionary<string, string> chosen = [];
+        Queue<string> texts = new([schema]);
+
+        while (texts.TryDequeue(out string? text))
+        {
+            foreach ((string name, string content) in candidates)
+            {
+                string uri = "http://localhost:1234/" + name;
+
+                if (!chosen.ContainsKey(uri) && text.Contains(Path.GetFileName(name), StringComparison.Ordinal))
+                {
+                    chosen[uri] = content;
+                    texts.Enqueue(content);
+                }
+            }
+        }
+
+        return chosen;
+    }
+
     private static void RunGroup(FileResult result, string relative, JsonElement group, JsonSchemaImportOptions options)
     {
+        string draftName = relative[..relative.IndexOf('/', StringComparison.Ordinal)];
+        Dictionary<string, string> remotes = Remotes(draftName, group.GetProperty("schema").GetRawText());
+        options = options with { Documents = remotes.Count == 0 || group.GetProperty("schema").ValueKind != JsonValueKind.Object ? null : remotes };
         string description = group.GetProperty("description").GetString()!;
         ImmutableArray<JsonElement> tests = [.. group.GetProperty("tests").EnumerateArray()];
         Exclusion? exclusion = Manifest.ForGroup(relative, description);
@@ -212,7 +251,7 @@ internal static class SuiteRunner
             try
             {
                 string first = schema.ToJsonSchema(emit).ToJsonString();
-                JsonValueSchema again = Z.FromJsonSchema(first, options);
+                JsonValueSchema again = Z.FromJsonSchema(first, options with { Documents = null });
                 string second = again.ToJsonSchema(emit).ToJsonString();
 
                 if (first != second)

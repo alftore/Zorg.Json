@@ -58,7 +58,7 @@ internal static class SchemaExactness
     /// Remembers what it has judged. Whether a subschema is exact doesn't depend on where it's used, and a schema used a
     /// thousand times would otherwise be walked a thousand times.
     /// </summary>
-    internal sealed class Checker(JsonSchemaDialect dialect)
+    internal sealed class Checker(JsonSchemaDialect dialect, bool leavesOutDynamic = false)
     {
         private readonly Dictionary<SchemaNode, bool> _known = new(ReferenceEqualityComparer.Instance);
 
@@ -122,7 +122,7 @@ internal static class SchemaExactness
                     return new Cause(fallbackKeyword, null);
                 }
 
-                if (Inexact(item.Node, dialect) is { } keyword)
+                if ((leavesOutDynamic && item.Node.DynamicRef is not null ? "$dynamicRef" : Inexact(item.Node, dialect)) is { } keyword)
                 {
                     _located += visited.Count;
                     return new Cause(keyword, PathOf(trail, item.Index));
@@ -202,7 +202,7 @@ internal static class SchemaExactness
                     throw TooLarge();
                 }
 
-                if (Inexact(node, dialect) is { } keyword)
+                if ((leavesOutDynamic && node.DynamicRef is not null ? "$dynamicRef" : Inexact(node, dialect)) is { } keyword)
                 {
                     return Fail(trail, index, keyword);
                 }

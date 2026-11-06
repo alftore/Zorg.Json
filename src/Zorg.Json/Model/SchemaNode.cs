@@ -35,6 +35,12 @@ public sealed record SchemaNode
     /// <summary>The <c>$ref</c> keyword.</summary>
     public string? Ref { get; init; }
 
+    /// <summary>The <c>$dynamicRef</c> keyword. <see cref="SchemaBehavior.Target"/> is where it lands before the dynamic scope is read.</summary>
+    public string? DynamicRef { get; init; }
+
+    /// <summary>The <c>$dynamicAnchor</c> keyword.</summary>
+    public string? DynamicAnchor { get; init; }
+
     /// <summary>The <c>$defs</c> keyword. Empty when absent.</summary>
     public ImmutableArray<SchemaProperty> Defs { get; init; } = [];
 

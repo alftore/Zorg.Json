@@ -92,15 +92,30 @@ internal sealed class SchemaImporter
     /// <summary>The base URI of each resource, by its pointer.</summary>
     private readonly Dictionary<string, string> _bases = new(StringComparer.Ordinal) { [string.Empty] = DocumentBase };
     private readonly List<PendingReference> _references = [];
+    private readonly List<(string Resource, string Name, string Pointer)> _dynamicAnchors = [];
+    private readonly Dictionary<string, SchemaResource> _dynamicResources = new(StringComparer.Ordinal);
+    private readonly bool _usesDynamicScope;
     private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
     private readonly bool _isDialectAssumed;
     private int _count;
     private long _patternLength;
 
-    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, bool isDialectAssumed)
+    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, bool isDialectAssumed, List<(string Uri, string Pointer)> documents)
     {
+        foreach ((string uri, string pointer) in documents)
+        {
+            // The URI a document was given names it, whatever $id it has.
+            if (!_resources.TryAdd(uri, pointer))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, $"The document URI \"{uri}\" is declared twice.");
+            }
+
+            _bases[pointer] = uri;
+        }
+
         _root = root;
+        _usesDynamicScope = dialect == JsonSchemaImportDialect.Draft202012 && root.GetRawText().Contains("$dynamic", StringComparison.Ordinal);
         _options = options;
         _dialect = dialect;
         _isDialectAssumed = isDialectAssumed;
@@ -134,15 +149,120 @@ internal sealed class SchemaImporter
         JsonElement root = schema.Clone();
 
         JsonSchemaImportDialect dialect = DetectDialect(root, effective);
-        bool isAssumed = effective.DefaultDialect == JsonSchemaImportDialect.Draft202012 && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("$schema", out _));
-        return new SchemaImporter(root, effective, dialect, isAssumed).Run();
+        List<(string Uri, string Pointer)> documents = [];
 
+        if (effective.Documents is { Count: > 0 })
+        {
+            root = Bundle(root, effective, dialect, documents);
+        }
+
+        bool isAssumed = effective.DefaultDialect == JsonSchemaImportDialect.Draft202012 && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("$schema", out _));
+        return new SchemaImporter(root, effective, dialect, isAssumed, documents).Run();
+    }
+
+    /// <summary>
+    /// Writes the other documents into the definitions of the schema, as embedded resources. The text of what's there is kept as it is,
+    /// so numbers and escapes don't change.
+    /// </summary>
+    private static JsonElement Bundle(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, List<(string Uri, string Pointer)> documents)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, "A schema with Documents must be an object.");
+        }
+
+        string container = dialect == JsonSchemaImportDialect.Draft202012 ? "$defs" : "definitions";
+        string idKeyword = dialect == JsonSchemaImportDialect.Draft04 ? "id" : "$id";
+        List<string> members = [];
+        List<string> definitions = [];
+        HashSet<string> names = new(StringComparer.Ordinal);
+
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            if (!property.NameEquals(container))
+            {
+                members.Add(property.ToString());
+            }
+            else if (property.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, $"/{container}", $"{container} must be an object.");
+            }
+            else
+            {
+                foreach (JsonProperty definition in property.Value.EnumerateObject())
+                {
+                    definitions.Add(definition.ToString());
+
+                    if (JsonText.TryGetName(definition, out string name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+        }
+
+        foreach ((string uri, string text) in InOrder(options.Documents!))
+        {
+            if (!Uri.TryCreate(uri, UriKind.Absolute, out _) || SplitUri(DocumentBase, uri) is not { Fragment: "#" } target)
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, $"The document URI \"{uri}\" must be absolute, with no fragment.");
+            }
+
+            JsonElement document = Parse(text, options);
+            int number = 1;
+
+            while (!names.Add($"document-{number}"))
+            {
+                number++;
+            }
+
+            string name = $"document-{number}";
+            documents.Add((target.Uri, $"/{container}/{name}"));
+            definitions.Add($"{JsonSerializedText(name)}:{WithBase(document, idKeyword, target.Uri)}");
+        }
+
+        members.Add($"{JsonSerializedText(container)}:{{{string.Join(',', definitions)}}}");
+        return Parse($"{{{string.Join(',', members)}}}", options);
+
+        static IEnumerable<KeyValuePair<string, string>> InOrder(IReadOnlyDictionary<string, string> all) =>
+            all.OrderBy(entry => entry.Key, StringComparer.Ordinal);
+    }
+
+    private static string JsonSerializedText(string text) => $"\"{JsonEncodedText.Encode(text).ToString()}\"";
+
+    /// <summary>A document with no id of its own has the URI it was given as its base.</summary>
+    private static string WithBase(JsonElement document, string idKeyword, string uri)
+    {
+        if (document.ValueKind != JsonValueKind.Object || document.TryGetProperty(idKeyword, out _))
+        {
+            return document.GetRawText();
+        }
+
+        List<string> members = [$"{JsonSerializedText(idKeyword)}:{JsonSerializedText(uri)}"];
+        members.AddRange(document.EnumerateObject().Select(property => property.ToString()));
+        return $"{{{string.Join(',', members)}}}";
+    }
+
+    private SchemaResource ResourceOf(string pointer)
+    {
+        if (!_dynamicResources.TryGetValue(pointer, out SchemaResource? resource))
+        {
+            _dynamicResources[pointer] = resource = new SchemaResource();
+        }
+
+        return resource;
     }
 
     private SchemaNode Run()
     {
         SchemaNode node = Build(_root, new Scope(string.Empty, string.Empty, DocumentBase, 0, IsWalked: true));
         ResolveReferences();
+
+        foreach ((string resource, string name, string pointer) in _dynamicAnchors)
+        {
+            ResourceOf(resource).DynamicAnchors.TryAdd(name, _nodes[pointer]);
+        }
+
         CheckInPlaceGraph();
         return node;
     }
@@ -312,12 +432,9 @@ internal sealed class SchemaImporter
 
     private static void RejectUnsupported(Dictionary<string, JsonElement> values, Scope at)
     {
-        foreach (string keyword in (ReadOnlySpan<string>)["$dynamicRef", "$dynamicAnchor"])
+        if (values.ContainsKey("$dynamicRef") && values.ContainsKey("$ref"))
         {
-            if (values.ContainsKey(keyword))
-            {
-                throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} needs a dynamic scope at validation time, which Zorg doesn't have.");
-            }
+            throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword("$dynamicRef"), "$dynamicRef beside $ref isn't supported. Put one of them in an allOf.");
         }
     }
 
@@ -452,6 +569,36 @@ internal sealed class SchemaImporter
             reference = NormalizeReference(reference, scope);
         }
 
+        string? dynamicRef = IsLegacy ? null : keywords.String("$dynamicRef");
+        string? dynamicAnchor = IsLegacy ? null : keywords.String("$dynamicAnchor");
+
+        if (dynamicRef is not null)
+        {
+            ReferenceTarget target = new();
+            _references.Add(new PendingReference(target, dynamicRef, scope));
+            behavior = behavior with { Target = target.Get };
+        }
+
+        if (dynamicAnchor is not null)
+        {
+            if (!IsAnchorName(dynamicAnchor))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword("$dynamicAnchor"), $"\"{dynamicAnchor}\" isn't a valid anchor name.");
+            }
+
+            if (at.IsWalked && !_anchors.TryAdd((scope.Resource, dynamicAnchor), at.Pointer))
+            {
+                throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, $"The anchor \"{dynamicAnchor}\" is declared twice.");
+            }
+
+            _dynamicAnchors.Add((scope.Resource, dynamicAnchor, at.Pointer));
+        }
+
+        if (_usesDynamicScope)
+        {
+            behavior = behavior with { Resource = ResourceOf(scope.Resource) };
+        }
+
         string? format = keywords.String("format");
 
         if (format is not null)
@@ -486,6 +633,8 @@ internal sealed class SchemaImporter
             Id = id,
             Anchor = anchor,
             Ref = reference,
+            DynamicRef = dynamicRef,
+            DynamicAnchor = dynamicAnchor,
             Defs = defs,
             Title = keywords.String("title"),
             Description = keywords.String("description"),

@@ -51,6 +51,7 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _if;
     private readonly ValidationPlan? _then;
     private readonly ValidationPlan? _else;
+    private readonly SchemaResource? _resource;
 
     /// <summary>Set when <c>unevaluatedItems</c> depends on what subschemas evaluated, so it runs after them. Otherwise it reads like <c>items</c>.</summary>
     private readonly ValidationPlan? _unevaluatedItems;
@@ -73,6 +74,7 @@ internal sealed class ValidationPlan
         ImmutableArray<ValidationPlan> List(ImmutableArray<SchemaNode> children) => [.. children.Select(child => Get(child, plans))];
 
         _node = node;
+        _resource = node.Behavior.Resource;
         _pattern = node.Behavior.PatternRegex ?? (node.Pattern is null ? null : PatternCompiler.Compile(node.Pattern));
         _format = node.Behavior.FormatIsAnnotation ? null : StringFormats.Find(node.Format);
         _minimum = Number(node.Minimum);
@@ -177,6 +179,7 @@ internal sealed class ValidationPlan
             return input;
         }
 
+        bool entered = _resource is not null && context.EnterResource(_resource);
         int issues = context.IssueCount;
         JsonElement value = Coerce(input, context);
         value = Normalize(value, context);
@@ -222,6 +225,11 @@ internal sealed class ValidationPlan
                     RunRefinements(value, context);
                 }
             }
+        }
+
+        if (entered)
+        {
+            context.LeaveResource();
         }
 
         context.Leave();
@@ -1063,7 +1071,7 @@ internal sealed class ValidationPlan
 
         if (_node.Behavior.Target is not null)
         {
-            ValidationPlan target = Target();
+            ValidationPlan target = Referenced(context);
             context.WalkReference(_targetLocation!);
             Keep(target.Run(value, context));
             context.Unwalk();
@@ -1212,6 +1220,14 @@ internal sealed class ValidationPlan
     /// <summary>Runs a subschema to see whether it passes, which decides whether what it evaluated counts.</summary>
     private static bool Passes(ValidationPlan plan, JsonElement value, ValidationContext context)
     {
+        // Under a dynamic scope the same subschema can mean something else at the same place.
+        if (plan._resource is not null)
+        {
+            ValidationContext scoped = context.Fork();
+            plan.Run(value, scoped);
+            return !scoped.HasIssues;
+        }
+
         if (context.TryRecall(plan, out bool passed, out string place))
         {
             return passed;
@@ -1232,7 +1248,7 @@ internal sealed class ValidationPlan
     {
         if (_node.Behavior.Target is not null)
         {
-            yield return Target();
+            yield return Referenced(context);
         }
 
         foreach (ValidationPlan plan in _allOf)
@@ -1360,6 +1376,40 @@ internal sealed class ValidationPlan
 
         context.Leave();
         return finished && !context.Halted;
+    }
+
+    /// <summary>
+    /// What a reference lands on. A <c>$dynamicRef</c> that lands on a <c>$dynamicAnchor</c> of the same name goes on to the outermost
+    /// resource in the dynamic scope that has that anchor. Otherwise it behaves like <c>$ref</c>.
+    /// </summary>
+    private ValidationPlan Referenced(ValidationContext context)
+    {
+        ValidationPlan target = Target();
+
+        if (_node.DynamicRef is not { } reference)
+        {
+            return target;
+        }
+
+        int fragment = reference.IndexOf('#', StringComparison.Ordinal);
+
+        if (fragment < 0 || target._node.DynamicAnchor != Uri.UnescapeDataString(reference[(fragment + 1)..]))
+        {
+            return target;
+        }
+
+        foreach (SchemaResource resource in context.DynamicScope)
+        {
+            if (resource.DynamicAnchors.TryGetValue(target._node.DynamicAnchor!, out SchemaNode? node))
+            {
+                lock (_plans)
+                {
+                    return Get(node, _plans);
+                }
+            }
+        }
+
+        return target;
     }
 
     /// <summary>Built on first use: a long chain of references built up front could exhaust the stack.</summary>

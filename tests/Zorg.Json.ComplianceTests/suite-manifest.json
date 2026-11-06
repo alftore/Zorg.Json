@@ -2,69 +2,14 @@
   "exclusions": [
     {
       "kind": "ImportError",
-      "code": "unsupported_keyword",
-      "reason": "$dynamicRef and $dynamicAnchor need a dynamic scope at validation time, which is out of scope for v1 (note 05 A.2).",
-      "cases": {
-        "draft2020-12/dynamicRef.json": [
-          "A $dynamicRef to a $dynamicAnchor in the same schema resource behaves like a normal $ref to an $anchor",
-          "A $dynamicRef to an $anchor in the same schema resource behaves like a normal $ref to an $anchor",
-          "A $ref to a $dynamicAnchor in the same schema resource behaves like a normal $ref to an $anchor",
-          "A $dynamicRef resolves to the first $dynamicAnchor still in scope that is encountered when the schema is evaluated",
-          "A $dynamicRef without anchor in fragment behaves identical to $ref",
-          "A $dynamicRef with intermediate scopes that don't include a matching $dynamicAnchor does not affect dynamic scope resolution",
-          "An $anchor with the same name as a $dynamicAnchor is not used for dynamic scope resolution",
-          "A $dynamicRef without a matching $dynamicAnchor in the same schema resource behaves like a normal $ref to $anchor",
-          "A $dynamicRef with a non-matching $dynamicAnchor in the same schema resource behaves like a normal $ref to $anchor",
-          "A $dynamicRef that initially resolves to a schema with a matching $dynamicAnchor resolves to the first $dynamicAnchor in the dynamic scope",
-          "A $dynamicRef that initially resolves to a schema without a matching $dynamicAnchor behaves like a normal $ref to $anchor",
-          "multiple dynamic paths to the $dynamicRef keyword",
-          "after leaving a dynamic scope, it is not used by a $dynamicRef",
-          "strict-tree schema, guards against misspelled properties",
-          "tests for implementation dynamic anchor and reference link",
-          "$ref and $dynamicAnchor are independent of order - $defs first",
-          "$ref and $dynamicAnchor are independent of order - $ref first",
-          "$dynamicRef points to a boolean schema",
-          "$dynamicRef skips over intermediate resources - direct reference",
-          "$dynamicRef avoids the root of each schema, but scopes are still registered"
-        ],
-        "draft2020-12/unevaluatedItems.json": [
-          "unevaluatedItems with $dynamicRef"
-        ],
-        "draft2020-12/unevaluatedProperties.json": [
-          "unevaluatedProperties with $dynamicRef"
-        ]
-      }
-    },
-    {
-      "kind": "ImportError",
       "code": "unresolved_ref",
       "reason": "$ref is local only in v1: #, JSON Pointer and $anchor. Remote, URN, absolute and relative-URI targets are refused, and nothing is fetched (note 05 A.4).",
       "cases": {
         "draft2020-12/defs.json": [
           "validate definition against metaschema"
         ],
-        "draft2020-12/dynamicRef.json": [
-          "$ref to $dynamicRef finds detached $dynamicAnchor"
-        ],
         "draft2020-12/ref.json": [
           "remote ref, containing refs itself"
-        ],
-        "draft2020-12/refRemote.json": [
-          "remote ref",
-          "fragment within remote ref",
-          "anchor within remote ref",
-          "ref within remote ref",
-          "base URI change",
-          "base URI change - change folder",
-          "base URI change - change folder in subschema",
-          "root ref in remote ref",
-          "remote ref with ref to defs",
-          "Location-independent identifier in remote ref",
-          "retrieved nested refs resolve relative to their URI not $id",
-          "remote HTTP ref with different $id",
-          "remote HTTP ref with different URN $id",
-          "remote HTTP ref with nested absolute ref",
-          "$ref to $ref finds detached $anchor"
         ],
         "draft7/definitions.json": [
           "validate definition against metaschema"
@@ -72,53 +17,17 @@
         "draft7/ref.json": [
           "remote ref, containing refs itself"
         ],
-        "draft7/refRemote.json": [
-          "remote ref",
-          "fragment within remote ref",
-          "ref within remote ref",
-          "base URI change",
-          "base URI change - change folder",
-          "base URI change - change folder in subschema",
-          "root ref in remote ref",
-          "remote ref with ref to definitions",
-          "Location-independent identifier in remote ref",
-          "retrieved nested refs resolve relative to their URI not $id",
-          "$ref to $ref finds location-independent $id"
-        ],
         "draft6/definitions.json": [
           "validate definition against metaschema"
         ],
         "draft6/ref.json": [
           "remote ref, containing refs itself"
         ],
-        "draft6/refRemote.json": [
-          "remote ref",
-          "fragment within remote ref",
-          "ref within remote ref",
-          "base URI change",
-          "base URI change - change folder",
-          "base URI change - change folder in subschema",
-          "root ref in remote ref",
-          "remote ref with ref to definitions",
-          "Location-independent identifier in remote ref",
-          "retrieved nested refs resolve relative to their URI not $id",
-          "$ref to $ref finds location-independent $id"
-        ],
         "draft4/definitions.json": [
           "validate definition against metaschema"
         ],
         "draft4/ref.json": [
           "remote ref, containing refs itself"
-        ],
-        "draft4/refRemote.json": [
-          "remote ref",
-          "fragment within remote ref",
-          "ref within remote ref",
-          "base URI change",
-          "base URI change - change folder",
-          "base URI change - change folder in subschema",
-          "root ref in remote ref",
-          "Location-independent identifier in remote ref"
         ]
       }
     },

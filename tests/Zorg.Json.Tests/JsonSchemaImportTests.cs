@@ -37,8 +37,7 @@ public sealed class JsonSchemaImportTests
         Emit(schema).Replace("\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",", string.Empty, System.StringComparison.Ordinal);
 
     [Theory]
-    [InlineData("""{ "$dynamicRef": "#a" }""", "/$dynamicRef")]
-    [InlineData("""{ "$defs": { "a": { "$dynamicAnchor": "a" } } }""", "/$defs/a/$dynamicAnchor")]
+    [InlineData("""{ "$dynamicRef": "#a", "$ref": "#" }""", "/$dynamicRef")]
     public void Keywords_it_cant_honour_are_errors(string schema, string location) =>
         AssertFails(schema, JsonSchemaImportCodes.UnsupportedKeyword, location);
 

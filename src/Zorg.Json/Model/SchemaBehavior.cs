@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -43,6 +44,9 @@ public sealed record SchemaBehavior
     /// <summary>What <see cref="SchemaNode.Ref"/> points at. Evaluated on first use, so that schemas can be recursive.</summary>
     public Func<SchemaNode>? Target { get; init; }
 
+    /// <summary>The resource an imported node belongs to, set only in a document that uses <c>$dynamicRef</c>.</summary>
+    internal SchemaResource? Resource { get; init; }
+
     /// <summary>Where an imported node sits in its document, as a JSON Pointer. Null for fluent schemas.</summary>
     internal string? Location { get; init; }
 
@@ -63,6 +67,12 @@ public sealed record SchemaBehavior
     internal Func<string, bool>? NumberCheck { get; init; }
 
     internal string? NumberType { get; init; }
+}
+
+/// <summary>A schema resource, as the dynamic scope of <c>$dynamicRef</c> sees it: what each <c>$dynamicAnchor</c> in it names.</summary>
+internal sealed class SchemaResource
+{
+    public Dictionary<string, SchemaNode> DynamicAnchors { get; } = new(StringComparer.Ordinal);
 }
 
 /// <summary>Which strings a schema accepts in place of its declared type. Zod equivalent: <c>z.coerce</c>.</summary>

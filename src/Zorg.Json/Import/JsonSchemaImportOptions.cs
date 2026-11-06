@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Zorg.Json.Import;
 
 /// <summary>
@@ -21,6 +23,21 @@ public sealed record JsonSchemaImportOptions
     /// left alone, a boolean <c>nullable</c> fails with <see cref="JsonSchemaImportCodes.UnsupportedDialect"/> rather than being ignored.
     /// </summary>
     public JsonSchemaImportDialect DefaultDialect { get; init; } = JsonSchemaImportDialect.Draft202012;
+
+    /// <summary>
+    /// Other documents a <c>$ref</c> can reach, by their absolute URI. Nothing is ever fetched. Each one is bundled into the schema as
+    /// an embedded resource, as JSON Schema describes for bundling, so the emitted schema is one document that needs nothing else.
+    /// A document has to use the dialect of the schema. Default: none.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// JsonValueSchema schema = Z.FromJsonSchema(text, new()
+    /// {
+    ///     Documents = new Dictionary&lt;string, string&gt; { ["https://example.com/address.json"] = addressText },
+    /// });
+    /// </code>
+    /// </example>
+    public IReadOnlyDictionary<string, string>? Documents { get; init; }
 
     /// <summary>What to do with keywords no dialect defines. Default: <see cref="UnknownKeywordHandling.Preserve"/>.</summary>
     public UnknownKeywordHandling UnknownKeywords { get; init; } = UnknownKeywordHandling.Preserve;

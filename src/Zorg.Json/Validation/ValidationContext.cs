@@ -245,6 +245,25 @@ internal sealed class ValidationContext
 
     public void Pop() => _path.RemoveAt(_path.Count - 1);
 
+    /// <summary>The resources on the way to here, outermost first: the dynamic scope.</summary>
+    public IReadOnlyList<SchemaResource> DynamicScope => _limits.Scope;
+
+    /// <summary>Adds a resource to the dynamic scope. True when <see cref="LeaveResource"/> has to take it off again.</summary>
+    public bool EnterResource(SchemaResource resource)
+    {
+        List<SchemaResource> scope = _limits.Scope;
+
+        if (scope.Count > 0 && ReferenceEquals(scope[^1], resource))
+        {
+            return false;
+        }
+
+        scope.Add(resource);
+        return true;
+    }
+
+    public void LeaveResource() => _limits.Scope.RemoveAt(_limits.Scope.Count - 1);
+
     /// <summary>Enters a keyword with no name or index under it, such as <c>items</c>.</summary>
     public void Walk(string keyword) => _steps.Add(new Step(keyword, null, -1, null));
 
@@ -577,6 +596,8 @@ internal sealed class ValidationContext
         public long SpeculativeSteps { get; set; }
 
         public long TotalSteps { get; set; }
+
+        public List<SchemaResource> Scope { get; } = [];
 
         /// <summary>Whether a subschema passed at a place. A place is the same value in one parse, because nothing that rewrites a value sits under <c>unevaluated*</c>.</summary>
         public Dictionary<(object Plan, string Place), bool>? Passed { get; set; }
