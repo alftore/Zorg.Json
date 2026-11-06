@@ -141,6 +141,7 @@ public static class OpenApiOptionsExtensions
                 ?? throw new InvalidOperationException("Microsoft.OpenApi couldn't read an emitted schema.");
 
         // A $ref at the top reads as a reference object, not a schema, so it goes in an allOf, which means the same.
+        // It goes last, because a pointer can name an entry of that allOf by its index.
         private static JsonObject WithoutTopReference(JsonObject schema)
         {
             if (!schema.ContainsKey("$ref"))
@@ -154,7 +155,7 @@ public static class OpenApiOptionsExtensions
 
             if (copy["allOf"] is JsonArray allOf)
             {
-                allOf.Insert(0, reference);
+                allOf.Add((JsonNode)reference);
             }
             else
             {

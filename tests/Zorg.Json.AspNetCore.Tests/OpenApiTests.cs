@@ -266,6 +266,40 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task A_top_reference_keeps_the_indexes_of_its_all_of()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"$defs":{"b":{"maxLength":9},"a":{"$ref":"#/$defs/b","allOf":[{"type":"string"},{"minLength":2}]}},
+             "type":"object","properties":{"p":{"$ref":"#/$defs/a"},"q":{"$ref":"#/$defs/a/allOf/0"}}}
+            """);
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/things", ([FromBody] JsonElement body) => body).ValidateBody(schema));
+        JsonElement schemas = document.GetProperty("components").GetProperty("schemas");
+        JsonElement holder = schemas.EnumerateObject().Single(entry => entry.Name.StartsWith("a-", StringComparison.Ordinal)).Value;
+
+        Assert.Equal("string", holder.GetProperty("allOf")[0].GetProperty("type").GetString());
+        Assert.Equal(2, holder.GetProperty("allOf")[1].GetProperty("minLength").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("""{"type":"object","properties":{"p":true}}""")]
+    [InlineData("""{"type":"object","properties":{"p":false}}""")]
+    [InlineData("""{"type":"array","items":true}""")]
+    [InlineData("""{"type":"object","additionalProperties":true}""")]
+    [InlineData("""{"type":"object","additionalProperties":false}""")]
+    [InlineData("""{"allOf":[true,{"type":"object"}]}""")]
+    [InlineData("""{"not":true}""")]
+    [InlineData("""{"$defs":{"a":true},"properties":{"p":{"$ref":"#/$defs/a"}}}""")]
+    public async Task Boolean_subschemas_do_not_break_the_document(string text)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(text);
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/things", ([FromBody] JsonElement body) => body).ValidateBody(schema));
+
+        Assert.Equal(JsonValueKind.Object, document.GetProperty("paths").ValueKind);
+    }
+
+    [Fact]
     public async Task Keywords_survive_the_conversion()
     {
         ObjectSchema schema = Z.Object()
