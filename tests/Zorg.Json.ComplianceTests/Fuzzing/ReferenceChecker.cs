@@ -459,11 +459,81 @@ internal static partial class ReferenceChecker
         return found;
     }
 
+    /// <summary>
+    /// What a schema says once its references to definitions are followed, with the names gone. If naming merged two different
+    /// definitions, this differs from the same schema emitted with no naming at all.
+    /// </summary>
+    public static string Meaning(EmitResult result)
+    {
+        const string Prefix = "#/components/schemas/";
+        const int MaxLength = 100_000;
+        StringBuilder text = new();
+
+        void Write(JsonNode? node, int depth)
+        {
+            if (text.Length > MaxLength)
+            {
+                return;
+            }
+
+            if (node is JsonArray items)
+            {
+                foreach (JsonNode? item in items)
+                {
+                    Write(item, depth);
+                }
+            }
+            else if (node is not JsonObject members)
+            {
+                text.Append(node?.ToJsonString()).Append(',');
+            }
+            else
+            {
+                foreach ((string name, JsonNode? value) in members)
+                {
+                    text.Append(name).Append('(');
+
+                    if (name == "$ref" && value is JsonValue && value.GetValue<string>().StartsWith(Prefix, StringComparison.Ordinal))
+                    {
+                        if (depth > 0)
+                        {
+                            Write(Follow(value.GetValue<string>()[Prefix.Length..]), depth - 1);
+                        }
+                    }
+                    else
+                    {
+                        Write(value, depth);
+                    }
+
+                    text.Append(')');
+                }
+            }
+        }
+
+        JsonNode? Follow(string pointer)
+        {
+            string[] tokens = pointer.Split('/');
+            JsonNode? current = result.Definitions.GetValueOrDefault(Decode(tokens[0]));
+
+            foreach (string token in tokens.Skip(1))
+            {
+                current = current is JsonArray list ? list[int.Parse(token, CultureInfo.InvariantCulture)] : current?[Decode(token)];
+            }
+
+            return current;
+        }
+
+        Write(result.Schema, 6);
+        return text.ToString();
+    }
+
+    private static string Decode(string token) => Uri.UnescapeDataString(token).Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal);
+
     public static bool SameDefinitions(EmitResult left, EmitResult right) =>
         left.Definitions.Count == right.Definitions.Count
         && left.Definitions.All(entry => right.Definitions.TryGetValue(entry.Key, out JsonObject? other) && JsonNode.DeepEquals(entry.Value, other));
 
-    [GeneratedRegex("-[0-9a-f]{8}[0-9]*$")]
+    [GeneratedRegex("-[0-9a-f]{16}[0-9]*$")]
     private static partial Regex MadeUpName();
 
     /// <summary>OpenAPI 3.0 reads neither <c>$id</c> nor <c>$anchor</c>, so its documents are judged without them.</summary>

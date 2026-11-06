@@ -875,6 +875,77 @@ public sealed class EmissionReviewTests
         Assert.All(result.Diagnostics, diagnostic => Assert.True(diagnostic.Message.Length < 1_000, diagnostic.Message.Length.ToString()));
     }
 
+    // From the review of the names of definitions that leave a document.
+
+    private const string Tree = """{"$defs":{"a":{"type":"object","properties":{"up":{"$ref":"#"}}}},"type":"object","properties":{"kid":{"$ref":"#/$defs/a"}}}""";
+
+    private const string TreeWithNumber = """{"$defs":{"a":{"type":"object","properties":{"up":{"$ref":"#"}}}},"type":"object","properties":{"kid":{"$ref":"#/$defs/a"},"n":{"type":"integer"}}}""";
+
+    private static readonly JsonSchemaOptions Components = new() { Target = JsonSchemaProfile.OpenApi31, Reused = ReusedSchemaHandling.Ref, ReferencePrefix = "#/components/schemas/" };
+
+    private static JsonObject Definition(EmitResult result, JsonNode? reference) =>
+        result.Definitions[reference!.GetValue<string>()["#/components/schemas/".Length..]];
+
+    [Fact]
+    public void A_definition_that_refers_to_a_named_schema_is_told_apart_by_it()
+    {
+        EmitResult result = Z.Object().Property("x", Import(Tree).Named("X")).Property("y", Import(TreeWithNumber).Named("Y")).Emit(Components);
+
+        Assert.Equal(4, result.Definitions.Count);
+        Assert.Equal("#/components/schemas/X", Definition(result, result.Definitions["X"]["properties"]!["kid"]!["$ref"])["properties"]!["up"]!["$ref"]!.GetValue<string>());
+        Assert.Equal("#/components/schemas/Y", Definition(result, result.Definitions["Y"]["properties"]!["kid"]!["$ref"])["properties"]!["up"]!["$ref"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Two_definitions_whose_tags_collide_stay_two()
+    {
+        JsonSchemaOptions shortTags = Components with { DefinitionTagLength = 1 };
+        ObjectSchema schema = Z.Object();
+
+        for (int index = 0; index < 40; index++)
+        {
+            schema = schema.Property("p" + index.ToString(CultureInfo.InvariantCulture), Import("""{"$defs":{"a":{"type":"string","maxLength":LENGTH}},"properties":{"p":{"$ref":"#/$defs/a"}}}""".Replace("LENGTH", index.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)));
+        }
+
+        EmitResult result = schema.Emit(shortTags);
+
+        Assert.Equal(40, result.Definitions.Count);
+
+        for (int index = 0; index < 40; index++)
+        {
+            JsonNode? reference = result.Schema["properties"]!["p" + index.ToString(CultureInfo.InvariantCulture)]!["properties"]!["p"]!["$ref"];
+            Assert.Equal(index, Definition(result, reference)["maxLength"]!.GetValue<int>());
+        }
+    }
+
+    [Fact]
+    public void Tags_are_long_enough_for_a_known_collision_of_eight_digits()
+    {
+        const string Template = """{"$defs":{"a":{"type":"string","maxLength":LENGTH}},"properties":{"p":{"$ref":"#/$defs/a"}}}""";
+        EmitResult result = Z.Object()
+            .Property("x", Import(Template.Replace("LENGTH", "13996", StringComparison.Ordinal)))
+            .Property("y", Import(Template.Replace("LENGTH", "153972", StringComparison.Ordinal)))
+            .Emit(Components);
+
+        Assert.Equal(2, result.Definitions.Count);
+    }
+
+    [Fact]
+    public void A_name_taken_by_a_named_schema_leaves_every_copy_with_the_new_name()
+    {
+        const string Document = """{"$defs":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/a"}}}""";
+        string taken = Assert.Single(Import(Document).Emit(Components).Definitions).Key;
+
+        EmitResult result = Z.Object()
+            .Property("n", Z.Integer().Named(taken))
+            .Property("x", Import(Document))
+            .Property("y", Import(Document))
+            .Emit(Components);
+
+        Assert.Equal("string", Definition(result, result.Schema["properties"]!["x"]!["properties"]!["p"]!["$ref"])["type"]!.GetValue<string>());
+        Assert.Equal("string", Definition(result, result.Schema["properties"]!["y"]!["properties"]!["p"]!["$ref"])["type"]!.GetValue<string>());
+    }
+
     // From the second review of the reference model.
 
     [Fact]

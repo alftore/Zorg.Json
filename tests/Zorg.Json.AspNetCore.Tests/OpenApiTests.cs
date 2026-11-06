@@ -140,6 +140,42 @@ public sealed class OpenApiTests
         Assert.Single(components);
     }
 
+    private const string Tree = """{"$defs":{"a":{"type":"object","properties":{"up":{"$ref":"#"}}}},"type":"object","properties":{"kid":{"$ref":"#/$defs/a"}}}""";
+
+    [Fact]
+    public async Task One_import_named_twice_on_two_endpoints_keeps_its_own_definitions()
+    {
+        string[] components = await ComponentsAsync(
+            Z.Object().Property("x", Z.FromJsonSchema(Tree).Named("A")),
+            Z.Object().Property("y", Z.FromJsonSchema(Tree).Named("B")));
+
+        Assert.Equal(4, components.Length);
+    }
+
+    [Fact]
+    public async Task One_import_in_two_nested_names_keeps_its_own_definitions()
+    {
+        JsonValueSchema imported = Z.FromJsonSchema(Tree);
+
+        string[] components = await ComponentsAsync(
+            Z.Object().Property("x", Z.Object().Property("v", imported.Named("A")).Named("Outer1")),
+            Z.Object().Property("y", Z.Object().Property("v", imported.Named("B")).Named("Outer2")));
+
+        Assert.Equal(6, components.Length);
+    }
+
+    [Theory]
+    [InlineData("""{"$ref":"#/$defs/a","description":"d","$defs":{"a":{"type":"string"}}}""")]
+    [InlineData("""{"$defs":{"a":{"type":"string"},"b":{"$ref":"#/$defs/a","minLength":3}},"type":"object","properties":{"p":{"$ref":"#/$defs/b"}}}""")]
+    public async Task A_reference_with_siblings_at_the_top_of_a_schema_can_be_read(string text)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(text);
+
+        string[] components = await ComponentsAsync(schema, schema);
+
+        Assert.NotEmpty(components);
+    }
+
     [Fact]
     public async Task Two_different_schemas_named_alike_still_clash()
     {

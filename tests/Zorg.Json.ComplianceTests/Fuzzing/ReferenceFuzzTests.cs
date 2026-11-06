@@ -184,7 +184,8 @@ public sealed class ReferenceFuzzTests
         try
         {
             // The same names with other content, which is what two endpoints with a $defs of their own look like.
-            ReferenceCase? changed = ReferenceCase.Build("plain", first.Replace("\"type\":\"string\"", "\"type\":\"boolean\"", StringComparison.Ordinal).Replace("\"maximum\":5", "\"maximum\":6", StringComparison.Ordinal), "{}", dialect);
+            string changedText = first.Replace("\"type\":\"string\"", "\"type\":\"boolean\"", StringComparison.Ordinal).Replace("\"maximum\":5", "\"maximum\":6", StringComparison.Ordinal);
+            ReferenceCase? changed = ReferenceCase.Build("plain", changedText, "{}", dialect);
             List<EmitResult> results = [one.Probe.Emit(options), two.Probe.Emit(options), one.Probe.Emit(options)];
 
             if (changed is not null)
@@ -205,6 +206,19 @@ public sealed class ReferenceFuzzTests
             if (!ReferenceChecker.SameDefinitions(left, right))
             {
                 report.AddTogether(iteration, "h-wrapper-changes-definitions", "a definition depends on what is around it", first);
+            }
+
+            // Naming, with full tags and with tags so short that they collide, says what no naming says.
+            if (changed is not null)
+            {
+                JsonValueSchema other = Z.FromJsonSchema(changedText, new() { DefaultDialect = dialect, MaxNodes = 5_000 });
+                ObjectSchema together = Z.Object().Property("x", named).Property("y", other.Named("Y")).Property("z", other).Property("w", Z.FromJsonSchema(second, new() { DefaultDialect = dialect, MaxNodes = 5_000 }));
+                string meaning = ReferenceChecker.Meaning(together.Emit(options with { DefinitionTagLength = 0 }));
+
+                if (ReferenceChecker.Meaning(together.Emit(options)) != meaning || ReferenceChecker.Meaning(together.Emit(options with { DefinitionTagLength = 1 })) != meaning)
+                {
+                    report.AddTogether(iteration, "h-definitions-merged", "naming changed what a reference means", first);
+                }
             }
         }
         catch (InvalidOperationException exception)

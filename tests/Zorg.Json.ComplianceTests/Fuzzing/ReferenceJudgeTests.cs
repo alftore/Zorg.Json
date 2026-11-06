@@ -243,6 +243,22 @@ public sealed class ReferenceJudgeTests
     }
 
     [Fact]
+    public void Judge_h_sees_a_reference_aimed_at_the_wrong_definition()
+    {
+        JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };
+        ObjectSchema schema = Z.Object()
+            .Property("x", Z.FromJsonSchema("""{"$defs":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/a"}}}"""))
+            .Property("y", Z.FromJsonSchema("""{"$defs":{"a":{"type":"integer"}},"properties":{"p":{"$ref":"#/$defs/a"}}}"""));
+        string meaning = ReferenceChecker.Meaning(schema.Emit(options with { DefinitionTagLength = 0 }));
+        EmitResult result = schema.Emit(options);
+        Assert.Equal(meaning, ReferenceChecker.Meaning(result));
+
+        result.Schema["properties"]!["y"]!["properties"]!["p"]!["$ref"] = result.Schema["properties"]!["x"]!["properties"]!["p"]!["$ref"]!.DeepClone();
+
+        Assert.NotEqual(meaning, ReferenceChecker.Meaning(result));
+    }
+
+    [Fact]
     public void Judge_h_tells_when_definitions_differ()
     {
         JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };

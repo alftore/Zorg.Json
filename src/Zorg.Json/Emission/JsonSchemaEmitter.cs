@@ -294,8 +294,14 @@ internal sealed class JsonSchemaEmitter
 
         DropRepeatedAnchors();
 
-        if (_leaving.Count > 0)
+        if (_leaving.Count > 0 && _options.DefinitionTagLength > 0)
         {
+            // The hash reads every reference as it will be written, and those to a definition being named as that definition's hash.
+            foreach (Site site in _sites)
+            {
+                site.Holder["$ref"] = Spell(site);
+            }
+
             NameLeavingDefinitions();
 
             foreach (Site site in _sites)
@@ -513,18 +519,23 @@ internal sealed class JsonSchemaEmitter
             _definitions.Remove(leaving.Name);
         }
 
-        HashSet<string> named = new(StringComparer.Ordinal);
+        // The same hash is the same content, so a schema used twice in a document is written once. Different content that shares a tag gets the whole hash.
+        Dictionary<string, string> names = new(StringComparer.Ordinal);
 
-        foreach (LeavingDefinition leaving in _leaving)
+        foreach (IGrouping<string, LeavingDefinition> tagged in _leaving.GroupBy(leaving => $"{leaving.Label}-{leaving.Hash![.._options.DefinitionTagLength]}", StringComparer.Ordinal))
         {
-            // The same name means the same content, so a schema used twice in a document needs it once.
-            if (named.Add(leaving.Final!))
-            {
-                leaving.Final = UniqueName(leaving.Final!);
-                _definitions[leaving.Final] = leaving.Node!;
-            }
+            bool isClash = tagged.Select(leaving => leaving.Hash).Distinct(StringComparer.Ordinal).Skip(1).Any();
 
-            _pointing!.Definitions[leaving.Node!] = leaving.Final!;
+            foreach (LeavingDefinition leaving in tagged)
+            {
+                if (!names.TryGetValue(leaving.Hash!, out string? name))
+                {
+                    name = names[leaving.Hash!] = UniqueName(isClash ? $"{leaving.Label}-{leaving.Hash}" : tagged.Key);
+                    _definitions[name] = leaving.Node!;
+                }
+
+                _pointing!.Definitions[leaving.Node!] = name;
+            }
         }
     }
 
@@ -548,7 +559,7 @@ internal sealed class JsonSchemaEmitter
         {
             foreach ((Site site, LeavingDefinition to, string tail) in member.References)
             {
-                site.Holder["$ref"] = $"#{to.Final ?? to.Position.ToString(CultureInfo.InvariantCulture) + to.Label}{tail}";
+                site.Holder["$ref"] = $"#{to.Hash ?? to.Position.ToString(CultureInfo.InvariantCulture) + to.Label}{tail}";
             }
 
             text.Append(member.Label).Append(' ').Append(member.Node!.ToJsonString()).Append('\n');
@@ -558,7 +569,7 @@ internal sealed class JsonSchemaEmitter
 
         foreach (LeavingDefinition member in component)
         {
-            member.Final = $"{member.Label}-{Sha(whole + member.Position.ToString(CultureInfo.InvariantCulture))[..8]}";
+            member.Hash = Sha(whole + member.Position.ToString(CultureInfo.InvariantCulture));
         }
     }
 
@@ -581,7 +592,7 @@ internal sealed class JsonSchemaEmitter
 
         public int Position { get; set; }
 
-        public string? Final { get; set; }
+        public string? Hash { get; set; }
     }
 
     /// <summary>A target that was a definition of its document keeps its name.</summary>

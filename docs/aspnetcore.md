@@ -54,7 +54,7 @@ app.MapPost("/people", (Validated<Person> person) => Results.Ok(person.Value))
     .ProducesSchema(PersonSchema);
 ```
 
-Request bodies use `Direction = Input` and responses use `Output`, both with `JsonSchemaProfile.OpenApi31`. The `$defs` of an imported schema become components too, named `a-3fa9c21e`: the hash covers the definition and all it reaches, so endpoints with the same definition share a component and different ones never clash, in any order. Schemas marked `.Named("x")` become components, and response ones get an `Output.` prefix because the two directions can differ. Two different schemas with the same name in one document throw an `InvalidOperationException` that names the clash, rather than silently keeping the first.
+Request bodies use `Direction = Input` and responses use `Output`, both with `JsonSchemaProfile.OpenApi31`. The `$defs` of an imported schema become components too, named `a-3fa9c21e7d10b6e4`: the hash covers the definition and all it reaches, so endpoints with the same definition share a component and different ones never clash, in any order. Schemas marked `.Named("x")` become components, and response ones get an `Output.` prefix because the two directions can differ. Two different schemas with the same name in one document throw an `InvalidOperationException` that names the clash, rather than silently keeping the first.
 
 Reference `Microsoft.AspNetCore.OpenApi` directly from your app as well, because its MSBuild targets don't flow through this package. Under Native AOT the document needs `AddProblemDetails()`, because it describes the 400 response.
 

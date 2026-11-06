@@ -59,6 +59,9 @@ public sealed record JsonSchemaOptions
     /// <see cref="EmitResult.Definitions"/> instead of the document. Default: <c>#/$defs/</c>.
     /// </summary>
     public string? ReferencePrefix { get; init; }
+
+    /// <summary>How many hex digits of its hash a definition that leaves the document has in its name. Tests force collisions with this, and 0 leaves names unhashed.</summary>
+    internal int DefinitionTagLength { get; init; } = 16;
 }
 
 /// <summary>What an emitted schema describes. Zod equivalent: the <c>io</c> option of <c>z.toJSONSchema</c>.</summary>
