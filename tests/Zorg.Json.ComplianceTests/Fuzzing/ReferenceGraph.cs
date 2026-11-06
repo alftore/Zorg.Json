@@ -30,6 +30,7 @@ internal sealed class ReferenceGraph
     private readonly HashSet<(string Resource, string Anchor)> _anchors = [];
     private readonly List<(string Reference, string Resource, string Pointer)> _references = [];
     private readonly List<string> _ids = [];
+    private readonly Dictionary<string, string> _bases = new(StringComparer.Ordinal);
     private readonly List<string> _duplicateAnchors = [];
 
     private ReferenceGraph(JsonNode root, JsonSchemaDialect dialect)
@@ -70,7 +71,10 @@ internal sealed class ReferenceGraph
 
             if (fragment != 0 && !(IsLegacyRef && schema.ContainsKey("$ref")))
             {
-                _ids.Add(text.TrimEnd('#'));
+                string baseUri = _bases.GetValueOrDefault(resource, "http://document.invalid/");
+                string uri = Uri.TryCreate(new Uri(baseUri), text.TrimEnd('#'), out Uri? resolved) ? resolved.AbsoluteUri : text.TrimEnd('#');
+                _ids.Add(uri);
+                _bases[pointer] = uri;
             }
 
             if (fragment != 0 && !(IsLegacyRef && schema.ContainsKey("$ref")) && pointer.Length > 0)

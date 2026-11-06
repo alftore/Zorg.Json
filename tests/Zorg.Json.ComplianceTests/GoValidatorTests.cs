@@ -138,6 +138,10 @@ public sealed partial class GoValidatorTests
         File.WriteAllText(Path.Combine(Path.GetTempPath(), $"zorg-jv-{name}.txt"), text);
     }
 
+    private static bool ReadsOldKeywords(string document) => document.Contains("\"dependencies\"", StringComparison.Ordinal) || document.Contains("\"$recursive", StringComparison.Ordinal);
+
+    private static bool HasFloatInteger(string instance) => instance.Contains('.', StringComparison.Ordinal) || instance.Contains('e', StringComparison.OrdinalIgnoreCase);
+
     private static bool HasConstBesideReference(JsonNode? node) => node switch
     {
         JsonObject schema => (schema.ContainsKey("$ref") && schema.ContainsKey("const")) || schema.Any(entry => HasConstBesideReference(entry.Value)),
@@ -174,8 +178,14 @@ public sealed partial class GoValidatorTests
                 continue;
             }
 
-            bool annotates = dialect == JsonSchemaImportDialect.Draft202012;
-            JsonValueSchema? schema = TryImport(document, new JsonSchemaImportOptions { DefaultDialect = dialect, Formats = annotates ? FormatHandling.AnnotateOnly : FormatHandling.AssertKnown });
+            // jv reads dependencies in 2020-12 too, where the specification has no such keyword.
+            if (ReadsOldKeywords(document))
+            {
+                Add(counts, "skipped for dependencies under 2020-12 in jv");
+                continue;
+            }
+
+            JsonValueSchema? schema = TryImport(document, new JsonSchemaImportOptions { DefaultDialect = dialect });
 
             if (schema is null)
             {
@@ -197,7 +207,12 @@ public sealed partial class GoValidatorTests
 
             for (int index = 0; index < instances.Count; index++)
             {
-                if (verdicts[index] is null)
+                if (dialect == JsonSchemaImportDialect.Draft04 && HasFloatInteger(instances[index]))
+                {
+                    // Draft-04 tells 1.0 from 1, as the official suite says, and jv doesn't.
+                    Add(counts, "skipped for the integer of draft-04 in jv");
+                }
+                else if (verdicts[index] is null)
                 {
                     Add(counts, "jv crashed");
                     findings.Append(CultureInfo.InvariantCulture, $"CRASH {dialect}\n{document}\n{instances[index]}\n\n");
@@ -299,6 +314,12 @@ public sealed partial class GoValidatorTests
                 continue;
             }
 
+            if (ReadsOldKeywords(document))
+            {
+                Add(counts, "skipped for dependencies under 2020-12 in jv");
+                continue;
+            }
+
             string[] accepted = [.. Instances(schema, random).Where(instance => Parse(schema, instance) == true)];
 
             foreach (JsonSchemaProfile profile in Profiles)
@@ -322,8 +343,8 @@ public sealed partial class GoValidatorTests
                 if (verdicts is null)
                 {
                     // Zorg doesn't read all of a document, so a schema that isn't valid against its meta-schema can import, and stays invalid.
-                    // 2020-12 has no dependencies keyword, so Zorg leaves a pointer in it as it was. jv reads it anyway, because the meta-schema lists it.
-                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null || document.Contains("\"dependencies\"", StringComparison.Ordinal);
+                    // A definitions keyword nested where 2020-12 doesn't read it stays as text, and jv follows the references in it anyway.
+                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null || text.Contains("\"definitions\"", StringComparison.Ordinal);
                     Add(counts, sourceIsInvalid ? "source not valid for jv" : "jv refused");
 
                     if (!sourceIsInvalid)

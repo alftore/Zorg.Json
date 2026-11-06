@@ -66,6 +66,8 @@ internal sealed class JsonSchemaEmitter
     private string _base = DocumentBase;
 
     private HashSet<string>? _ids;
+    private HashSet<string>? _idTexts;
+    private HashSet<string>? _floatingIds;
     private List<(JsonObject Schema, string Anchor)>? _anchors;
     private Pointing? _pointing;
     private bool _writingHome;
@@ -1006,12 +1008,38 @@ internal sealed class JsonSchemaEmitter
         string id = requested;
 
         // Ids are compared as URIs: two nested ones with the same text are different under different bases.
-        for (int suffix = 2; !(_ids ??= new(StringComparer.Ordinal)).Add(Resolve(_base, id) ?? id.TrimEnd('#')); suffix++)
+        // The base of a document with no $id isn't known, so there the same text may turn out to be the same URI.
+        for (int suffix = 2; !IsFreeId(id); suffix++)
         {
             id = requested.TrimEnd('#') + "-" + suffix.ToString(CultureInfo.InvariantCulture);
         }
 
         return id;
+    }
+
+    private bool IsFreeId(string id)
+    {
+        string text = id.TrimEnd('#');
+        string uri = Resolve(_base, id) ?? text;
+        bool floats = uri.StartsWith(DocumentBase, StringComparison.Ordinal);
+        _ids ??= new(StringComparer.Ordinal);
+        _floatingIds ??= new(StringComparer.Ordinal);
+        _idTexts ??= new(StringComparer.Ordinal);
+
+        if (_ids.Contains(uri) || _floatingIds.Contains(text) || (floats && _idTexts.Contains(text)))
+        {
+            return false;
+        }
+
+        _ids.Add(uri);
+        _idTexts.Add(text);
+
+        if (floats)
+        {
+            _floatingIds.Add(text);
+        }
+
+        return true;
     }
 
     private JsonObject EmitFields(SchemaNode source, string location)
