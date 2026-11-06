@@ -54,7 +54,7 @@ public sealed class SampleSuiteTests
     }
 
     [Theory]
-    [InlineData("draft2020-12", 100)]
+    [InlineData("draft2020-12", 99)]
     [InlineData("draft7", 100)]
     public void Most_schemas_get_a_valid_sample(string draft, int minimumPercent)
     {

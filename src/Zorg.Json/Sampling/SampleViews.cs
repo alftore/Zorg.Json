@@ -88,7 +88,9 @@ internal sealed class SampleViews
 
     private static SchemaNode Base(SchemaNode node)
     {
-        SchemaNode? additional = node.AdditionalProperties ?? node.UnevaluatedProperties;
+        // Beside other subschemas these depend on what those evaluate, which a view can't tell. The finished sample is checked anyway.
+        bool isolated = node.Ref is null && node.AllOf.IsEmpty && node.AnyOf.IsEmpty && node.OneOf.IsEmpty && node.Not is null && node.If is null && node.DependentSchemas.IsEmpty;
+        SchemaNode? additional = node.AdditionalProperties ?? (isolated ? node.UnevaluatedProperties : null);
 
         if (additional is null && node.Behavior.UnknownProperties == UnknownProperties.Reject)
         {
@@ -107,7 +109,7 @@ internal sealed class SampleViews
             Then = null,
             Else = null,
             DependentSchemas = [],
-            Items = node.Items ?? node.UnevaluatedItems,
+            Items = node.Items ?? (isolated && node.Contains is null ? node.UnevaluatedItems : null),
             UnevaluatedItems = null,
             AdditionalProperties = additional,
             UnevaluatedProperties = null,

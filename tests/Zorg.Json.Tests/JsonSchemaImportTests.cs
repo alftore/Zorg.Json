@@ -39,13 +39,6 @@ public sealed class JsonSchemaImportTests
     [Theory]
     [InlineData("""{ "$dynamicRef": "#a" }""", "/$dynamicRef")]
     [InlineData("""{ "$defs": { "a": { "$dynamicAnchor": "a" } } }""", "/$defs/a/$dynamicAnchor")]
-    [InlineData("""{ "unevaluatedProperties": false, "allOf": [{}] }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedProperties": false, "anyOf": [{}] }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedProperties": false, "oneOf": [{}] }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedProperties": false, "if": {} }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedProperties": false, "$ref": "#/$defs/a", "$defs": { "a": {} } }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedProperties": false, "dependentSchemas": { "a": {} } }""", "/unevaluatedProperties")]
-    [InlineData("""{ "unevaluatedItems": false, "contains": {} }""", "/unevaluatedItems")]
     public void Keywords_it_cant_honour_are_errors(string schema, string location) =>
         AssertFails(schema, JsonSchemaImportCodes.UnsupportedKeyword, location);
 

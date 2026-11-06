@@ -37,56 +37,6 @@
     },
     {
       "kind": "ImportError",
-      "code": "unsupported_keyword",
-      "reason": "unevaluated* beside an in-place applicator needs annotation collection, which is out of scope for v1 (note 05 A.2).",
-      "cases": {
-        "draft2020-12/not.json": [
-          "collect annotations inside a 'not', even if collection is disabled"
-        ],
-        "draft2020-12/unevaluatedItems.json": [
-          "unevaluatedItems with nested tuple",
-          "unevaluatedItems with nested items",
-          "unevaluatedItems with nested prefixItems and items",
-          "unevaluatedItems with nested unevaluatedItems",
-          "unevaluatedItems with anyOf",
-          "unevaluatedItems with oneOf",
-          "unevaluatedItems with if/then/else",
-          "unevaluatedItems with boolean schemas",
-          "unevaluatedItems with $ref",
-          "unevaluatedItems before $ref",
-          "unevaluatedItems depends on adjacent contains",
-          "unevaluatedItems depends on multiple nested contains",
-          "unevaluatedItems and contains interact to control item dependency relationship",
-          "unevaluatedItems with minContains = 0",
-          "unevaluatedItems can see annotations from if without then and else"
-        ],
-        "draft2020-12/unevaluatedProperties.json": [
-          "unevaluatedProperties with nested properties",
-          "unevaluatedProperties with nested patternProperties",
-          "unevaluatedProperties with nested additionalProperties",
-          "unevaluatedProperties with nested unevaluatedProperties",
-          "unevaluatedProperties with anyOf",
-          "unevaluatedProperties with oneOf",
-          "unevaluatedProperties with if/then/else",
-          "unevaluatedProperties with if/then/else, then not defined",
-          "unevaluatedProperties with if/then/else, else not defined",
-          "unevaluatedProperties with dependentSchemas",
-          "unevaluatedProperties with boolean schemas",
-          "unevaluatedProperties with $ref",
-          "unevaluatedProperties before $ref",
-          "nested unevaluatedProperties, outer false, inner true, properties outside",
-          "nested unevaluatedProperties, outer false, inner true, properties inside",
-          "nested unevaluatedProperties, outer true, inner false, properties outside",
-          "nested unevaluatedProperties, outer true, inner false, properties inside",
-          "unevaluatedProperties + ref inside allOf / oneOf",
-          "dynamic evaluation inside nested refs",
-          "unevaluatedProperties can see annotations from if without then and else",
-          "dependentSchemas with unevaluatedProperties"
-        ]
-      }
-    },
-    {
-      "kind": "ImportError",
       "code": "unresolved_ref",
       "reason": "$ref is local only in v1: #, JSON Pointer and $anchor. Remote, URN, absolute and relative-URI targets are refused, and nothing is fetched (note 05 A.4).",
       "cases": {

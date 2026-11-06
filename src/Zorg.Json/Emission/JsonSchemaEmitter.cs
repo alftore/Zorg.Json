@@ -1581,8 +1581,19 @@ internal sealed class JsonSchemaEmitter
         }
         else
         {
-            WriteSingle(schema, "unevaluatedItems", node.UnevaluatedItems, location);
-            WriteSingle(schema, "unevaluatedProperties", node.UnevaluatedProperties, location);
+            // Subschemas of an if that is left out evaluate nothing in the written schema, which would make these stricter than parsing.
+            bool lost = (node.UnevaluatedItems is not null || node.UnevaluatedProperties is not null) && IsInput && LosesEvaluations(node);
+
+            if (lost)
+            {
+                UnsupportedIf(node.UnevaluatedItems is not null, "unevaluatedItems", notes, location);
+                UnsupportedIf(node.UnevaluatedProperties is not null, "unevaluatedProperties", notes, location);
+            }
+            else
+            {
+                WriteSingle(schema, "unevaluatedItems", node.UnevaluatedItems, location);
+                WriteSingle(schema, "unevaluatedProperties", node.UnevaluatedProperties, location);
+            }
         }
     }
 
@@ -1685,6 +1696,47 @@ internal sealed class JsonSchemaEmitter
         }
 
         return true;
+    }
+
+    /// <summary>True when a subschema that applies to the same value has an <c>if</c> that isn't written, so what it evaluates is lost.</summary>
+    private bool LosesEvaluations(SchemaNode root)
+    {
+        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+        Stack<SchemaNode> pending = new();
+        pending.Push(root);
+
+        while (pending.TryPop(out SchemaNode? node))
+        {
+            if (!visited.Add(node))
+            {
+                continue;
+            }
+
+            if (visited.Count > SchemaExactness.MaxWalked)
+            {
+                throw SchemaExactness.TooLarge();
+            }
+
+            if (node.If is { } condition && !_exactness.IsExact(condition, out _))
+            {
+                return true;
+            }
+
+            foreach (SchemaNode child in node.AllOf.Concat(node.AnyOf).Concat(node.OneOf).Concat(node.DependentSchemas.Select(entry => entry.Schema)))
+            {
+                pending.Push(child);
+            }
+
+            foreach (SchemaNode? child in new[] { node.If, node.Then, node.Else, node.Behavior.Target?.Invoke() })
+            {
+                if (child is not null)
+                {
+                    pending.Push(child);
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The types a subschema's written form can accept, or <see cref="JsonTypes.None"/> when that isn't known. Follows references.</summary>

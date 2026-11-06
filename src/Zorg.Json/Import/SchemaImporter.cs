@@ -73,9 +73,6 @@ internal sealed class SchemaImporter
         "propertyNames", "minProperties", "maxProperties", "allOf", "anyOf", "oneOf", "not",
     }.ToFrozenSet(StringComparer.Ordinal);
 
-    /// <summary>In-place applicators feed <c>unevaluated*</c> with annotations, which Zorg doesn't collect.</summary>
-    private static readonly string[] InPlaceApplicators = ["$ref", "allOf", "anyOf", "oneOf", "if", "dependentSchemas"];
-
     private readonly JsonElement _root;
     private readonly JsonSchemaImportOptions _options;
     private readonly JsonSchemaImportDialect _dialect;
@@ -308,24 +305,6 @@ internal sealed class SchemaImporter
             if (values.ContainsKey(keyword))
             {
                 throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} needs a dynamic scope at validation time, which Zorg doesn't have.");
-            }
-        }
-
-        foreach (string keyword in (ReadOnlySpan<string>)["unevaluatedItems", "unevaluatedProperties"])
-        {
-            if (values.ContainsKey(keyword))
-            {
-                string? beside = InPlaceApplicators.FirstOrDefault(values.ContainsKey);
-
-                if (beside is null && keyword == "unevaluatedItems" && values.ContainsKey("contains"))
-                {
-                    beside = "contains";
-                }
-
-                if (beside is not null)
-                {
-                    throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} beside {beside} needs annotation collection, which Zorg doesn't have.");
-                }
             }
         }
     }

@@ -51,6 +51,12 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _if;
     private readonly ValidationPlan? _then;
     private readonly ValidationPlan? _else;
+
+    /// <summary>Set when <c>unevaluatedItems</c> depends on what subschemas evaluated, so it runs after them. Otherwise it reads like <c>items</c>.</summary>
+    private readonly ValidationPlan? _unevaluatedItems;
+
+    /// <summary>Set when <c>unevaluatedProperties</c> depends on what subschemas evaluated, so it runs after them. Otherwise it reads like <c>additionalProperties</c>.</summary>
+    private readonly ValidationPlan? _unevaluatedProperties;
     private readonly Dictionary<SchemaNode, ValidationPlan> _plans;
     private readonly ImmutableArray<(string Name, SchemaNode Node)> _defaults;
     private readonly int _lookups;
@@ -79,7 +85,11 @@ internal sealed class ValidationPlan
         _readsStrings = node.Types.HasFlag(JsonTypes.String) || _pattern is not null || _format is not null || node.MinLength is not null
             || node.MaxLength is not null || !node.Behavior.Normalizers.IsEmpty;
         _prefixItems = List(node.PrefixItems);
-        _items = Single(node.Items ?? node.UnevaluatedItems);
+        bool readsInPlace = node.Behavior.Target is not null || !node.AllOf.IsEmpty || !node.AnyOf.IsEmpty || !node.OneOf.IsEmpty
+            || node.If is not null || !node.DependentSchemas.IsEmpty;
+        _unevaluatedItems = node.Items is null && (readsInPlace || node.Contains is not null) ? Single(node.UnevaluatedItems) : null;
+        _unevaluatedProperties = node.AdditionalProperties is null && readsInPlace ? Single(node.UnevaluatedProperties) : null;
+        _items = Single(node.Items ?? (_unevaluatedItems is null ? node.UnevaluatedItems : null));
         _itemsKeyword = node.Items is null ? "unevaluatedItems" : "items";
         _contains = Single(node.Contains);
         _properties = node.Properties.Where(property => !property.OutputOnly).ToFrozenDictionary(property => property.Name, property => Get(property.Schema, plans), StringComparer.Ordinal);
@@ -87,10 +97,10 @@ internal sealed class ValidationPlan
             ? node.Properties.Select(property => property.Name).ToFrozenSet(StringComparer.OrdinalIgnoreCase)
             : null;
         _patternProperties = [.. node.PatternProperties.Select(property => (property.Name, PatternCompiler.Compile(property.Name), Get(property.Schema, plans)))];
-        _additionalProperties = Single(node.AdditionalProperties ?? node.UnevaluatedProperties);
+        _additionalProperties = Single(node.AdditionalProperties ?? (_unevaluatedProperties is null ? node.UnevaluatedProperties : null));
         _additionalKeyword = node.AdditionalProperties is null ? "unevaluatedProperties" : "additionalProperties";
         _closedBy = node.AdditionalProperties?.BooleanValue == false ? "additionalProperties"
-            : node.AdditionalProperties is null && node.UnevaluatedProperties?.BooleanValue == false ? "unevaluatedProperties"
+            : node.AdditionalProperties is null && _unevaluatedProperties is null && node.UnevaluatedProperties?.BooleanValue == false ? "unevaluatedProperties"
             : null;
         _propertyNames = Single(node.PropertyNames);
         _dependentSchemas = [.. node.DependentSchemas.Select(property => (property.Name, Get(property.Schema, plans)))];
@@ -199,7 +209,13 @@ internal sealed class ValidationPlan
             // A size bound that failed has already made this value invalid, and nothing below can undo that.
             if (!settled)
             {
+                JsonElement original = value;
                 value = RunApplicators(value, context);
+
+                if (context.IssueCount == issues && !context.Halted)
+                {
+                    RunUnevaluated(original, context);
+                }
 
                 if (context.IssueCount == issues && !context.Halted)
                 {
@@ -1087,6 +1103,243 @@ internal sealed class ValidationPlan
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Applies <c>unevaluatedProperties</c> and <c>unevaluatedItems</c> to what no subschema evaluated. This only runs on a value
+    /// that has passed everything else, because a subschema that failed evaluated nothing, and the verdict is already known.
+    /// Finding what was evaluated runs the branches again, which only a schema with these keywords pays for.
+    /// </summary>
+    private void RunUnevaluated(JsonElement value, ValidationContext context)
+    {
+        if (_unevaluatedProperties is not null && value.ValueKind == JsonValueKind.Object)
+        {
+            RunUnevaluatedProperties(value, context);
+        }
+        else if (_unevaluatedItems is not null && value.ValueKind == JsonValueKind.Array)
+        {
+            RunUnevaluatedItems(value, context);
+        }
+    }
+
+    private void RunUnevaluatedProperties(JsonElement value, ValidationContext context)
+    {
+        HashSet<string> evaluated = new(StringComparer.Ordinal);
+
+        if (!CollectProperties(value, evaluated, context, isOwner: true))
+        {
+            return;
+        }
+
+        List<string>? unknown = null;
+
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (context.Halted)
+            {
+                return;
+            }
+
+            string name = JsonText.GetName(property);
+
+            if (evaluated.Contains(name))
+            {
+                continue;
+            }
+
+            if (_unevaluatedProperties!._node.BooleanValue == false)
+            {
+                (unknown ??= []).Add(name);
+                continue;
+            }
+
+            context.Push(name);
+            context.Walk("unevaluatedProperties");
+            _unevaluatedProperties.Run(property.Value, context);
+            context.Unwalk();
+            context.Pop();
+        }
+
+        if (unknown is not null)
+        {
+            string[] keys = [.. unknown.Take(ValidationContext.MaxListedKeys)];
+            context.Report(IssueCodes.UnrecognizedKeys, "unevaluatedProperties", IssueCodes.UnrecognizedKeys, "keys", keys, string.Join(", ", keys) + (unknown.Count > keys.Length ? $", and {unknown.Count - keys.Length} more" : string.Empty));
+        }
+    }
+
+    private void RunUnevaluatedItems(JsonElement value, ValidationContext context)
+    {
+        bool[] evaluated = new bool[value.GetArrayLength()];
+
+        if (!CollectItems(value, evaluated, context, isOwner: true))
+        {
+            return;
+        }
+
+        int index = 0;
+
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (context.Halted)
+            {
+                return;
+            }
+
+            if (!evaluated[index])
+            {
+                context.Push(index);
+                context.Walk("unevaluatedItems");
+                _unevaluatedItems!.Run(item, context);
+                context.Unwalk();
+                context.Pop();
+            }
+
+            index++;
+        }
+    }
+
+    /// <summary>Runs a subschema to see whether it passes, which decides whether what it evaluated counts.</summary>
+    private static bool Passes(ValidationPlan plan, JsonElement value, ValidationContext context)
+    {
+        ValidationContext fork = context.Fork();
+        plan.Run(value, fork);
+        return !fork.HasIssues;
+    }
+
+    /// <summary>
+    /// The subschemas that apply to the same value and passed. A subschema of a passed <c>allOf</c> or <c>$ref</c> passed too, so
+    /// only the keywords that can fail without failing this schema are run.
+    /// </summary>
+    private IEnumerable<ValidationPlan> PassedInPlace(JsonElement value, ValidationContext context)
+    {
+        if (_node.Behavior.Target is not null)
+        {
+            yield return Target();
+        }
+
+        foreach (ValidationPlan plan in _allOf)
+        {
+            yield return plan;
+        }
+
+        foreach (ValidationPlan plan in _anyOf.Concat(_oneOf))
+        {
+            if (Passes(plan, value, context))
+            {
+                yield return plan;
+            }
+        }
+
+        if (_if is not null)
+        {
+            bool passed = Passes(_if, value, context);
+
+            if (passed)
+            {
+                yield return _if;
+            }
+
+            if ((passed ? _then : _else) is { } branch)
+            {
+                yield return branch;
+            }
+        }
+
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            foreach ((string name, ValidationPlan plan) in _dependentSchemas)
+            {
+                if (JsonText.TryGetProperty(value, name, out _))
+                {
+                    yield return plan;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds the names this subschema evaluated, which it may only be asked once it has passed. False when a limit stopped the search.
+    /// An <c>unevaluatedProperties</c> that passed evaluated every name, unless it's the one asking, which is <paramref name="isOwner"/>.
+    /// </summary>
+    private bool CollectProperties(JsonElement value, HashSet<string> evaluated, ValidationContext context, bool isOwner = false)
+    {
+        if (_node.BooleanValue is not null)
+        {
+            return true;
+        }
+
+        if (!context.Enter())
+        {
+            return false;
+        }
+
+        bool finished = context.Spend((value.GetPropertyCount() / 16) + 1);
+
+        if (finished)
+        {
+            foreach (JsonProperty property in value.EnumerateObject())
+            {
+                string name = JsonText.GetName(property);
+
+                if (_node.AdditionalProperties is not null || (_node.UnevaluatedProperties is not null && !isOwner) || _properties.ContainsKey(name)
+                    || _patternProperties.Any(entry => Matches(entry.Pattern, name, context)))
+                {
+                    evaluated.Add(name);
+                }
+            }
+
+            foreach (ValidationPlan plan in PassedInPlace(value, context))
+            {
+                if (context.Halted || !plan.CollectProperties(value, evaluated, context))
+                {
+                    finished = false;
+                    break;
+                }
+            }
+        }
+
+        context.Leave();
+        return finished && !context.Halted;
+    }
+
+    /// <summary>Marks the items this subschema evaluated, which it may only be asked once it has passed. False when a limit stopped the search.</summary>
+    private bool CollectItems(JsonElement value, bool[] evaluated, ValidationContext context, bool isOwner = false)
+    {
+        if (_node.BooleanValue is not null)
+        {
+            return true;
+        }
+
+        if (!context.Enter())
+        {
+            return false;
+        }
+
+        bool all = _node.Items is not null || (_node.UnevaluatedItems is not null && !isOwner);
+        bool finished = context.Spend((evaluated.Length / 16) + 1);
+
+        if (finished)
+        {
+            int index = 0;
+
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                evaluated[index] |= all || index < _prefixItems.Length || (_contains is not null && Passes(_contains, item, context));
+                index++;
+            }
+
+            foreach (ValidationPlan plan in PassedInPlace(value, context))
+            {
+                if (context.Halted || !plan.CollectItems(value, evaluated, context))
+                {
+                    finished = false;
+                    break;
+                }
+            }
+        }
+
+        context.Leave();
+        return finished && !context.Halted;
     }
 
     /// <summary>Built on first use: a long chain of references built up front could exhaust the stack.</summary>
