@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-preview.4
 
+**Breaking:** an imported Draft 2020-12 schema no longer checks `format` unless you ask. The specification says that checking "MUST be disabled by default". Pass `Formats = FormatHandling.AssertKnown` to keep checking. Draft-04, draft-06, draft-07 and OpenAPI 3.0 still check, which those drafts allow, and fluent schemas are unchanged. `FormatHandling.ByDialect` is the new default.
+
+- `unevaluatedProperties` and `unevaluatedItems` now work beside `$ref`, `allOf`, `anyOf`, `oneOf`, `if`, `dependentSchemas` and `contains`. These were refused with `unsupported_keyword`. A schema without them costs nothing extra. The emitter leaves them out with a diagnostic when an `if` beside them can't be written, because the written schema would otherwise be stricter than parsing.
+- A `$ref` can now reach any `$id` in the same document by URI: relative, absolute or URN, with a pointer or an anchor. Bundled documents import. Nothing is fetched, and what isn't in the document stays `unresolved_ref`. Refused cases of the official suite dropped from 252 to 88 for 2020-12, from 63 to 27 for draft-07, from 55 to 27 for draft-06 and from 32 to 21 for draft-04.
+- With `ReferencePrefix`, imported schemas no longer write `$id` or `$anchor`, because a pointer in a component reads from the whole document. A schema on two endpoints no longer repeats them, and two definitions that differ only in `#z` against `#/$defs/t` no longer throw. A root with an `$id` now moves its definitions to `EmitResult.Definitions` like any other.
+- The tests now also compare Zorg with a second independent validator, santhosh-tekuri/jsonschema, on generated documents. Set `ZORG_JV` to the path of its `jv` tool to run them. CI does.
 - Fixed an imported `oneOf` of objects being written as `anyOf` when a branch held a `format`, though the branches exclude each other, as in a discriminated union or closed objects with different required properties. It now stays `oneOf` when each pair of branches shares no type, or shares only `object` and one requires a property the other forbids or limits to other values. These schemas round trip, and `UnrepresentablePolicy.Throw` doesn't throw on them. Only `required`, `properties`, `additionalProperties`, `const` and `enum` count, because every validator applies those. Branches without a `type` still become `anyOf`, since a string would match both.
 
 ## 0.1.0-preview.3

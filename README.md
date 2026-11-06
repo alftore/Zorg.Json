@@ -73,12 +73,12 @@ Imported schemas run against the official [JSON-Schema-Test-Suite](https://githu
 
 | Draft | Passed | Refused at import | Failed |
 |---|---|---|---|
-| 2020-12 | 1,993 | 252 | 0 |
-| Draft-07 | 1,716 | 63 | 0 |
-| Draft-06 | 1,223 | 55 | 0 |
-| Draft-04 | 894 | 32 | 0 |
+| 2020-12 | 2,157 | 88 | 0 |
+| Draft-07 | 1,752 | 27 | 0 |
+| Draft-06 | 1,251 | 27 | 0 |
+| Draft-04 | 905 | 21 | 0 |
 
-The refused cases are features that are out of scope, such as remote `$ref`, `$dynamicRef`, and `unevaluated*` beside an in-place applicator. Passed counts include the optional format, big number and float overflow tests.
+The refused cases are features that are out of scope: a `$ref` to another document, `$dynamicRef`, and custom meta-schemas. Passed counts include the optional format, big number and float overflow tests, which run with `format` checking turned on: 2020-12 leaves it off by default, as the specification requires. CI also compares Zorg with a second independent validator on generated documents.
 
 ## How this is built
 

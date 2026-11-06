@@ -321,7 +321,7 @@ JsonObject schema = PersonSchema.ToJsonSchema();
 - Refinements are C#.
 - Constraints after `Trim` and similar steps. `Z.String().Trim().MaxLength(3)` accepts `"  abc  "`, so emitting `maxLength: 3` would wrongly reject it.
 - Parts of a schema a dialect has no keyword for.
-- `format`, which Zorg enforces and other validators may treat as a note.
+- `format`, which fluent schemas enforce and other validators may treat as a note. An imported Draft 2020-12 schema treats it as a note too, unless you set `Formats = FormatHandling.AssertKnown`.
 
 Leaving a rule out makes a schema looser, but under `not`, `if`, `maxContains` or `oneOf` a looser subschema would make the document **stricter**. So a subschema that can't be stated exactly takes that keyword with it: `not`, `if` and `maxContains` are left out, and `oneOf` becomes `anyOf`. This applies to any subschema with a normalizer, a refinement, a known format, or a .NET numeric range. Discriminated unions stay `oneOf`, because their branches can't overlap. So do branches of different types, such as a nullable `$ref` to an object, and object branches where one requires a property that the other forbids or limits to other values. That covers an imported discriminated union and closed objects with different required properties, when each branch states `"type": "object"`. Branches that can overlap once a rule is ignored, such as two string formats, become `anyOf`, and `UnrepresentablePolicy.Throw` throws on those. A very large union can also become `anyOf`: one emission makes at most 2,000,000 comparisons for this.
 

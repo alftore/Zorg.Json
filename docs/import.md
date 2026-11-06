@@ -17,21 +17,25 @@ Imported schemas follow the document, not Zorg's fluent defaults: an absent `add
 
 Draft 2020-12, Draft-07, Draft-06, Draft-04 and OpenAPI 3.0. The first four are detected from `$schema`. With no `$schema`, 2020-12 is assumed, and `JsonSchemaImportOptions.DefaultDialect` can override that. An OpenAPI 3.0 schema has no `$schema`, so it can only be chosen that way: see [OpenAPI 3.0](#openapi-30).
 
-All core, applicator and validation keywords are honoured, including `not`, `if`/`then`/`else`, `dependent*`, `$anchor` and local `$ref` with cycles. All 2020-12 formats are enforced, which JSON Schema leaves optional. Content keywords are annotations. Unknown and `x-*` keywords are kept and emitted again.
+All core, applicator and validation keywords are honoured, including `not`, `if`/`then`/`else`, `dependent*`, `unevaluated*`, `$anchor` and `$ref` with cycles. Content keywords are annotations.
+
+`format` follows the specification. In Draft 2020-12 it is an annotation unless you set `Formats = FormatHandling.AssertKnown`, because the specification says checking "MUST be disabled by default". Draft-04, draft-06, draft-07 and OpenAPI 3.0 allow checking, so Zorg checks there unless you set `FormatHandling.AnnotateOnly`. Fluent schemas always check. With checking on, all 2020-12 formats are enforced.
+
+A `$ref` reaches `#`, a JSON Pointer, an `$anchor` and any `$id` in the same document, by a relative, absolute or URN reference. Nothing is ever fetched. Unknown and `x-*` keywords are kept and emitted again.
 
 **Nothing is dropped silently.** A schema that can't be honoured throws `JsonSchemaImportException`, with a stable `Code` and the schema location:
 
 | Code | Meaning |
 |---|---|
-| `unsupported_keyword` | `$dynamicRef`, `$dynamicAnchor`, or `unevaluated*` beside an in-place applicator such as `allOf` |
+| `unsupported_keyword` | `$dynamicRef` and `$dynamicAnchor` |
 | `unsupported_dialect` | Draft-03, 2019-09 or a custom meta-schema. Also a boolean `nullable` in a document with no `$schema`, while `DefaultDialect` is left alone, because that is OpenAPI 3.0 and `nullable` would be ignored |
-| `unresolved_ref` | A `$ref` that isn't local, or points at nothing. Nothing is ever fetched |
+| `unresolved_ref` | A `$ref` to something that isn't in the document, or that points at nothing. Nothing is ever fetched |
 | `ref_cycle` | A reference cycle that never consumes input, such as `{ "$ref": "#" }` |
 | `invalid_pattern` | A pattern that isn't valid ECMA-262 |
 | `invalid_schema` | A keyword with an invalid value, such as an empty array-form `items`. Also text that isn't valid Unicode where Zorg reads it: an unpaired surrogate such as `\ud800` in a keyword, a property name, `$ref`, `$schema` or `required`. A `const`, `enum` or unknown keyword that holds one is only kept. Emitting the schema again leaves such a `const` or `enum` out with a diagnostic (and the schema is inexact under `not`, `if` and `oneOf`), because it can't be written as JSON from .NET |
 | `limit_exceeded` | The document is too deep or too large for the options, or its patterns add up to more than `MaxTotalPatternLength` |
 
-`unevaluated*` works when no in-place applicator sits beside it, where it's equivalent to `additionalProperties` or `items`.
+`unevaluated*` looks at what the subschemas beside it evaluated, as the specification says. It only runs on a value that passed everything else, and it runs the branches of `anyOf`, `oneOf` and `if` a second time to see which passed, so a schema with these keywords costs more and a refinement in such a branch runs twice. Emitted to a dialect without them, they're left out. They're also left out when an `if` beside them can't be written, with a diagnostic, because what that `if` evaluates would be lost and the written schema would reject what parsing accepts.
 
 The defaults for depth, node count, pattern length and the total length of all patterns are in `JsonSchemaImportOptions`. Lower them for documents you don't trust.
 

@@ -300,6 +300,68 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task A_nested_reference_keeps_what_sits_beside_it()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"$defs":{"a":{"type":"string"}},"type":"object","properties":{"p":{"$ref":"#/$defs/a","minLength":2,"description":"beside"}}}
+            """);
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/things", ([FromBody] JsonElement body) => body).ValidateBody(schema));
+        string text = document.GetRawText();
+
+        Assert.Contains("\"minLength\": 2", text.Replace("\"minLength\":2", "\"minLength\": 2", StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_schema_on_two_endpoints_repeats_no_id_or_anchor()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"$id":"http://e.com/s","$defs":{"a":{"$anchor":"n","type":"string"}},"type":"object","properties":{"p":{"$ref":"#n"}}}
+            """);
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/one", ([FromBody] JsonElement body) => body).ValidateBody(schema);
+            a.MapPost("/two", ([FromBody] JsonElement body) => body).ValidateBody(schema);
+        });
+
+        string text = document.GetRawText();
+        Assert.DoesNotContain("\"$id\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"$anchor\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Definitions_that_differ_in_the_spelling_of_a_reference_do_not_clash()
+    {
+        JsonValueSchema first = Z.FromJsonSchema("""{"$defs":{"t":{"$anchor":"z","type":"string"},"u":{"properties":{"p":{"$ref":"#z"}}}},"properties":{"q":{"$ref":"#/$defs/u"}}}""");
+        JsonValueSchema second = Z.FromJsonSchema("""{"$defs":{"t":{"$anchor":"z","type":"string"},"u":{"properties":{"p":{"$ref":"#/$defs/t"}}}},"properties":{"q":{"$ref":"#/$defs/u"}}}""");
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/one", ([FromBody] JsonElement body) => body).ValidateBody(first);
+            a.MapPost("/two", ([FromBody] JsonElement body) => body).ValidateBody(second);
+        });
+
+        Assert.Equal(JsonValueKind.Object, document.GetProperty("components").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_cycle_across_both_definition_keywords_shares_one_set_of_names()
+    {
+        JsonValueSchema first = Z.FromJsonSchema("""{"$defs":{"a":{"properties":{"b":{"$ref":"#/definitions/b"}}}},"definitions":{"b":{"properties":{"a":{"$ref":"#/$defs/a"}}}},"properties":{"p":{"$ref":"#/$defs/a"}}}""");
+        JsonValueSchema second = Z.FromJsonSchema("""{"$defs":{"a":{"properties":{"b":{"$ref":"#/definitions/b"}}}},"definitions":{"b":{"properties":{"a":{"$ref":"#/$defs/a"}}}},"properties":{"p":{"$ref":"#/definitions/b"}}}""");
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/one", ([FromBody] JsonElement body) => body).ValidateBody(first);
+            a.MapPost("/two", ([FromBody] JsonElement body) => body).ValidateBody(second);
+        });
+
+        string[] names = [.. document.GetProperty("components").GetProperty("schemas").EnumerateObject().Select(entry => entry.Name)];
+        Assert.Equal(2, names.Count(name => name.StartsWith("a-", StringComparison.Ordinal) || name.StartsWith("b-", StringComparison.Ordinal) || name.StartsWith("target-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task Keywords_survive_the_conversion()
     {
         ObjectSchema schema = Z.Object()
