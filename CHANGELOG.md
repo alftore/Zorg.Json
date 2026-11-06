@@ -2,6 +2,12 @@
 
 ## 0.1.0-preview.3
 
+- Added the package `Zorg.Json.Extensions.AI`, for Microsoft.Extensions.AI 10.11.0:
+  - `ZorgAIFunction` is an `AIFunction` whose schema comes from a Zorg schema. It validates the model's arguments and returns a structured error to the model when they're wrong, instead of throwing.
+  - `ToChatResponseFormat` makes a `ChatResponseFormat` from a schema and an optional profile.
+  - `chatClient.GetResponseAsync(schema, ...)` asks for JSON and returns a `ParseResult<T>`. Malformed, truncated or empty output is a failed result.
+  - It's compatible with Native AOT.
+- Added `ParseModelOutputAsync` to `Zorg.Json.Llm`, which runs `RefineAsync` checks.
 - Fixed an imported `oneOf` being written as `anyOf` when a branch held a `format`, though its branches can't overlap, as in a nullable `$ref`. Branches of different types now keep `oneOf`, so these schemas round trip again and `UnrepresentablePolicy.Throw` doesn't throw on them. Branches that can overlap once `format` is ignored still become `anyOf`.
 - The diagnostic for that `anyOf` now says why it's needed.
 

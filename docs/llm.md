@@ -48,4 +48,65 @@ The tables come from provider documentation as of November 2026. They haven't be
 ## Using a provider's SDK
 
 - **Anthropic:** `emitted.Schema.ToJsonElementDictionary()` gives the shape its SDK takes.
-- **Microsoft.Extensions.AI with OpenAI:** the adapter rewrites a supplied schema again, moving keywords such as `pattern` and `minimum` into `description`. `ParseModelOutput` still enforces them.
+- **Microsoft.Extensions.AI:** use `Zorg.Json.Extensions.AI`, described next.
+
+## Microsoft.Extensions.AI
+
+`Zorg.Json.Extensions.AI` depends on `Zorg.Json.Llm` and `Microsoft.Extensions.AI.Abstractions` 10.11.0, and nothing else. It works with Native AOT.
+
+**A tool.** `ZorgAIFunction` is an `AIFunction`. The model sees the schema as `JsonSchema`. When it calls the function, the arguments are validated against the full schema first. If they're wrong, the function isn't called, and the model gets an error it can read, so it can try again:
+
+```csharp
+static readonly ObjectSchema Arguments = Z.Object()
+    .Property("city", Z.String().MinLength(1))
+    .Property("days", Z.Integer().Minimum(1).Maximum(14));
+
+AIFunction forecast = ZorgAIFunction.Create("get_forecast", "Gets a weather forecast.", Arguments,
+    arguments => $"Sunny in {arguments.GetProperty("city").GetString()}.");
+
+ChatOptions options = new() { Tools = [forecast] };
+```
+
+```json
+{
+  "error": "invalid_arguments",
+  "message": "The arguments don't match the schema. Fix them and call the function again.",
+  "issues": [{ "path": "/days", "code": "too_big", "message": "..." }]
+}
+```
+
+- At most 20 issues are listed, and `omitted` counts the rest.
+- Arguments the model sent that can't be read as JSON, such as nesting that is too deep, get the same kind of error.
+- An exception from your function, or from a `Refine` check, is not caught. It goes to the caller as it does from any `AIFunction`. `FunctionInvokingChatClient` then reports a failure to the model without the detail, unless you set `IncludeDetailedErrors`.
+- The root of the schema must be an object, because providers take no other root for a tool.
+- Pass a profile as the last argument, such as `LlmProfiles.OpenAIStrict`, to send what that provider takes. A `null` the model sends for an optional property is then read as absent, as `ParseModelOutput` does.
+- `RefineAsync` checks run. Cancelling the token throws `OperationCanceledException`.
+
+**A response format.**
+
+```csharp
+ChatOptions options = new() { ResponseFormat = Answer.ToChatResponseFormat(LlmProfiles.OpenAIStrict, "answer") };
+```
+
+An overload with `out EmitResult emitted` gives you the diagnostics, and the result to pass to `ParseModelOutput`.
+
+**A typed answer.**
+
+```csharp
+ParseResult<JsonElement> answer = await chatClient.GetResponseAsync(Answer, "Rate this.", profile: LlmProfiles.OpenAIStrict);
+
+if (answer.IsSuccess)
+{
+    Console.WriteLine(answer.Value);
+}
+```
+
+This sets the response format on a copy of your `ChatOptions`, asks, and reads the text of the last message that has any with `ParseModelOutputAsync`. Malformed, truncated, empty or non-JSON output, a lone surrogate, and a missing response are failed results with issues, never exceptions. An exception from the client, and cancellation, are exceptions. The usage and finish reason of the response aren't returned. If you need them, call the client yourself and pass `response.Text` to `ParseModelOutput`.
+
+### The OpenAI adapter rewrites the schema again
+
+The adapter in `Microsoft.Extensions.AI.OpenAI` (10.11.0) does not send a supplied schema as it is. It makes objects closed and every property required, which our OpenAI profile already did, so that part changes nothing. It also moves keywords such as `pattern`, `minimum` and `maximum` into `description`, even though the `OpenAIStrict` table lets them through. The provider is then not asked to hold those rules.
+
+We checked this by sending schemas through the adapter to a fake HTTP handler, in `OpenAIAdapterTests`. A schema with nothing for the adapter to move reaches the wire unchanged, as the request body of a response format and as the parameters of a tool. A schema with rules keeps its properties, `required`, `additionalProperties` and nullable types, and the sent schema accepts everything the full schema accepts.
+
+So with this adapter the rules the adapter moves are enforced only by us, when the answer is parsed. Use `GetResponseAsync(schema, ...)`, or `ParseModelOutput`, and don't read the model's text on its own. If you want the provider to hold `pattern` and the bounds, send the schema through the OpenAI SDK directly. We didn't see a `strict` flag in the request in these tests.

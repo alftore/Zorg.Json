@@ -5,8 +5,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Zorg.Json;
 using Zorg.Json.Emission;
+using Zorg.Json.Extensions.AI;
 using Zorg.Json.Llm;
 using Zorg.Json.Import;
 using Zorg.Json.Sampling;
@@ -127,6 +131,9 @@ EmitResult callback = Z.String().Refine(_ => true, "x").Emit(new JsonSchemaOptio
 });
 Check("unrepresentable callback", callback.Schema["x-refined"]?.GetValue<string>() == "x" && callback.Diagnostics.Length == 1);
 
+// Microsoft.Extensions.AI: a tool whose arguments are checked, and a typed answer from a chat client.
+CheckExtensionsAIAsync().GetAwaiter().GetResult();
+
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 
@@ -142,6 +149,24 @@ void Check(string name, bool passed)
 void CheckIssue(string name, ParseResult<string> result, string expectedCode) =>
     Check(name, !result.IsSuccess && result.Issues[0].Code == expectedCode && !string.IsNullOrEmpty(result.Issues[0].Message));
 
+async Task CheckExtensionsAIAsync()
+{
+    ObjectSchema forecastArguments = Z.Object().Property("city", Z.String().MinLength(1)).Property("days", Z.Integer().Minimum(1));
+    ZorgAIFunction forecast = ZorgAIFunction.Create("forecast", "Gets a forecast.", forecastArguments, _ => "sunny");
+    AIFunctionArguments badArguments = new() { ["city"] = "Oslo", ["days"] = 0 };
+    AIFunctionArguments goodArguments = new() { ["city"] = "Oslo", ["days"] = 3 };
+    object? refused = await forecast.InvokeAsync(badArguments);
+    Check("tool refused", refused is JsonElement report && report.GetProperty("error").GetString() == "invalid_arguments");
+    Check("tool accepted", Equals(await forecast.InvokeAsync(goodArguments), "sunny"));
+    Check("tool schema", forecast.JsonSchema.GetProperty("properties").GetProperty("days").GetProperty("minimum").GetInt32() == 1);
+    Check("response format", forecastArguments.ToChatResponseFormat(LlmProfiles.OpenAIStrict) is ChatResponseFormatJson { Schema: not null });
+    using SmokeChatClient good = new("""{"city":"Oslo","days":2}""");
+    ParseResult<JsonElement> modelAnswer = await good.GetResponseAsync(forecastArguments, "Forecast.");
+    using SmokeChatClient broken = new("{");
+    Check("typed answer", modelAnswer.IsSuccess && modelAnswer.Value.GetProperty("days").GetInt32() == 2);
+    Check("bad answer", !(await broken.GetResponseAsync(forecastArguments, "Forecast.")).IsSuccess);
+}
+
 static string? Text(JsonObject schema, string keyword) => schema[keyword]?.GetValue<string>();
 
 internal enum Kind
@@ -153,6 +178,21 @@ internal enum Kind
 internal sealed record Person(string Name, int Age, IReadOnlyList<string> Tags, Kind Kind);
 
 internal sealed record Point(int X);
+
+internal sealed class SmokeChatClient(string text) : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)));
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose()
+    {
+    }
+}
 
 internal sealed class PersonPatch
 {
