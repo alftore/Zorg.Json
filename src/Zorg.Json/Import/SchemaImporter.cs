@@ -901,7 +901,7 @@ internal sealed class SchemaImporter
 
         foreach (((string resource, string pointer), string name) in _homes.Where(home => home.Key.Resource == at.Pointer).OrderBy(home => home.Key.Pointer, StringComparer.Ordinal))
         {
-            all.Add(new SchemaProperty(name, Build(Walk(pointer)!.Value, new Scope(pointer, resource, 0, IsWalked: false))));
+            all.Add(new SchemaProperty(name, Build(Walk(pointer)!.Value, new Scope(pointer, resource, at.Depth + 1, IsWalked: false))));
         }
 
         return all.ToImmutable();
@@ -1004,7 +1004,8 @@ internal sealed class SchemaImporter
         }
 
         // Not a keyword Zorg walks, but a pointer may still lead there. The text there is written again under $defs.
-        if (IsLegacy && !_walked.Contains(pointer) && Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False })
+        // A resource that isn't walked is its own root, wherever it's written: as a home inside itself it would never stop being built.
+        if (IsLegacy && pointer != resource && !_walked.Contains(pointer) && Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False })
         {
             _offTree.Add((resource, pointer));
         }
