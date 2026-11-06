@@ -230,16 +230,30 @@ public sealed class ReferenceJudgeTests
         {
             if (Interlocked.Increment(ref calls) == 1)
             {
-                Thread.Sleep(300);
+                Thread.Sleep(1_200);
             }
 
             return @case.Probe.Emit(options);
         }
 
-        List<ReferenceFailure> failures = ReferenceChecker.Check(@case, Base, [], SlowOnce, budget: TimeSpan.FromMilliseconds(250));
+        List<ReferenceFailure> failures = ReferenceChecker.Check(@case, Base, [], SlowOnce, budget: TimeSpan.FromSeconds(1));
 
         Assert.DoesNotContain("d-emit-slow", Kinds(failures));
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void Judge_h_tells_when_definitions_differ()
+    {
+        JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$defs":{"a":{"type":"string"}},"properties":{"k":{"$ref":"#/$defs/a"}}}""");
+        EmitResult first = schema.Emit(options);
+        EmitResult second = schema.Emit(options);
+        Assert.True(ReferenceChecker.SameDefinitions(first, second));
+
+        Assert.Single(second.Definitions).Value["title"] = "changed";
+
+        Assert.False(ReferenceChecker.SameDefinitions(first, second));
     }
 
     [Fact]

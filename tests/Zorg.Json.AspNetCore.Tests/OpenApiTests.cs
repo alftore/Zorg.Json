@@ -64,6 +64,92 @@ public sealed class OpenApiTests
         Assert.Equal(2, document.GetProperty("components").GetProperty("schemas").EnumerateObject().Count(entry => entry.Name.StartsWith("target-", StringComparison.Ordinal)));
     }
 
+    private const string WithDefinition = """{"type":"object","definitions":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/definitions/a"}}}""";
+
+    private const string WithUnknownText = """{"type":"object","x-u":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/x-u/a"}}}""";
+
+    /// <summary>The components of a document with two endpoints, name and text, sorted. Everything else in it is the framework's.</summary>
+    private static async Task<string[]> ComponentsAsync(ISchema first, ISchema second)
+    {
+        static RouteHandlerBuilder Endpoint(WebApplication app, string path, ISchema schema)
+        {
+            RouteHandlerBuilder route = app.MapPost(path, (JsonElement body) => "ok");
+            return schema is ObjectSchema closed ? route.ValidateBody(closed) : route.ValidateBody((JsonValueSchema)schema);
+        }
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            Endpoint(a, "/first", first);
+            Endpoint(a, "/second", second);
+        });
+
+        return [.. document.GetProperty("components").GetProperty("schemas").EnumerateObject()
+            .Where(entry => entry.Name is not "ProblemDetails" and not "HttpValidationProblemDetails" and not "JsonElement")
+            .Select(entry => $"{entry.Name} {entry.Value.GetRawText()}")
+            .Order(StringComparer.Ordinal)];
+    }
+
+    [Theory]
+    [InlineData(WithDefinition)]
+    [InlineData(WithUnknownText)]
+    public async Task A_named_import_in_two_wrappers_is_one_component(string text)
+    {
+        JsonValueSchema named = Z.FromJsonSchema(text).Named("X");
+
+        string[] components = await ComponentsAsync(Z.Object().Property("one", named), Z.Object().Property("two", named));
+
+        Assert.Equal(2, components.Length);
+        Assert.Single(components, component => component.StartsWith("X ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_named_import_as_a_body_and_in_an_array_leaves_no_orphan()
+    {
+        JsonValueSchema named = Z.FromJsonSchema(WithDefinition).Named("X");
+
+        string[] components = await ComponentsAsync(named, Z.AnyOf(Z.Array(named), Z.Null()));
+
+        Assert.Equal(2, components.Length);
+    }
+
+    [Theory]
+    [InlineData("""{"$defs":{"a":{"type":"TYPE"}},"properties":{"p":{"$ref":"#/$defs/a"}}}""")]
+    [InlineData("""{"$schema":"http://json-schema.org/draft-07/schema#","definitions":{"a":{"type":"TYPE"}},"properties":{"p":{"$ref":"#/definitions/a"}}}""")]
+    [InlineData("""{"$defs":{"a":{"$ref":"#/$defs/b"},"b":{"type":"TYPE"}},"properties":{"p":{"$ref":"#/$defs/a"}}}""")]
+    [InlineData("""{"$defs":{"a":{"properties":{"n":{"$ref":"#/$defs/b"},"k":{"type":"TYPE"}}},"b":{"properties":{"n":{"$ref":"#/$defs/a"}}}},"properties":{"p":{"$ref":"#/$defs/a"}}}""")]
+    public async Task Definitions_of_one_name_in_two_documents_do_not_clash_in_either_order(string template)
+    {
+        JsonValueSchema text = Z.FromJsonSchema(template.Replace("TYPE", "string", StringComparison.Ordinal));
+        JsonValueSchema number = Z.FromJsonSchema(template.Replace("TYPE", "integer", StringComparison.Ordinal));
+
+        string[] one = await ComponentsAsync(text, number);
+        string[] other = await ComponentsAsync(number, text);
+
+        Assert.Equal(one, other);
+        Assert.Equal(one.Length, one.Select(component => component[..component.IndexOf(' ', StringComparison.Ordinal)]).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task The_same_definitions_in_two_documents_are_one_component()
+    {
+        const string Text = """{"$defs":{"a":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/a"}}}""";
+        const string Other = """{"$defs":{"a":{"type":"string"}},"properties":{"q":{"$ref":"#/$defs/a"}}}""";
+
+        string[] components = await ComponentsAsync(Z.FromJsonSchema(Text), Z.FromJsonSchema(Other));
+
+        Assert.Single(components);
+    }
+
+    [Fact]
+    public async Task Two_different_schemas_named_alike_still_clash()
+    {
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => ComponentsAsync(
+            Z.Object().Property("v", Z.String().Named("Same")),
+            Z.Object().Property("v", Z.Number<int>().Named("Same"))));
+
+        Assert.Contains("Same", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Response_uses_the_output_schema()
     {
@@ -176,8 +262,10 @@ public sealed class OpenApiTests
         JsonElement written = RequestSchema(document, "/items");
 
         Assert.False(written.TryGetProperty("$defs", out _));
-        Assert.Equal("#/components/schemas/item", written.GetProperty("items").GetProperty("$ref").GetString());
-        Assert.Equal("string", document.GetProperty("components").GetProperty("schemas").GetProperty("item").GetProperty("type").GetString());
+        string reference = written.GetProperty("items").GetProperty("$ref").GetString()!;
+
+        Assert.StartsWith("#/components/schemas/item-", reference, StringComparison.Ordinal);
+        Assert.Equal("string", document.GetProperty("components").GetProperty("schemas").GetProperty(reference["#/components/schemas/".Length..]).GetProperty("type").GetString());
     }
 
     [Fact]

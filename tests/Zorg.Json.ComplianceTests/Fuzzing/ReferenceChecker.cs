@@ -459,6 +459,10 @@ internal static partial class ReferenceChecker
         return found;
     }
 
+    public static bool SameDefinitions(EmitResult left, EmitResult right) =>
+        left.Definitions.Count == right.Definitions.Count
+        && left.Definitions.All(entry => right.Definitions.TryGetValue(entry.Key, out JsonObject? other) && JsonNode.DeepEquals(entry.Value, other));
+
     [GeneratedRegex("-[0-9a-f]{8}[0-9]*$")]
     private static partial Regex MadeUpName();
 

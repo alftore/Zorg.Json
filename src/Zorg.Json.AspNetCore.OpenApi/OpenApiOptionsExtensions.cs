@@ -136,8 +136,14 @@ public static class OpenApiOptionsExtensions
         }
 
         // Always read as 3.1: Microsoft.OpenApi writes the schema object in the document's own version.
+        // A lone $ref reads as a reference object, not a schema, so it goes in an allOf, which means the same.
         private static OpenApiSchema Parse(JsonObject schema, OpenApiDocument document) =>
-            OpenApiModelFactory.Parse<OpenApiSchema>(schema.ToJsonString(), OpenApiSpecVersion.OpenApi3_1, document, out _, "json")
+            OpenApiModelFactory.Parse<OpenApiSchema>(
+                schema.Count == 1 && schema.ContainsKey("$ref") ? new JsonObject { ["allOf"] = new JsonArray(schema.DeepClone()) }.ToJsonString() : schema.ToJsonString(),
+                OpenApiSpecVersion.OpenApi3_1,
+                document,
+                out _,
+                "json")
                 ?? throw new InvalidOperationException("Microsoft.OpenApi couldn't read an emitted schema.");
     }
 }

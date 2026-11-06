@@ -183,9 +183,28 @@ public sealed class ReferenceFuzzTests
 
         try
         {
-            foreach ((string kind, string detail) in ReferenceChecker.CheckComponents([one.Probe.Emit(options), two.Probe.Emit(options), one.Probe.Emit(options)], report.Counters).DistinctBy(entry => entry.Kind))
+            // The same names with other content, which is what two endpoints with a $defs of their own look like.
+            ReferenceCase? changed = ReferenceCase.Build("plain", first.Replace("\"type\":\"string\"", "\"type\":\"boolean\"", StringComparison.Ordinal).Replace("\"maximum\":5", "\"maximum\":6", StringComparison.Ordinal), "{}", dialect);
+            List<EmitResult> results = [one.Probe.Emit(options), two.Probe.Emit(options), one.Probe.Emit(options)];
+
+            if (changed is not null)
+            {
+                results.Add(changed.Probe.Emit(options));
+            }
+
+            foreach ((string kind, string detail) in ReferenceChecker.CheckComponents(results, report.Counters).DistinctBy(entry => entry.Kind))
             {
                 report.AddTogether(iteration, kind, detail, first);
+            }
+
+            // One named schema in two wrappers is one definition.
+            JsonValueSchema named = Z.FromJsonSchema(first, new() { DefaultDialect = dialect, MaxNodes = 5_000 }).Named("X");
+            EmitResult left = Z.Object().Property("one", named).Emit(options);
+            EmitResult right = Z.Array(named).Emit(options);
+
+            if (!ReferenceChecker.SameDefinitions(left, right))
+            {
+                report.AddTogether(iteration, "h-wrapper-changes-definitions", "a definition depends on what is around it", first);
             }
         }
         catch (InvalidOperationException exception)

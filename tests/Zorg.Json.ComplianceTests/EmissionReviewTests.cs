@@ -371,9 +371,9 @@ public sealed class EmissionReviewTests
         EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
         string text = result.Schema.ToJsonString();
 
-        Assert.Equal("a", Assert.Single(result.Definitions).Key);
+        Assert.StartsWith("a-", Assert.Single(result.Definitions).Key, StringComparison.Ordinal);
         Assert.DoesNotContain("$defs", text, StringComparison.Ordinal);
-        Assert.Contains("\"$ref\":\"#/components/schemas/a\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"$ref\":\"#/components/schemas/a-", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -382,7 +382,7 @@ public sealed class EmissionReviewTests
         ObjectSchema schema = Z.Object().Property("list", Import("""{"$defs":{"a":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/a"}}"""));
         EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
 
-        Assert.Equal("a", Assert.Single(result.Definitions).Key);
+        Assert.StartsWith("a-", Assert.Single(result.Definitions).Key, StringComparison.Ordinal);
         Assert.DoesNotContain("$defs", result.Schema.ToJsonString(), StringComparison.Ordinal);
     }
 
@@ -921,7 +921,7 @@ public sealed class EmissionReviewTests
     {
         EmitResult result = Import("""{"$defs":{"never":false},"properties":{"b":{"$ref":"#/$defs/never"}}}""").Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
 
-        Assert.Equal("""{"not":{}}""", result.Definitions["never"].ToJsonString());
+        Assert.Equal("""{"not":{}}""", Assert.Single(result.Definitions).Value.ToJsonString());
     }
 
     [Fact]
@@ -975,6 +975,22 @@ public sealed class EmissionReviewTests
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
     }
 
+    [Fact]
+    public void A_long_cycle_of_definitions_is_named_in_linear_time()
+    {
+        const int Count = 20_000;
+        string definitions = string.Join(',', Enumerable.Range(0, Count).Select(index => """
+            "dN":{"properties":{"n":{"$ref":"#/$defs/dM"}}}
+            """.Replace("dN", "d" + index.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal).Replace("dM", "d" + ((index + 1) % Count).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)));
+        JsonValueSchema schema = Import("{\"$defs\":{" + definitions + "},\"$ref\":\"#/$defs/d0\"}", new JsonSchemaImportOptions { MaxNodes = 1_000_000 });
+        Stopwatch clock = Stopwatch.StartNew();
+
+        EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+
+        Assert.Equal(Count, result.Definitions.Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), clock.Elapsed.ToString());
+    }
+
     // What the reference fuzzer found, and the three limits docs/import.md once listed.
 
     [Fact]
@@ -1014,7 +1030,7 @@ public sealed class EmissionReviewTests
 
         (string name, JsonObject definition) = Assert.Single(result.Definitions);
 
-        Assert.StartsWith("target-1-", name, StringComparison.Ordinal);
+        Assert.StartsWith("target-", name, StringComparison.Ordinal);
         Assert.Equal("""{"type":"object","properties":{"n":{"$ref":"#/components/schemas/NAME"}}}""".Replace("NAME", name, StringComparison.Ordinal), definition.ToJsonString());
     }
 

@@ -53,6 +53,7 @@ internal sealed class JsonSchemaEmitter
     private ImportScope? _import;
     private ImportScope? _looseScope;
     private readonly List<Site> _sites = [];
+    private readonly List<LeavingDefinition> _leaving = [];
     private Dictionary<JsonObject, SchemaNode>? _resources;
     private HashSet<string>? _ids;
     private List<(JsonObject Schema, string Anchor)>? _anchors;
@@ -273,7 +274,7 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private void WriteReferences(JsonObject root, SchemaNode rootNode)
     {
-        if (_sites.Count == 0 && _anchors is null)
+        if (_sites.Count == 0 && _anchors is null && _leaving.Count == 0)
         {
             return;
         }
@@ -291,8 +292,17 @@ internal sealed class JsonSchemaEmitter
             site.Place = FindPlace(site) ?? WriteHome(site, root, rootNode);
         }
 
-        NameLeavingHomes(root);
         DropRepeatedAnchors();
+
+        if (_leaving.Count > 0)
+        {
+            NameLeavingDefinitions();
+
+            foreach (Site site in _sites)
+            {
+                site.Pointer = null;
+            }
+        }
 
         foreach (Site site in _sites)
         {
@@ -313,9 +323,6 @@ internal sealed class JsonSchemaEmitter
         public Dictionary<JsonNode, string> Tokens { get; } = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<JsonNode, string> Definitions { get; } = new(ReferenceEqualityComparer.Instance);
-
-        /// <summary>The names of the homes that went to <see cref="EmitResult.Definitions"/>.</summary>
-        public List<string> Leaving { get; } = [];
 
         public string Token(JsonNode node, JsonNode parent)
         {
@@ -416,7 +423,7 @@ internal sealed class JsonSchemaEmitter
 
         Dictionary<JsonNode, string> known = _pointing!.Definitions;
 
-        if (known.Count != _definitions.Count)
+        if (known.Count < _definitions.Count)
         {
             foreach ((string name, JsonNode definition) in _definitions)
             {
@@ -454,7 +461,7 @@ internal sealed class JsonSchemaEmitter
         {
             _definitions[name] = definition;
             _pointing.Definitions[definition] = name;
-            _pointing.Leaving.Add(name);
+            _leaving.Add(new LeavingDefinition(name, HomeName(location) ?? "target", location));
         }
         else
         {
@@ -472,38 +479,109 @@ internal sealed class JsonSchemaEmitter
     }
 
     /// <summary>
-    /// Definitions that leave the document join those of other documents, which number their homes the same way. A name that
-    /// depends on the document keeps two different ones apart, and lets the same one, emitted twice, share its definitions.
+    /// Definitions that leave the document join those of other documents, in an order nobody here can see, so what's written
+    /// under a name must follow from the name. Each name ends in a hash of the definition and of everything it reaches, and of nothing
+    /// around it. The same definition has the same name wherever it's used, and two different ones never share it. A cycle is hashed as one.
     /// </summary>
-    private void NameLeavingHomes(JsonObject root)
+    private void NameLeavingDefinitions()
     {
-        if (_pointing!.Leaving.Count == 0)
+        Dictionary<JsonNode, LeavingDefinition> byNode = new(ReferenceEqualityComparer.Instance);
+
+        foreach (LeavingDefinition leaving in _leaving)
         {
-            return;
-        }
-
-        StringBuilder text = new(root.ToJsonString());
-
-        foreach ((string name, JsonNode definition) in _definitions.OrderBy(entry => entry.Key, StringComparer.Ordinal))
-        {
-            text.Append(name).Append(definition.ToJsonString());
-        }
-
-        string tag = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..8];
-
-        foreach (string name in _pointing.Leaving)
-        {
-            JsonNode definition = _definitions[name];
-            _definitions.Remove(name);
-            string named = UniqueName($"{name}-{tag}");
-            _definitions[named] = definition;
-            _pointing.Definitions[definition] = named;
+            leaving.Node = _definitions[leaving.Name];
+            byNode[leaving.Node] = leaving;
         }
 
         foreach (Site site in _sites)
         {
-            site.Pointer = null;
+            if (site.Owner is null && byNode.TryGetValue(site.Holder.Root, out LeavingDefinition? from) && byNode.TryGetValue(site.Place!.Root, out LeavingDefinition? to))
+            {
+                string tail = (site.Pointer ?? Pointer(site.Place, null)!)[(ReferencePrefix.Length + FragmentEscape(Escape(to.Name)).Length)..];
+                from.References.Add((site, to, tail));
+                from.Targets.Add(to);
+            }
         }
+
+        foreach (List<LeavingDefinition> component in StrongComponents.Find(_leaving, leaving => leaving.Targets))
+        {
+            Hash(component);
+        }
+
+        foreach (LeavingDefinition leaving in _leaving)
+        {
+            _definitions.Remove(leaving.Name);
+        }
+
+        HashSet<string> named = new(StringComparer.Ordinal);
+
+        foreach (LeavingDefinition leaving in _leaving)
+        {
+            // The same name means the same content, so a schema used twice in a document needs it once.
+            if (named.Add(leaving.Final!))
+            {
+                leaving.Final = UniqueName(leaving.Final!);
+                _definitions[leaving.Final] = leaving.Node!;
+            }
+
+            _pointing!.Definitions[leaving.Node!] = leaving.Final!;
+        }
+    }
+
+    private static void Hash(List<LeavingDefinition> component)
+    {
+        // Sorted by what the document says, because the order of the walk depends on where it came in.
+        component.Sort(static (left, right) => (string.CompareOrdinal(left.Location, right.Location), string.CompareOrdinal(left.Label, right.Label)) switch
+        {
+            (not 0 and var location, _) => location,
+            (_, var label) => label,
+        });
+
+        StringBuilder text = new();
+
+        for (int index = 0; index < component.Count; index++)
+        {
+            component[index].Position = index;
+        }
+
+        foreach (LeavingDefinition member in component)
+        {
+            foreach ((Site site, LeavingDefinition to, string tail) in member.References)
+            {
+                site.Holder["$ref"] = $"#{to.Final ?? to.Position.ToString(CultureInfo.InvariantCulture) + to.Label}{tail}";
+            }
+
+            text.Append(member.Label).Append(' ').Append(member.Node!.ToJsonString()).Append('\n');
+        }
+
+        string whole = Sha(text.ToString());
+
+        foreach (LeavingDefinition member in component)
+        {
+            member.Final = $"{member.Label}-{Sha(whole + member.Position.ToString(CultureInfo.InvariantCulture))[..8]}";
+        }
+    }
+
+    private static string Sha(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+    /// <summary>A definition that goes to <see cref="EmitResult.Definitions"/>: its name while the document is written, and what its final name is made of.</summary>
+    private sealed class LeavingDefinition(string name, string label, string location)
+    {
+        public string Name { get; } = name;
+
+        public string Label { get; } = label;
+
+        public string Location { get; } = location;
+
+        public JsonNode? Node { get; set; }
+
+        public List<(Site Site, LeavingDefinition To, string Tail)> References { get; } = [];
+
+        public List<LeavingDefinition> Targets { get; } = [];
+
+        public int Position { get; set; }
+
+        public string? Final { get; set; }
     }
 
     /// <summary>A target that was a definition of its document keeps its name.</summary>
@@ -786,6 +864,11 @@ internal sealed class JsonSchemaEmitter
             string name = UniqueName(definition.Name);
             names[definition.Name] = name;
             _definitions[name] = new JsonObject();
+
+            if (_options.ReferencePrefix is not null)
+            {
+                _leaving.Add(new LeavingDefinition(name, definition.Name, definition.Schema.Behavior.Location ?? string.Empty));
+            }
         }
 
         foreach (SchemaProperty definition in root.Defs)
