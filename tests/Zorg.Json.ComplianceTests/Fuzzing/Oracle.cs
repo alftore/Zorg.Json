@@ -105,7 +105,7 @@ internal static partial class Oracle
         }
     }
 
-    private static void RemoveInertKeywords(JsonNode? node)
+    internal static void RemoveInertKeywords(JsonNode? node)
     {
         if (node is JsonObject schema)
         {

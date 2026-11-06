@@ -66,17 +66,18 @@ public sealed class ReferenceTests
     }
 
     [Fact]
-    public void A_reference_that_cannot_be_kept_is_reported_as_an_error()
+    public void A_reference_to_a_keyword_the_provider_lacks_keeps_its_target()
     {
         JsonValueSchema schema = Z.FromJsonSchema("""
-            {"type":"object","properties":{"a":{"$ref":"#/properties/b/definitions/x"},"b":{"type":"object","definitions":{"x":{"type":"string"}}}}}
+            {"type":"object","properties":{"a":{"$ref":"#/properties/b/not"},"b":{"type":"object","not":{"type":"string"}}}}
             """);
 
         EmitResult emitted = schema.Emit(LlmProfiles.OpenAIStrict);
         CompatibilityReport report = schema.CheckCompatibility(LlmProfiles.OpenAIStrict);
 
-        Assert.Contains(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "$ref" && diagnostic.Message.Contains("lead anywhere", StringComparison.Ordinal));
-        Assert.Contains(report.Issues, issue => issue.Kind == CompatibilityIssueKind.Reference && issue.Severity == CompatibilitySeverity.Error);
+        Assert.Contains("\"target-1\":{\"type\":\"string\"}", emitted.Schema.ToJsonString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
+        Assert.DoesNotContain(report.Issues, issue => issue.Kind == CompatibilityIssueKind.Reference);
     }
 
     [Theory]

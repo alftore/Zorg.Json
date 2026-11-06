@@ -147,6 +147,24 @@ public sealed class ImportReviewTests
     }
 
     [Fact]
+    public void A_resource_off_the_walked_tree_can_refer_to_its_own_root()
+    {
+        // This once ended the process with a stack overflow: the root of the resource got a home inside itself.
+        const string Document = """
+            {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalItems": { "$id": "http://example.com/in", "properties": { "b": { "$ref": "#" } }, "required": ["a"] },
+              "properties": { "x": { "$ref": "#/additionalItems" } }
+            }
+            """;
+
+        JsonValueSchema schema = Z.FromJsonSchema(Document);
+
+        Assert.True(schema.SafeParse("""{"x":{"a":1,"b":{"a":2}}}""").IsSuccess);
+        Assert.False(schema.SafeParse("""{"x":{"a":1,"b":{}}}""").IsSuccess);
+    }
+
+    [Fact]
     public void The_default_budget_is_set() =>
         Assert.Equal(65_536, new JsonSchemaImportOptions().MaxTotalPatternLength);
 }
