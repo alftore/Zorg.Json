@@ -9,8 +9,8 @@ using Zorg.Json.Model;
 namespace Zorg.Json;
 
 /// <summary>
-/// Members shared by untyped and typed object schemas. Unknown properties are rejected until
-/// <see cref="Strip"/> or <see cref="Passthrough"/> says otherwise.
+/// Members shared by untyped and typed object schemas. Unknown properties are removed from the result until
+/// <see cref="Strict"/> or <see cref="Passthrough"/> says otherwise.
 /// </summary>
 /// <typeparam name="T">The type of the parsed value.</typeparam>
 /// <typeparam name="TSelf">The concrete builder.</typeparam>
@@ -22,7 +22,10 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
     {
     }
 
-    /// <summary>Rejects unknown properties, which is already the default. JSON Schema: <c>additionalProperties: false</c>. Zod equivalent: <c>.strict()</c>.</summary>
+    /// <summary>
+    /// Rejects unknown properties with <c>unrecognized_keys</c>, which catches a misspelled optional property. It applies to this
+    /// object only, not to the objects inside it. JSON Schema: <c>additionalProperties: false</c>. Zod equivalent: <c>.strict()</c>.
+    /// </summary>
     /// <returns>A new schema.</returns>
     /// <example>
     /// <code>
@@ -33,8 +36,8 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
     public TSelf Strict() => WithUnknownProperties(UnknownProperties.Reject);
 
     /// <summary>
-    /// Accepts unknown properties and removes them from the result. The input schema leaves <c>additionalProperties</c> out,
-    /// and the output schema has <c>additionalProperties: false</c>. Zod equivalent: <c>.strip()</c>.
+    /// Accepts unknown properties and removes them from the result, which is already the default. The input schema leaves
+    /// <c>additionalProperties</c> out, and the output schema has <c>additionalProperties: false</c>. Zod equivalent: <c>.strip()</c>.
     /// </summary>
     /// <returns>A new schema.</returns>
     /// <example>
@@ -198,7 +201,7 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
 
 /// <summary>
 /// An untyped schema for JSON objects, parsing to a <see cref="JsonElement"/>. Create one with <see cref="Z.Object"/>.
-/// Zod equivalent: <c>ZodObject</c>, except that unknown properties are rejected by default.
+/// Zod equivalent: <c>ZodObject</c>.
 /// </summary>
 public sealed class ObjectSchema : ObjectSchemaBase<JsonElement, ObjectSchema>
 {

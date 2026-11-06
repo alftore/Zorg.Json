@@ -173,7 +173,7 @@ public sealed class UntypedSchemaTests
     [Fact]
     public void Object_reports_each_problem()
     {
-        ParseResult<JsonElement> result = Search.SafeParse("""{ "limit": 0, "unknown": 1, "other": 2 }""");
+        ParseResult<JsonElement> result = Search.Strict().SafeParse("""{ "limit": 0, "unknown": 1, "other": 2 }""");
 
         Assert.Equal(3, result.Issues.Length);
         Assert.Contains(result.Issues, issue => issue is { Code: IssueCodes.Required, InstanceLocation: "/query" });

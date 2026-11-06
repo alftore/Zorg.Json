@@ -43,7 +43,7 @@ ObjectSchema search = Z.Object()
 ## Why
 
 - **One definition.** The rules, the typed result and the published schema can't drift apart.
-- **Strict by default.** Unknown properties are rejected, and a typed schema covers every property of the type.
+- **Tolerant by default, strict when you ask.** Unknown properties are removed, as in Zod and System.Text.Json, so clients can add fields without breaking. `.Strict()` rejects them. A typed schema covers every property of the type.
 - **Errors you can act on.** Stable codes and JSON Pointer paths, on raw JSON before deserialization.
 - **Honest schemas.** The emitted schema accepts everything parsing accepts, checked against an independent validator. What it can't express is reported, not dropped.
 

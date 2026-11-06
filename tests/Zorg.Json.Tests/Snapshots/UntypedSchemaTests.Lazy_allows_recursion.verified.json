@@ -16,7 +16,6 @@
     "value",
     "children"
   ],
-  "additionalProperties": false,
   "$defs": {
     "tree": {
       "type": "object",
@@ -34,8 +33,7 @@
       "required": [
         "value",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 }

@@ -39,11 +39,11 @@ public sealed class RewritersTests
     [Fact]
     public void RequireAllAsNullable_adds_null_to_optional_properties()
     {
-        ObjectSchema schema = Z.Object()
+        ObjectSchema schema = Z.Object().Strict()
             .Property("required", Z.String())
             .Property("optional", Z.String().Optional())
             .Property("choice", Z.String().Enum("a", "b").Optional())
-            .Property("nested", Z.Object().Optional());
+            .Property("nested", Z.Object().Strict().Optional());
 
         Assert.Equal(
             """{"type":"object","properties":{"required":{"type":"string"},"optional":{"type":["string","null"]},"choice":{"type":["string","null"],"enum":["a","b",null]},"nested":{"type":["object","null"],"additionalProperties":false}},"required":["required","optional","choice","nested"],"additionalProperties":false}""",
@@ -63,7 +63,7 @@ public sealed class RewritersTests
     [Fact]
     public void RequireAllAsNullable_leaves_nullable_properties_alone()
     {
-        ObjectSchema schema = Z.Object().Property("a", Z.AnyOf(Z.String(), Z.Null()).Optional());
+        ObjectSchema schema = Z.Object().Strict().Property("a", Z.AnyOf(Z.String(), Z.Null()).Optional());
 
         Assert.Equal(
             """{"type":"object","properties":{"a":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["a"],"additionalProperties":false}""",
@@ -93,7 +93,7 @@ public sealed class RewritersTests
     {
         Assert.Equal(
             """{"type":"object","properties":{"data":{"type":["object","null"],"additionalProperties":false}},"required":["data"],"additionalProperties":false}""",
-            Json(Z.Object().Nullable(), Rewriters.RequireObjectRoot));
+            Json(Z.Object().Strict().Nullable(), Rewriters.RequireObjectRoot));
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public sealed class RewritersTests
     public void InlineOrRejectRecursion_inlines_a_plain_reference()
     {
         JsonValueSchema reference = Z.Lazy("name", () => Z.String().MinLength(1));
-        ObjectSchema schema = Z.Object().Property("a", reference).Property("b", reference);
+        ObjectSchema schema = Z.Object().Strict().Property("a", reference).Property("b", reference);
 
         EmitResult result = schema.Emit(With(Rewriters.InlineOrRejectRecursion));
 

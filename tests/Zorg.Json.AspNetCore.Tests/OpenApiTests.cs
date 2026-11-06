@@ -364,7 +364,7 @@ public sealed class OpenApiTests
     [Fact]
     public async Task Keywords_survive_the_conversion()
     {
-        ObjectSchema schema = Z.Object()
+        ObjectSchema schema = Z.Object().Strict()
             .Property("kind", Z.String().Const("a"))
             .Property("size", Z.Integer().ExclusiveMinimum(0).MultipleOf(2))
             .Property("tags", Z.Array(Z.String()).MinItems(1).UniqueItems())

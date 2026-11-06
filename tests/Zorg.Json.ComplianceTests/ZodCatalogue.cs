@@ -16,26 +16,26 @@ internal sealed record ZorgCase(string Name, Func<string, ZodOutcome> Parse, Fun
 /// <summary>The Zorg side of tools/zod-compare/catalogue.mjs, matched by name.</summary>
 internal static class ZodCatalogue
 {
-    private static readonly ObjectSchema Tree = Z.Object()
+    private static readonly ObjectSchema Tree = Z.Object().Strict()
         .Property("value", Z.Integer())
         .Property("children", Z.Array(Z.Lazy("tree", () => Tree!)));
 
     private static readonly JsonValueSchema Nested = Z.AnyOf(Z.Number(), Z.Array(Z.Lazy("nested", () => Nested!)));
 
-    private static readonly ObjectSchema Circle = Z.Object()
+    private static readonly ObjectSchema Circle = Z.Object().Strict()
         .Property("kind", Z.String().Const("circle"))
         .Property("radius", Z.Number());
 
-    private static readonly ObjectSchema Square = Z.Object()
+    private static readonly ObjectSchema Square = Z.Object().Strict()
         .Property("kind", Z.String().Const("square"))
         .Property("side", Z.Number());
 
-    private static readonly ObjectSchema Triangle = Z.Object()
+    private static readonly ObjectSchema Triangle = Z.Object().Strict()
         .Property("kind", Z.String().Const("triangle"))
         .Property("a", Z.Number())
         .Property("b", Z.Number());
 
-    private static readonly ObjectSchema Person = Z.Object()
+    private static readonly ObjectSchema Person = Z.Object().Strict()
         .Property("name", Z.String())
         .Property("age", Z.Integer());
 
@@ -110,7 +110,7 @@ internal static class ZodCatalogue
         Add("array-unique", Z.Array(Z.String()).UniqueItems());
         Add("array-nested", Z.Array(Z.Array(Z.Integer())));
         Add("array-nullable", Z.Array(Z.Integer()).Nullable());
-        Add("array-of-objects", Z.Array(Z.Object().Property("a", Z.Integer())));
+        Add("array-of-objects", Z.Array(Z.Object().Strict().Property("a", Z.Integer())));
         Add("tuple-string-int", Z.Tuple(Z.String(), Z.Integer()));
         Add("tuple-three", Z.Tuple(Z.String(), Z.Number(), Z.Boolean()));
         Add("tuple-empty", Z.Tuple());
@@ -118,34 +118,34 @@ internal static class ZodCatalogue
         // objects
         Add("object-strict", Person);
         Add("object-strip", Person.Strip());
-        Add("object-default-mode", Person);
+        Add("object-default-mode", Z.Object().Property("name", Z.String()).Property("age", Z.Integer()));
         Add("object-passthrough", Person.Passthrough());
-        Add("object-optional", Z.Object().Property("name", Z.String()).Property("age", Z.Integer().Optional()));
-        Add("object-nullable-prop", Z.Object().Property("name", Z.String().Nullable()).Property("age", Z.Integer()));
-        Add("object-nullish-prop", Z.Object().Property("name", Z.String().Nullable().Optional()));
-        Add("object-default-int", Z.Object().Property("n", Z.Integer().Default(10)));
-        Add("object-default-string", Z.Object().Property("s", Z.String().Default("x")));
-        Add("object-catchall", Z.Object().Property("id", Z.Integer()).AdditionalProperties(Z.String()));
-        Add("object-nested", Z.Object().Property("a", Z.Object().Property("b", Z.Object().Property("c", Z.Integer()))));
-        Add("object-empty-strict", Z.Object());
+        Add("object-optional", Z.Object().Strict().Property("name", Z.String()).Property("age", Z.Integer().Optional()));
+        Add("object-nullable-prop", Z.Object().Strict().Property("name", Z.String().Nullable()).Property("age", Z.Integer()));
+        Add("object-nullish-prop", Z.Object().Strict().Property("name", Z.String().Nullable().Optional()));
+        Add("object-default-int", Z.Object().Strict().Property("n", Z.Integer().Default(10)));
+        Add("object-default-string", Z.Object().Strict().Property("s", Z.String().Default("x")));
+        Add("object-catchall", Z.Object().Strict().Property("id", Z.Integer()).AdditionalProperties(Z.String()));
+        Add("object-nested", Z.Object().Strict().Property("a", Z.Object().Strict().Property("b", Z.Object().Strict().Property("c", Z.Integer()))));
+        Add("object-empty-strict", Z.Object().Strict());
         Add("object-nullable", Person.Nullable());
         Add("object-pick", Abc.Pick("a", "b"));
         Add("object-omit", Abc.Omit("c"));
         Add("object-partial", Person.Partial());
-        Add("object-extend", Z.Object().Property("name", Z.String()).Extend(Z.Object().Property("age", Z.Integer())));
-        Add("object-pointer-keys", Z.Object().Property("a/b", Z.String()).Property("c~d", Z.String()));
-        Add("object-unicode-key", Z.Object().Property("\U0001F600", Z.Integer()));
+        Add("object-extend", Z.Object().Strict().Property("name", Z.String()).Extend(Z.Object().Strict().Property("age", Z.Integer())));
+        Add("object-pointer-keys", Z.Object().Strict().Property("a/b", Z.String()).Property("c~d", Z.String()));
+        Add("object-unicode-key", Z.Object().Strict().Property("\U0001F600", Z.Integer()));
 
         // records
         Add("record-number", Z.Record(Z.Number()));
-        Add("record-object", Z.Record(Z.Object().Property("x", Z.Integer())));
+        Add("record-object", Z.Record(Z.Object().Strict().Property("x", Z.Integer())));
         Add("record-lower-keys", Z.Record(Z.Number()).PropertyNames(Z.String().Pattern("^[a-z]+$")));
 
         // unions, discriminated unions, intersections
         Add("union-string-number", Z.AnyOf(Z.String(), Z.Number()));
         Add("union-string-int-null", Z.AnyOf(Z.String(), Z.Integer(), Z.Null()));
         Add("union-array-or-single", Z.AnyOf(Z.String(), Z.Array(Z.String())));
-        Add("union-objects", Z.AnyOf(Z.Object().Property("a", Z.Integer()), Z.Object().Property("b", Z.String())));
+        Add("union-objects", Z.AnyOf(Z.Object().Strict().Property("a", Z.Integer()), Z.Object().Strict().Property("b", Z.String())));
         Add("xor-number-int", Z.OneOf(Z.Number(), Z.Integer()));
         Add("discriminated-two", Z.DiscriminatedUnion("kind", Circle, Square));
         Add("discriminated-three", Z.DiscriminatedUnion("kind", Circle, Square, Triangle));
@@ -153,26 +153,26 @@ internal static class ZodCatalogue
         Add("intersection-number-range", Z.AllOf(Z.Number().Minimum(0), Z.Number().Maximum(10)));
         Add(
             "intersection-open-objects",
-            Z.AllOf(Z.Object().Property("a", Z.Integer()).Passthrough(), Z.Object().Property("b", Z.String()).Passthrough()));
+            Z.AllOf(Z.Object().Strict().Property("a", Z.Integer()).Passthrough(), Z.Object().Strict().Property("b", Z.String()).Passthrough()));
         Add(
             "intersection-strip-objects",
-            Z.AllOf(Z.Object().Property("a", Z.Integer()).Strip(), Z.Object().Property("b", Z.String()).Strip()));
+            Z.AllOf(Z.Object().Strict().Property("a", Z.Integer()).Strip(), Z.Object().Strict().Property("b", Z.String()).Strip()));
         Add(
             "intersection-strict-objects",
-            Z.AllOf(Z.Object().Property("a", Z.Integer()), Z.Object().Property("b", Z.String())));
+            Z.AllOf(Z.Object().Strict().Property("a", Z.Integer()), Z.Object().Strict().Property("b", Z.String())));
 
         // coercion
         Add("coerce-number", Z.Number().Coerce());
         Add("coerce-integer", Z.Integer().Coerce());
         Add("coerce-boolean", Z.Boolean().Coerce());
-        Add("coerce-number-prop", Z.Object().Property("n", Z.Number().Coerce()));
+        Add("coerce-number-prop", Z.Object().Strict().Property("n", Z.Number().Coerce()));
 
         // refinements
         Add("refine-not-admin", Z.String().Refine(text => text != "admin", "reserved"));
         Add("refine-even", Z.Integer().Refine(number => number % 2 == 0, "must be even"));
         Add(
             "refine-min-max",
-            Z.Object().Property("min", Z.Integer()).Property("max", Z.Integer())
+            Z.Object().Strict().Property("min", Z.Integer()).Property("max", Z.Integer())
                 .Refine(value => value.GetProperty("min").GetInt64() <= value.GetProperty("max").GetInt64(), "min above max"));
 
         // recursion
@@ -182,7 +182,7 @@ internal static class ZodCatalogue
         return cases;
     }
 
-    private static ObjectSchema Abc => Z.Object()
+    private static ObjectSchema Abc => Z.Object().Strict()
         .Property("a", Z.String())
         .Property("b", Z.Integer())
         .Property("c", Z.Boolean());

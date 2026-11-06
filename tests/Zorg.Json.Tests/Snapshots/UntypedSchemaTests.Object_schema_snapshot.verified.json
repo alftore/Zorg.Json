@@ -19,6 +19,5 @@
   },
   "required": [
     "query"
-  ],
-  "additionalProperties": false
+  ]
 }

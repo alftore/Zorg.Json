@@ -71,21 +71,6 @@
       "detail": "^zod invalid_type@ / zorg invalid_value@$"
     },
     {
-      "id": "unknown-keys-default",
-      "category": "unknown-keys",
-      "status": "design",
-      "reason": "z.object() strips unknown keys by default. Z.Object() rejects them with unrecognized_keys. The catalogue pairs them on purpose; object-strict, object-strip and object-passthrough pair the explicit modes.",
-      "link": "docs/guide.md#unknown-properties",
-      "cases": [
-        "object-default-mode"
-      ],
-      "kinds": [
-        "verdict",
-        "code",
-        "output"
-      ]
-    },
-    {
       "id": "zod-checks-run-after-type-error",
       "category": "issue-reporting",
       "status": "zod-behaviour",
@@ -295,19 +280,6 @@
         "verdict",
         "code",
         "path"
-      ]
-    },
-    {
-      "id": "intersection-strip-objects-last-wins",
-      "category": "intersection",
-      "status": "design",
-      "reason": "With Strip objects in Z.AllOf each branch strips the other branch's properties and the last change wins, so {\"a\":1,\"b\":\"y\"} comes back as {\"b\":\"y\"}. Zod merges the branch outputs. Documented, but it drops data without a warning.",
-      "link": "docs/reference.md#strip-objects-inside-allof",
-      "cases": [
-        "intersection-strip-objects"
-      ],
-      "kinds": [
-        "output"
       ]
     },
     {

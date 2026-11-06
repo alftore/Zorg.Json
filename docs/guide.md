@@ -107,7 +107,7 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Required:** a property marked `required`, or a constructor parameter with no default. System.Text.Json doesn't enforce the second kind itself, but `record Person(string Name)` says it's needed.
 - **Nullable:** follows the declaration, so `string?` allows `null` and `string` doesn't. Absent and `null` are separate: `string? Nickname` as a constructor parameter must be present, and may be `null`. Use `.Optional(p => p.Nickname)` or give it a default to let it be absent.
 - **Items of a collection** aren't nullable: `List<string?>` rejects a `null` item, because a contract doesn't carry the annotation of a type argument. Give the items a schema with `.Property(p => p.X, s => s.Items(...))` to allow it. The source generator warns about this.
-- **Unknown properties** are rejected, unless the type has `[JsonExtensionData]`. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is rejected even with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
+- **Unknown properties** are removed, unless the type has `[JsonExtensionData]`, which keeps them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is removed, and rejected with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
 - **Computed properties** with no setter aren't accepted as input, but appear in the output schema.
@@ -249,14 +249,27 @@ day.SafeParse("\"monday\"");    // fails with invalid_value: names are case-sens
 
 ## Unknown properties
 
-Objects reject unknown properties by default.
+By default, objects accept unknown properties and remove them from the result. That matches `z.object()` in Zod and the default of System.Text.Json, and a client can send a new field without breaking anything. JSON Schema has the same default: leaving `additionalProperties` out allows other properties.
 
-| Method | Unknown properties |
-|---|---|
-| `.Strict()` (default) | Fail with `unrecognized_keys` |
-| `.Strip()` | Accepted and removed from the result |
-| `.Passthrough()` | Accepted and kept |
-| `.AdditionalProperties(schema)` | Validated against `schema` |
+```csharp
+static readonly ObjectSchema Search = Z.Object().Property("query", Z.String());
+
+Search.Parse("""{ "query": "a", "extra": 1 }""");            // { "query": "a" }
+Search.Strict().SafeParse("""{ "query": "a", "extra": 1 }"""); // fails with unrecognized_keys
+```
+
+| Method | Unknown properties | Input schema | Output schema |
+|---|---|---|---|
+| `.Strip()` (default) | Accepted and removed from the result | `additionalProperties` left out | `additionalProperties: false` |
+| `.Strict()` | Fail with `unrecognized_keys` | `additionalProperties: false` | `additionalProperties: false` |
+| `.Passthrough()` | Accepted and kept | `additionalProperties` left out | `additionalProperties` left out |
+| `.AdditionalProperties(schema)` | Validated against `schema` | That schema | That schema |
+
+Turn on `.Strict()` when an unknown property is more likely a mistake than a newer client. Without it, a misspelled optional property such as `"limt": 5` is dropped with no error, and the default value applies. A misspelled required property still fails, as `required`.
+
+`.Strict()` applies to that one object. Each object inside it has its own setting.
+
+The output schema is closed by default because the result can't hold anything else. Imported schemas don't use this default: they follow the document, so a missing `additionalProperties` keeps unknown properties. The LLM profiles close every object themselves, because providers ask for it. See [the LLM guide](llm.md).
 
 ## Refinements
 
@@ -294,7 +307,7 @@ static readonly ObjectSchema Tree = Z.Object()
     .Property("children", Z.Array(Z.Lazy("tree", () => Tree!)));
 ```
 
-Combine objects with `.Extend(other)`, not `Z.AllOf`: a closed object rejects the properties of the other branch. `Extend` builds one flat object.
+Prefer `.Extend(other)` to combine objects: it builds one flat object. `Z.AllOf` works too, and the result keeps what any branch keeps. Don't use it with `.Strict()`: a closed object rejects the properties of the other branch.
 
 `Z.DiscriminatedUnion` selects a branch by the property when every branch requires it with its own values. Otherwise, for example when two branches share a value, it behaves like `Z.OneOf`.
 

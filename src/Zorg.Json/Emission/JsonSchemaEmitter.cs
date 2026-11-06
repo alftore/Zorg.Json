@@ -76,6 +76,8 @@ internal sealed class JsonSchemaEmitter
     private Pointing? _pointing;
     private bool _writingHome;
 
+    private int _underAllOf;
+
     /// <summary>The home being written sits in another resource than what it copies, where a dynamic name would read differently.</summary>
     private bool _homeIsAway;
     private bool _isUnread;
@@ -1657,7 +1659,7 @@ internal sealed class JsonSchemaEmitter
             schema["additionalProperties"] = EmitNode(node.AdditionalProperties, $"{location}/additionalProperties");
         }
         else if (node.Behavior.UnknownProperties == UnknownProperties.Reject
-            || (node.Behavior.UnknownProperties == UnknownProperties.Strip && !IsInput))
+            || (node.Behavior.UnknownProperties == UnknownProperties.Strip && !IsInput && _underAllOf == 0))
         {
             schema["additionalProperties"] = false;
         }
@@ -1735,7 +1737,10 @@ internal sealed class JsonSchemaEmitter
 
     private void WriteApplicators(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
+        // The branches of an allOf merge in the result, so a branch that strips can't say the others' properties aren't there.
+        _underAllOf++;
         WriteList(schema, "allOf", node.AllOf, location);
+        _underAllOf--;
         WriteList(schema, "anyOf", node.AnyOf, location);
         WriteOneOf(schema, node, notes, location);
 

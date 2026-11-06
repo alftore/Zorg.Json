@@ -97,10 +97,10 @@ public enum UnknownProperties
     /// <summary>Keep them. JSON Schema's own default, and the one imported schemas use.</summary>
     Allow,
 
-    /// <summary>Fail with <see cref="IssueCodes.UnrecognizedKeys"/>. The default for fluent schemas.</summary>
+    /// <summary>Fail with <see cref="IssueCodes.UnrecognizedKeys"/>.</summary>
     Reject,
 
-    /// <summary>Remove them from the result.</summary>
+    /// <summary>Remove them from the result. The default for fluent schemas.</summary>
     Strip,
 }
 

@@ -83,6 +83,7 @@ public static class LlmProfiles
         "gemini-json-schema",
         JsonSchemaDialect.OpenApi31,
         capabilities,
+        Rewriters.CloseAllObjects,
         OneOfToAnyOf,
         ConstToEnum,
         Rewriters.MoveDefaultToDescription);

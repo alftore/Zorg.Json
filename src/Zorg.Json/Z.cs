@@ -160,8 +160,9 @@ public static class Z
     });
 
     /// <summary>
-    /// Creates a schema for JSON objects, which rejects unknown properties until told otherwise. JSON Schema:
-    /// <c>type: object</c> and <c>additionalProperties: false</c>. Zod equivalent: <c>z.strictObject()</c>.
+    /// Creates a schema for JSON objects. Unknown properties are accepted and removed from the result until told otherwise:
+    /// use <see cref="ObjectSchemaBase{T, TSelf}.Strict"/> to reject them. JSON Schema: <c>type: object</c>, with no
+    /// <c>additionalProperties</c> in the input schema. Zod equivalent: <c>z.object()</c>.
     /// </summary>
     /// <returns>A new schema.</returns>
     /// <example>
@@ -174,7 +175,7 @@ public static class Z
     public static ObjectSchema Object() => new(new SchemaNode
     {
         Types = JsonTypes.Object,
-        Behavior = new SchemaBehavior { UnknownProperties = UnknownProperties.Reject },
+        Behavior = new SchemaBehavior { UnknownProperties = UnknownProperties.Strip },
     });
 
     /// <summary>Creates a schema for objects with any keys and uniform values. JSON Schema: <c>additionalProperties</c>. Zod equivalent: <c>z.record()</c>.</summary>

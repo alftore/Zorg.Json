@@ -600,7 +600,7 @@ public sealed class ReviewRegressionTests
     {
         string json = $"{{{string.Join(',', Enumerable.Range(0, 5000).Select(n => $"\"k{n}\":1"))}}}";
 
-        ParseIssue issue = Assert.Single(Z.Object().SafeParse(json).Issues);
+        ParseIssue issue = Assert.Single(Z.Object().Strict().SafeParse(json).Issues);
 
         Assert.Equal(IssueCodes.UnrecognizedKeys, issue.Code);
         Assert.Equal(ValidationContext.MaxListedKeys, ((string[])issue.Parameters["keys"]!).Length);

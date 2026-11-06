@@ -166,7 +166,7 @@ public sealed class OptionalTests
     {
         Assert.Equal(IssueCodes.InvalidType, Assert.Single(PatchSchema.SafeParse("""{ "name": 5 }""").Issues).Code);
         Assert.False(PatchSchema.SafeParse("""{ "age": "x" }""").IsSuccess);
-        Assert.False(PatchSchema.SafeParse("""{ "extra": 1 }""").IsSuccess);
+        Assert.False(PatchSchema.Strict().SafeParse("""{ "extra": 1 }""").IsSuccess);
         Assert.False(PatchSchema.SafeParse("[]").IsSuccess);
     }
 

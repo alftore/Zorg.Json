@@ -13,7 +13,7 @@ namespace Zorg.Json.Extensions.AI.Tests;
 
 public sealed class ChatSchemaExtensionsTests
 {
-    private static readonly ObjectSchema Answer = Z.Object()
+    private static readonly ObjectSchema Answer = Z.Object().Strict()
         .Property("title", Z.String().MaxLength(80).Pattern("^[A-Z]"))
         .Property("score", Z.Integer().Minimum(0).Maximum(10))
         .Property("note", Z.String().Optional());

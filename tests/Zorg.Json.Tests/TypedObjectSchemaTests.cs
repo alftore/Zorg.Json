@@ -95,9 +95,17 @@ public sealed class TypedObjectSchemaTests
     }
 
     [Fact]
-    public void Unknown_properties_are_rejected()
+    public void Unknown_properties_are_removed_by_default()
     {
-        ParseIssue issue = SingleIssue(PersonSchema.SafeParse(Change("unknown", "1")));
+        Assert.True(PersonSchema.SafeParse(Change("unknown", "1")).IsSuccess);
+        Assert.Null(PersonSchema.ToJsonSchema()["additionalProperties"]);
+        Assert.False(PersonSchema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void Strict_rejects_unknown_properties()
+    {
+        ParseIssue issue = SingleIssue(PersonSchema.Strict().SafeParse(Change("unknown", "1")));
 
         Assert.Equal(IssueCodes.UnrecognizedKeys, issue.Code);
         Assert.Equal(["unknown"], (string[])issue.Parameters["keys"]!);
@@ -109,7 +117,7 @@ public sealed class TypedObjectSchemaTests
 
     [Fact]
     public void Output_only_properties_are_not_accepted() =>
-        Assert.Equal(IssueCodes.UnrecognizedKeys, SingleIssue(PersonSchema.SafeParse(Change("computed", "\"x\""))).Code);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, SingleIssue(PersonSchema.Strict().SafeParse(Change("computed", "\"x\""))).Code);
 
     [Fact]
     public void Json_names_come_from_the_contract() =>
@@ -150,7 +158,7 @@ public sealed class TypedObjectSchemaTests
     public void Optional_and_Omit_change_the_contract()
     {
         Assert.True(PersonSchema.Optional(p => p.Nick).SafeParse(Remove("nick")).IsSuccess);
-        Assert.Equal(IssueCodes.UnrecognizedKeys, SingleIssue(PersonSchema.Omit(p => p.Id).SafeParse(Change("id", "null"))).Code);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, SingleIssue(PersonSchema.Strict().Omit(p => p.Id).SafeParse(Change("id", "null"))).Code);
     }
 
     [Fact]

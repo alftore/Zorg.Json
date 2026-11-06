@@ -160,7 +160,8 @@ public sealed class ScaleTests
         Assert.True(Z.Any().SafeParse(arrays).IsSuccess);
         Assert.True(Z.Array().SafeParse(arrays).IsSuccess);
         Assert.True(Z.Object().Passthrough().SafeParse(objects).IsSuccess);
-        Assert.False(Z.Object().SafeParse(objects).IsSuccess);
+        Assert.True(Z.Object().SafeParse(objects).IsSuccess);
+        Assert.False(Z.Object().Strict().SafeParse(objects).IsSuccess);
         Assert.False(Z.Object().Property("a", Z.Number()).SafeParse(objects).IsSuccess);
         Assert.True(Z.Array().UniqueItems().SafeParse(arrays).IsSuccess);
         Assert.False(Z.String().SafeParse(arrays).IsSuccess);

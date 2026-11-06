@@ -32,13 +32,14 @@ public sealed class DocumentationExamplesTests
     }
 
     [Fact]
-    public void Search_schema_fills_defaults_and_rejects_unknown_properties()
+    public void Search_schema_fills_defaults_and_removes_unknown_properties()
     {
         JsonElement parsed = SearchSchema.Parse("""{ "query": "  hi  " }""");
 
         Assert.Equal("hi", parsed.GetProperty("query").GetString());
         Assert.Equal(10, parsed.GetProperty("limit").GetInt32());
-        Assert.Equal(IssueCodes.UnrecognizedKeys, Assert.Single(SearchSchema.SafeParse("""{ "query": "a", "x": 1 }""").Issues).Code);
+        Assert.False(SearchSchema.Parse("""{ "query": "a", "x": 1 }""").TryGetProperty("x", out _));
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Assert.Single(SearchSchema.Strict().SafeParse("""{ "query": "a", "x": 1 }""").Issues).Code);
     }
 
     [Fact]

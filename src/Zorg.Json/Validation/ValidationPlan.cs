@@ -42,6 +42,8 @@ internal sealed class ValidationPlan
     private readonly string? _closedBy;
     private readonly ValidationPlan? _propertyNames;
     private readonly ImmutableArray<(string Name, ValidationPlan Plan)> _dependentSchemas;
+    private const int MaxMergeDepth = 256;
+
     private readonly ImmutableArray<ValidationPlan> _allOf;
     private readonly ImmutableArray<ValidationPlan> _anyOf;
     private readonly ImmutableArray<ValidationPlan> _oneOf;
@@ -981,6 +983,79 @@ internal sealed class ValidationPlan
         return rewritten is null ? value : JsonStrings.ToObject(rewritten);
     }
 
+    /// <summary>
+    /// Two rewrites of one value. A property either of them kept stays, and of two different values the one that changed wins, the
+    /// later one if both did. Past <see cref="MaxMergeDepth"/> the later rewrite stands as it is, which bounds the stack.
+    /// </summary>
+    private static JsonElement Merge(JsonElement original, JsonElement left, JsonElement right, ValidationContext context, int depth)
+    {
+        if (depth < MaxMergeDepth && left.ValueKind == JsonValueKind.Object && right.ValueKind == JsonValueKind.Object)
+        {
+            Dictionary<string, JsonElement> later = Named(right);
+            Dictionary<string, JsonElement> before = original.ValueKind == JsonValueKind.Object ? Named(original) : [];
+
+            if (!context.Spend(later.Count + before.Count))
+            {
+                return right;
+            }
+
+            List<KeyValuePair<string, JsonElement>> merged = [];
+
+            foreach (JsonProperty property in left.EnumerateObject())
+            {
+                string name = JsonText.GetName(property);
+                JsonElement value = later.Remove(name, out JsonElement other)
+                    ? Merge(before.GetValueOrDefault(name), property.Value, other, context, depth + 1)
+                    : property.Value;
+                merged.Add(KeyValuePair.Create(name, value));
+            }
+
+            foreach (JsonProperty property in right.EnumerateObject())
+            {
+                if (later.ContainsKey(JsonText.GetName(property)))
+                {
+                    merged.Add(KeyValuePair.Create(JsonText.GetName(property), property.Value));
+                }
+            }
+
+            return JsonStrings.ToObject(merged);
+        }
+
+        if (depth < MaxMergeDepth && left.ValueKind == JsonValueKind.Array && right.ValueKind == JsonValueKind.Array && left.GetArrayLength() == right.GetArrayLength())
+        {
+            int count = left.GetArrayLength();
+
+            if (!context.Spend(count))
+            {
+                return right;
+            }
+
+            bool aligned = original.ValueKind == JsonValueKind.Array && original.GetArrayLength() == count;
+            List<JsonElement> items = new(count);
+
+            for (int index = 0; index < count; index++)
+            {
+                items.Add(Merge(aligned ? original[index] : default, left[index], right[index], context, depth + 1));
+            }
+
+            return JsonStrings.ToArray(items);
+        }
+
+        return original.ValueKind != JsonValueKind.Undefined && JsonEquality.AreEqual(right, original, context) ? left : right;
+    }
+
+    private static Dictionary<string, JsonElement> Named(JsonElement value)
+    {
+        Dictionary<string, JsonElement> members = new(StringComparer.Ordinal);
+
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            members[JsonText.GetName(property)] = property.Value;
+        }
+
+        return members;
+    }
+
     private IEnumerable<KeyValuePair<string, JsonElement>> Members(JsonElement value, ValidationContext context, int limit = int.MaxValue)
     {
         foreach (JsonProperty property in value.EnumerateObject().Take(limit))
@@ -1053,18 +1128,20 @@ internal sealed class ValidationPlan
 
     /// <summary>
     /// Every applicator sees the same value, as in JSON Schema, so that a rewrite in one branch can't change
-    /// the verdict of another. The result is the last rewrite.
+    /// the verdict of another. What they each rewrote is merged, so a branch that strips what only another branch knows loses nothing.
     /// </summary>
     private JsonElement RunApplicators(JsonElement value, ValidationContext context)
     {
         JsonElement result = value;
         int rewrites = context.RewriteCount;
+        bool rewritten = false;
 
         void Keep(JsonElement candidate)
         {
             if (context.RewriteCount != rewrites)
             {
-                result = candidate;
+                result = rewritten ? Merge(value, result, candidate, context, 0) : candidate;
+                rewritten = true;
                 rewrites = context.RewriteCount;
             }
         }

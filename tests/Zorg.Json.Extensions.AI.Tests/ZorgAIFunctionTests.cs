@@ -20,7 +20,7 @@ public sealed partial class ForecastJson : JsonSerializerContext;
 
 public sealed class ZorgAIFunctionTests
 {
-    private static readonly ObjectSchema Arguments = Z.Object()
+    private static readonly ObjectSchema Arguments = Z.Object().Strict()
         .Property("city", Z.String().MinLength(1))
         .Property("days", Z.Integer().Minimum(1).Maximum(14));
 

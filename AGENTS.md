@@ -7,7 +7,7 @@
 - Method names are JSON Schema keywords first: `MinLength`, `Maximum`, `MinItems`, `Pattern`. See `docs/reference.md` for the Zod equivalents.
 - Schemas are immutable. Always use the return value, and store schemas in `static readonly` fields.
 - Prefer `SafeParse`, which returns `ParseResult<T>`. Read `.Value` only after checking `.IsSuccess`.
-- Unknown properties are rejected by default. Use `.Strip()` or `.Passthrough()` to change that.
+- Unknown properties are removed by default, and the input schema leaves `additionalProperties` out. Use `.Strict()` to reject them or `.Passthrough()` to keep them.
 - `ToJsonSchema()` describes the input. Pass `Direction = SchemaDirection.Output` for responses.
 - There's no `Transform`. Use `ParseResult<T>.Map`.
 - A self-reference inside a field initializer needs `!`: `Z.Lazy("tree", () => Tree!)`.

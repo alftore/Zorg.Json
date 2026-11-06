@@ -33,8 +33,7 @@
           "required": [
             "kind",
             "radius"
-          ],
-          "additionalProperties": false
+          ]
         },
         {
           "type": "object",
@@ -50,8 +49,7 @@
           "required": [
             "kind",
             "side"
-          ],
-          "additionalProperties": false
+          ]
         }
       ]
     },
@@ -77,8 +75,7 @@
       "required": [
         "value",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   },
   "required": [
@@ -87,7 +84,6 @@
     "nullable",
     "tree"
   ],
-  "additionalProperties": false,
   "$defs": {
     "tree": {
       "type": "object",
@@ -105,8 +101,7 @@
       "required": [
         "value",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 }

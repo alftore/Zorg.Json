@@ -16,7 +16,7 @@ Method names follow JSON Schema keywords first. Coming from Zod, look up the nam
 | `false` | `Z.Never()` | `z.never()` |
 | `type: array`, `items` | `Z.Array(items)` | `z.array()` |
 | `prefixItems` | `Z.Tuple(a, b)` | `z.tuple()` |
-| `type: object` | `Z.Object()`, `Schema.Object(typeInfo)` | `z.strictObject()` |
+| `type: object` | `Z.Object()`, `Schema.Object(typeInfo)` | `z.object()` |
 | `additionalProperties: schema` | `Z.Record(values)` | `z.record()` |
 | `format` with a typed result | `Schema.Parsable<Guid>("uuid")` | `z.uuid()` |
 
@@ -82,9 +82,9 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | JSON Schema | Zorg.Json | Zod |
 |---|---|---|
 | `properties`, `required` | `.Property("name", schema)` | a key of `z.object()` |
-| `additionalProperties: false` | `.Strict()` (the default) | `.strict()` |
+| `additionalProperties: false` | `.Strict()` | `.strict()` |
+| no `additionalProperties` | `.Strip()` (the default) | `.strip()` (the default) |
 | no `additionalProperties` | `.Passthrough()` | `.passthrough()` |
-| | `.Strip()` | `.strip()` |
 | `additionalProperties: schema` | `.AdditionalProperties(schema)` | `.catchall()` |
 | `patternProperties` | `.PatternProperty(pattern, schema)` | |
 | `propertyNames` | `.PropertyNames(schema)` | |
@@ -190,9 +190,9 @@ A schema that Zorg emits and that Zod reads back is therefore stricter for `uuid
 - `Trim` uses the .NET whitespace set, and Zod the JavaScript one. JavaScript trims U+FEFF and keeps U+0085, and .NET does the reverse.
 - `ToUpperInvariant` and `ToLowerInvariant` map one character to one. JavaScript `toUpperCase` and `toLowerCase` use the full mappings, so the German sharp s becomes `SS`, the `fi` ligature becomes `FI`, and a capital I with a dot above becomes `i` plus a combining dot.
 
-### Strip objects inside AllOf
+### Objects inside AllOf
 
-Don't put `Strip` objects in `Z.AllOf`. Every branch sees the original value and rewrites it on its own, so each branch removes the properties that only the other branches know, and the last rewrite wins. With one branch for `a` and another for `b`, `{"a":1,"b":"y"}` comes back as `{"b":"y"}`. Zod merges the outputs of the branches. The parse succeeds and drops data without a warning. Use `.Extend(other)` to put the properties in one object instead.
+Every branch of `Z.AllOf` sees the original value and rewrites it on its own, and the results are merged, as in Zod. A property stays if any branch keeps it, so with one branch for `a` and another for `b`, `{"a":1,"b":"y","x":2}` comes back as `{"a":1,"b":"y"}`. When two branches change one value to different results, the later branch wins, where Zod reports an error. Past 256 levels of nesting the later result stands as it is. In the output schema, objects under `allOf` aren't closed, because each branch only knows its own properties.
 
 ## Not in Zorg.Json
 

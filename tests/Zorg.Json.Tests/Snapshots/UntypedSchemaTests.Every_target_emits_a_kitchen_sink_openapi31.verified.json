@@ -62,8 +62,7 @@
       "required": [
         "value",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   },
   "required": [
@@ -79,7 +78,6 @@
       "type": "string"
     }
   },
-  "additionalProperties": false,
   "dependentRequired": {
     "constant": [
       "number"
@@ -103,8 +101,7 @@
       "required": [
         "value",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 }

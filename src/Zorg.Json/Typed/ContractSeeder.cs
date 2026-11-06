@@ -204,7 +204,7 @@ internal sealed class ContractSeeder
             Required = required.ToImmutable(),
             Behavior = new SchemaBehavior
             {
-                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : UnknownProperties.Reject,
+                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : UnknownProperties.Strip,
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };

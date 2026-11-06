@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input schema no longer writes `additionalProperties: false`, and the output schema still does. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. Imported schemas are unchanged, and the LLM profiles still close every object. `oneOf` of objects with no property to tell them apart can now be written as `anyOf` when a branch isn't exact, because open objects don't exclude each other.
+
+- `Z.AllOf` now merges what its branches rewrite, as Zod does. It used to keep the last rewrite, so objects that strip lost each other's properties. In the output schema, objects under `allOf` are no longer closed, which could accept nothing.
+- A deep instance is no longer rejected under `$dynamicRef` or `$recursiveRef` beside `anyOf`, `oneOf` and `unevaluated*`. Finding what was evaluated doubled with the depth there and ran out of steps at about 13 levels.
+- A reference copied out of its resource no longer keeps a `#name` that can't be found where it landed. A `$ref` is written as a pointer, and a `$dynamicRef` is left out with a diagnostic.
+- An embedded `$schema` that isn't the target's is written as `x-inert-$schema`, so a bundled 2020-12 resource can be loaded as draft-07.
+- A 2019-09 `$anchor` that 2020-12 doesn't allow, such as `a:b`, is written as a pointer.
+- `contains` beside `unevaluatedItems` from a 2019-09 document now gets a diagnostic when it's written to 2020-12, where it's looser.
 - Added a source generator, in the `Zorg.Json` package. `[GenerateSchema(typeof(AppJson))]` on a partial type writes a static `Schema` property from its contract and its validation attributes: `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]`, `[Range]`, `[RegularExpression]`, `[EmailAddress]`, `[Url]`, `[Required]` and `[Description]`. What it writes is ordinary fluent code, so it works under Native AOT. An attribute it can't state is a warning, `ZORG0005`, and it refuses polymorphic types and types with a custom converter, `ZORG0007`. See the guide for how each attribute reads.
 - Added `JsonSchemaImportOptions.Documents`: other documents a `$ref` can reach, by URI. They're bundled into the schema as embedded resources, so nothing is fetched and the emitted schema needs nothing else.
 - `$dynamicRef` and `$dynamicAnchor` now work. They were refused with `unsupported_keyword`. They're written to 2020-12 and OpenAPI 3.1, and left out with a diagnostic where they can't work: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. They can't sit beside `$ref` in one schema object. A `$dynamicRef` that doesn't land on a `$dynamicAnchor` of its name is written as `$ref`, and inside a larger fluent schema dynamic keywords are left out, because the import shares a resource there.
@@ -16,11 +24,6 @@
 - A `$ref` can now reach any `$id` in the same document by URI: relative, absolute or URN, with a pointer or an anchor. Bundled documents import. Nothing is fetched, and what isn't in the document stays `unresolved_ref`. Refused cases of the official suite dropped from 252 to 88 for 2020-12, from 63 to 27 for draft-07, from 55 to 27 for draft-06 and from 32 to 21 for draft-04.
 - With `ReferencePrefix`, imported schemas no longer write `$id` or `$anchor`, because a pointer in a component reads from the whole document. A schema on two endpoints no longer repeats them, and two definitions that differ only in `#z` against `#/$defs/t` no longer throw. A root with an `$id` now moves its definitions to `EmitResult.Definitions` like any other.
 - An imported `format` that parsing doesn't check is written as `x-inert-format` to draft-07 and OpenAPI 3.0, with a diagnostic, because validators of those dialects may check it and reject what parsing accepts. Import with `Formats = FormatHandling.AssertKnown` to keep `format` there. 2020-12 and OpenAPI 3.1 output keep `format`.
-- A deep instance is no longer rejected under `$dynamicRef` or `$recursiveRef` beside `anyOf`, `oneOf` and `unevaluated*`. Finding what was evaluated doubled with the depth there and ran out of steps at about 13 levels.
-- A reference copied out of its resource no longer keeps a `#name` that can't be found where it landed. A `$ref` is written as a pointer, and a `$dynamicRef` is left out with a diagnostic.
-- An embedded `$schema` that isn't the target's is written as `x-inert-$schema`, so a bundled 2020-12 resource can be loaded as draft-07.
-- A 2019-09 `$anchor` that 2020-12 doesn't allow, such as `a:b`, is written as a pointer.
-- `contains` beside `unevaluatedItems` from a 2019-09 document now gets a diagnostic when it's written to 2020-12, where it's looser.
 - Two resources with the same URI in one document are now refused with `invalid_schema`.
 - A draft-07 `$id` that spells its place, such as `#/definitions/a`, is now read. It used to be refused.
 - Fixed `"$id":"http://x/y#"` beside an anchor being written to draft-07 as `http://x/y##a`.

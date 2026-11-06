@@ -16,7 +16,6 @@
     "name",
     "children"
   ],
-  "additionalProperties": false,
   "$defs": {
     "Category": {
       "type": "object",
@@ -34,8 +33,7 @@
       "required": [
         "name",
         "children"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 }

@@ -180,8 +180,8 @@ public sealed class DisjointBranchTests
     public void A_closed_fluent_object_excludes_what_it_does_not_name()
     {
         JsonValueSchema schema = Z.OneOf(
-            Z.Object().Property("a", Z.String().Uuid()),
-            Z.Object().Property("b", Z.String()));
+            Z.Object().Strict().Property("a", Z.String().Uuid()),
+            Z.Object().Strict().Property("b", Z.String()));
 
         Assert.Contains("\"oneOf\"", schema.ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
     }

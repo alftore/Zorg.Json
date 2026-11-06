@@ -238,7 +238,7 @@ public sealed class ValidateBodyTests
     {
         await using TestApp app = await TestApp.StartAsync(a => a
             .MapPost("/search", (JsonElement body) => body.GetProperty("limit").GetInt32() + 1)
-            .ValidateBody(Z.Object()
+            .ValidateBody(Z.Object().Strict()
                 .Property("query", Z.String().MinLength(1))
                 .Property("limit", Z.Integer().Default(10))));
 
