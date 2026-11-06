@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -873,6 +875,106 @@ public sealed class EmissionReviewTests
         Assert.All(result.Diagnostics, diagnostic => Assert.True(diagnostic.Message.Length < 1_000, diagnostic.Message.Length.ToString()));
     }
 
+    // From the second review of the reference model.
+
+    [Fact]
+    public void A_reference_moved_to_a_description_is_written_without_nesting_homes()
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.CloseAllObjects);
+        Stopwatch clock = Stopwatch.StartNew();
+
+        EmitResult result = Import("""{"$id":"http://x/t.json","type":"object","additionalProperties":{"$ref":"#"}}""").Emit(new JsonSchemaOptions { Target = profile });
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
+        Assert.True(result.Schema.ToJsonString().Length < 1000, result.Schema.ToJsonString());
+    }
+
+    [Fact]
+    public void A_copied_resource_refers_to_itself_under_a_prefix()
+    {
+        const string Document = """{"$defs":{"r":{"$id":"http://x/r","properties":{"k":{"$ref":"#"}}}},"properties":{"p":{"$ref":"#/properties/q"},"q":{"$ref":"#/$defs/r"}}}""";
+
+        EmitResult result = Import(Document).Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+
+        Assert.True(result.Schema.ToJsonString().Length + result.Definitions.Sum(entry => entry.Value.ToJsonString().Length) < 1000);
+    }
+
+    [Fact]
+    public void Two_named_imports_with_a_reference_at_the_root_keep_their_own_targets()
+    {
+        const string Template = """{"$ref":"#/$defs/a","$defs":{"a":{"type":"object","properties":{"n":{"$ref":"#/$defs/b"}}},"b":{"type":"TYPE"}}}""";
+        JsonValueSchema first = Import(Template.Replace("TYPE", "string", StringComparison.Ordinal)).Named("A");
+        JsonValueSchema second = Import(Template.Replace("TYPE", "integer", StringComparison.Ordinal)).Named("B");
+        ObjectSchema schema = Z.Object().Property("x", first).Property("y", second);
+
+        foreach (ReusedSchemaHandling reused in Enum.GetValues<ReusedSchemaHandling>())
+        {
+            string text = schema.Emit(new JsonSchemaOptions { Reused = reused }).Schema.ToJsonString();
+
+            Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, """{"x":{"n":"s"},"y":{"n":1}}"""), text);
+            Assert.False(Accepts(text, JsonSchemaProfile.Draft202012, """{"x":{"n":1},"y":{"n":"s"}}"""), text);
+        }
+    }
+
+    [Fact]
+    public void A_boolean_definition_survives_a_reference_prefix()
+    {
+        EmitResult result = Import("""{"$defs":{"never":false},"properties":{"b":{"$ref":"#/$defs/never"}}}""").Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+
+        Assert.Equal("""{"not":{}}""", result.Definitions["never"].ToJsonString());
+    }
+
+    [Fact]
+    public void An_id_with_an_empty_fragment_used_twice_is_still_a_valid_id()
+    {
+        JsonValueSchema schema = Import("""{"$id":"http://x/a#","type":"string"}""");
+
+        string text = Z.Object().Property("x", schema).Property("y", schema).ToJsonSchema().ToJsonString();
+
+        Assert.Contains("\"http://x/a-2\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Homes_of_different_documents_have_different_names_and_the_same_document_the_same()
+    {
+        JsonSchemaOptions options = new() { Target = JsonSchemaProfile.OpenApi31, ReferencePrefix = "#/components/schemas/" };
+        const string First = """{"type":"object","properties":{"kid":{"$ref":"#"},"a":{"type":"string"}}}""";
+        const string Second = """{"type":"object","properties":{"kid":{"$ref":"#"},"b":{"type":"integer"}}}""";
+
+        string one = Assert.Single(Import(First).Emit(options).Definitions).Key;
+        string again = Assert.Single(Import(First).Emit(options).Definitions).Key;
+        string other = Assert.Single(Import(Second).Emit(options).Definitions).Key;
+
+        Assert.Equal(one, again);
+        Assert.NotEqual(one, other);
+    }
+
+    [Theory]
+    [InlineData(20_000)]
+    public void Many_references_take_linear_time(int count)
+    {
+        StringBuilder targets = new("""{"x-u":{""");
+        StringBuilder references = new("""},"properties":{""");
+
+        for (int index = 0; index < count; index++)
+        {
+            string name = index.ToString(CultureInfo.InvariantCulture);
+            targets.Append(index > 0 ? "," : string.Empty).Append("""
+                "kN":{"properties":{"p":{"type":"string"}}}
+                """.Replace("kN", "k" + name, StringComparison.Ordinal));
+            references.Append(index > 0 ? "," : string.Empty).Append("""
+                "aN":{"$ref":"#/x-u/kN"},"bN":{"$ref":"#/x-u/kN/properties/p"}
+                """.Replace("N", name, StringComparison.Ordinal));
+        }
+
+        JsonValueSchema schema = Import(targets.ToString() + references + "}}", new JsonSchemaImportOptions { MaxNodes = 1_000_000 });
+        Stopwatch clock = Stopwatch.StartNew();
+
+        _ = schema.Emit(new JsonSchemaOptions());
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
+    }
+
     // What the reference fuzzer found, and the three limits docs/import.md once listed.
 
     [Fact]
@@ -910,7 +1012,10 @@ public sealed class EmissionReviewTests
     {
         EmitResult result = Z.Array(Import("""{"type":"object","properties":{"n":{"$ref":"#"}}}""")).Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
 
-        Assert.Equal("""{"type":"object","properties":{"n":{"$ref":"#/components/schemas/target-1"}}}""", result.Definitions["target-1"].ToJsonString());
+        (string name, JsonObject definition) = Assert.Single(result.Definitions);
+
+        Assert.StartsWith("target-1-", name, StringComparison.Ordinal);
+        Assert.Equal("""{"type":"object","properties":{"n":{"$ref":"#/components/schemas/NAME"}}}""".Replace("NAME", name, StringComparison.Ordinal), definition.ToJsonString());
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -50,6 +51,7 @@ internal sealed class JsonSchemaEmitter
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
+    private ImportScope? _looseScope;
     private readonly List<Site> _sites = [];
     private Dictionary<JsonObject, SchemaNode>? _resources;
     private HashSet<string>? _ids;
@@ -59,6 +61,9 @@ internal sealed class JsonSchemaEmitter
     private bool _isUnread;
     private int _emitted;
     private int _depth;
+
+    /// <summary>A node written outside the root of its document, as when a rewriter states one subschema as text, still has places.</summary>
+    private ImportScope Scope => _import ?? (_looseScope ??= new ImportScope(null));
 
     private bool IsInput => _options.Direction == SchemaDirection.Input;
 
@@ -246,8 +251,7 @@ internal sealed class JsonSchemaEmitter
         WriteReferences(schema, node);
 
         ImmutableDictionary<string, JsonObject> definitions = _definitions
-            .Where(entry => entry.Value is JsonObject)
-            .ToImmutableDictionary(entry => entry.Key, entry => (JsonObject)entry.Value, StringComparer.Ordinal);
+            .ToImmutableDictionary(entry => entry.Key, entry => entry.Value as JsonObject ?? BooleanRoot(entry.Value), StringComparer.Ordinal);
 
         foreach (IJsonSchemaPostProcessor processor in _profile.PostProcessors)
         {
@@ -276,6 +280,9 @@ internal sealed class JsonSchemaEmitter
 
         _pointing = new Pointing();
 
+        // The limit guards against a schema that doubles. Homes are written once each, and have a limit of their own.
+        _emitted = 0;
+
         // Writing a home can add references of its own.
         for (int index = 0; index < _sites.Count; index++)
         {
@@ -284,6 +291,7 @@ internal sealed class JsonSchemaEmitter
             site.Place = FindPlace(site) ?? WriteHome(site, root, rootNode);
         }
 
+        NameLeavingHomes(root);
         DropRepeatedAnchors();
 
         foreach (Site site in _sites)
@@ -295,7 +303,7 @@ internal sealed class JsonSchemaEmitter
     /// <summary>What writing the references needs for as long as it takes.</summary>
     private sealed class Pointing
     {
-        public Dictionary<(JsonObject? Owner, ImportScope? Scope, string Location), JsonNode> Homes { get; } = [];
+        public Dictionary<(JsonObject? Owner, ImportScope Scope, string Location), JsonNode> Homes { get; } = [];
 
         public Dictionary<JsonObject, int> HomeCounts { get; } = new(ReferenceEqualityComparer.Instance);
 
@@ -305,6 +313,9 @@ internal sealed class JsonSchemaEmitter
         public Dictionary<JsonNode, string> Tokens { get; } = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<JsonNode, string> Definitions { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The names of the homes that went to <see cref="EmitResult.Definitions"/>.</summary>
+        public List<string> Leaving { get; } = [];
 
         public string Token(JsonNode node, JsonNode parent)
         {
@@ -366,7 +377,7 @@ internal sealed class JsonSchemaEmitter
             return home;
         }
 
-        if (site.Scope?.Find(location) is not { } place || Pointer(place, site.Owner) is not { } pointer)
+        if (site.Scope.Find(location) is not { } place || Pointer(place, site.Owner) is not { } pointer)
         {
             return null;
         }
@@ -405,7 +416,7 @@ internal sealed class JsonSchemaEmitter
 
         Dictionary<JsonNode, string> known = _pointing!.Definitions;
 
-        if (!known.ContainsKey(top))
+        if (known.Count != _definitions.Count)
         {
             foreach ((string name, JsonNode definition) in _definitions)
             {
@@ -442,11 +453,14 @@ internal sealed class JsonSchemaEmitter
         if (leavesDocument)
         {
             _definitions[name] = definition;
+            _pointing.Definitions[definition] = name;
+            _pointing.Leaving.Add(name);
         }
         else
         {
             _definitions.Remove(name);
             definitions[name] = definition;
+            _pointing.Tokens[definition] = FragmentEscape(Escape(name));
 
             if (!owner.ContainsKey(_profile.DefinitionsKeyword))
             {
@@ -455,6 +469,41 @@ internal sealed class JsonSchemaEmitter
         }
 
         return definition;
+    }
+
+    /// <summary>
+    /// Definitions that leave the document join those of other documents, which number their homes the same way. A name that
+    /// depends on the document keeps two different ones apart, and lets the same one, emitted twice, share its definitions.
+    /// </summary>
+    private void NameLeavingHomes(JsonObject root)
+    {
+        if (_pointing!.Leaving.Count == 0)
+        {
+            return;
+        }
+
+        StringBuilder text = new(root.ToJsonString());
+
+        foreach ((string name, JsonNode definition) in _definitions.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            text.Append(name).Append(definition.ToJsonString());
+        }
+
+        string tag = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..8];
+
+        foreach (string name in _pointing.Leaving)
+        {
+            JsonNode definition = _definitions[name];
+            _definitions.Remove(name);
+            string named = UniqueName($"{name}-{tag}");
+            _definitions[named] = definition;
+            _pointing.Definitions[definition] = named;
+        }
+
+        foreach (Site site in _sites)
+        {
+            site.Pointer = null;
+        }
     }
 
     /// <summary>A target that was a definition of its document keeps its name.</summary>
@@ -524,7 +573,7 @@ internal sealed class JsonSchemaEmitter
     private static string Decoded(string reference) => Uri.UnescapeDataString(reference);
 
     /// <summary>A reference of an imported document: the object that holds it, what it first said, and what it means.</summary>
-    private sealed class Site(JsonObject holder, string text, Func<SchemaNode> target, ImportScope? scope)
+    private sealed class Site(JsonObject holder, string text, Func<SchemaNode> target, ImportScope scope)
     {
         public JsonObject Holder { get; set; } = holder;
 
@@ -532,7 +581,7 @@ internal sealed class JsonSchemaEmitter
 
         public Func<SchemaNode> Target { get; } = target;
 
-        public ImportScope? Scope { get; } = scope;
+        public ImportScope Scope { get; } = scope;
 
         public JsonObject? Owner { get; set; }
 
@@ -593,7 +642,8 @@ internal sealed class JsonSchemaEmitter
 
         string? name = node.Behavior.DefinitionName;
 
-        if (name is not null && node.Behavior.Target is { } target)
+        // An imported node with a name has a reference of its own, which belongs to its document.
+        if (name is not null && node.Behavior.Location is null && node.Behavior.Target is { } target)
         {
             return new JsonObject { ["$ref"] = Reference(target(), name) };
         }
@@ -630,7 +680,7 @@ internal sealed class JsonSchemaEmitter
             // because EmitNode would refer a named schema back to this very definition.
             string location = $"/{_profile.DefinitionsKeyword}/{Escape(name)}";
             SchemaNode rewritten = Rewrite(target, isRoot: false);
-            _definitions[name] = rewritten.Behavior.Target is null ? EmitObject(rewritten, location) : EmitNode(rewritten, location);
+            _definitions[name] = rewritten.Behavior.Target is null || rewritten.Behavior.Location is not null ? EmitObject(rewritten, location) : EmitNode(rewritten, location);
         }
 
         return ReferencePrefix + FragmentEscape(Escape(name));
@@ -679,10 +729,14 @@ internal sealed class JsonSchemaEmitter
         bool isResource = source.Id is { } id && !id.StartsWith('#');
         bool isImportRoot = source.Behavior.Location is { Length: 0 } && !isHome;
 
-        // A reference is to the copy of its target in the same import, and in the same resource.
-        if (isImportRoot || (isResource && !isHome))
+        // A reference is to the copy of its target in the same import. A resource written again reads its own references from the copy.
+        if (isImportRoot)
         {
-            _import = new ImportScope(isImportRoot ? null : _import);
+            _import = new ImportScope(null);
+        }
+        else if (isResource && isHome)
+        {
+            _import = new ImportScope(Scope);
         }
 
         try
@@ -707,15 +761,9 @@ internal sealed class JsonSchemaEmitter
     /// <summary>Remembers where a node of an imported document went.</summary>
     private void Place(SchemaNode source, JsonNode written)
     {
-        if (source.Behavior.Location is not { } place || _isUnread)
+        if (source.Behavior.Location is { } place && !_isUnread)
         {
-            return;
-        }
-
-        // The document around a resource can point at it, and into it.
-        for (ImportScope? scope = _import; scope is not null; scope = scope.Outer)
-        {
-            scope.Places.TryAdd(place, written);
+            Scope.Places.TryAdd(place, written);
         }
     }
 
@@ -754,7 +802,8 @@ internal sealed class JsonSchemaEmitter
     {
         public ImportScope? Outer { get; } = outer;
 
-        public Dictionary<string, JsonNode> Places { get; } = new(StringComparer.Ordinal);
+        /// <summary>Keyed by the instance: every copy of a node shares its location, and hashing long pointers shows in a large emit.</summary>
+        public Dictionary<string, JsonNode> Places { get; } = new(ReferenceEqualityComparer.Instance);
 
         public JsonNode? Find(string location)
         {
@@ -777,7 +826,7 @@ internal sealed class JsonSchemaEmitter
 
         for (int suffix = 2; !(_ids ??= new(StringComparer.Ordinal)).Add(id.TrimEnd('#')); suffix++)
         {
-            id = requested + "-" + suffix.ToString(CultureInfo.InvariantCulture);
+            id = requested.TrimEnd('#') + "-" + suffix.ToString(CultureInfo.InvariantCulture);
         }
 
         return id;
@@ -821,7 +870,7 @@ internal sealed class JsonSchemaEmitter
         if (node.Ref is not null && node.Behavior.Target is { } referent)
         {
             // The text is written once the whole document is, when it's known where the target went.
-            site = new Site(schema, node.Ref, referent, _import);
+            site = new Site(schema, node.Ref, referent, Scope);
             _sites.Add(site);
             schema["$ref"] = node.Ref;
         }

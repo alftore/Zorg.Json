@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -46,6 +47,21 @@ public sealed class OpenApiTests
         Assert.False(schema.GetProperty("properties").GetProperty("name").TryGetProperty("minLength", out _));
         Assert.Equal(0, schema.GetProperty("properties").GetProperty("age").GetProperty("minimum").GetInt32());
         Assert.False(schema.TryGetProperty("$schema", out _));
+    }
+
+    [Fact]
+    public async Task Recursive_imports_on_two_endpoints_share_one_document()
+    {
+        JsonValueSchema first = Z.FromJsonSchema("""{"type":"object","properties":{"kid":{"$ref":"#"},"a":{"type":"string"}}}""");
+        JsonValueSchema second = Z.FromJsonSchema("""{"type":"object","properties":{"kid":{"$ref":"#"},"b":{"type":"integer"}}}""");
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/first", (JsonElement body) => "a").ValidateBody(first);
+            a.MapPost("/second", (JsonElement body) => "b").ValidateBody(second);
+        });
+
+        Assert.Equal(2, document.GetProperty("components").GetProperty("schemas").EnumerateObject().Count(entry => entry.Name.StartsWith("target-", StringComparison.Ordinal)));
     }
 
     [Fact]

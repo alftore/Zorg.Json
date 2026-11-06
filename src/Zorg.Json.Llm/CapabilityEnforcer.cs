@@ -63,9 +63,11 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
             RenameDefinitions(schema);
         }
 
-        if (!Capabilities.Keywords.Contains("$anchor"))
+        bool keepsIds = Capabilities.Keywords.Contains("$id");
+
+        if (!keepsIds || !Capabilities.Keywords.Contains("$anchor"))
         {
-            ResolveAnchors(schema);
+            FlattenReferences(schema, keepsIds);
         }
     }
 
@@ -81,14 +83,20 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
 
         JsonObject? target = schema["$defs"] as JsonObject;
 
-        // The emitter gives what a reference reaches a home under $defs, so a name in both is only a clash if something still reads this one.
-        if (target is not null && definitions.Any(entry => target.ContainsKey(entry.Key)) && ReadsDefinitions(schema))
+        int index = schema.IndexOf("definitions");
+        schema.Remove("definitions");
+
+        // The emitter gives what a reference reaches a home under $defs. What nothing outside this text reads is no rule, and as a schema its own references could dangle.
+        if (!ReadsDefinitions(schema))
         {
             return;
         }
 
-        int index = schema.IndexOf("definitions");
-        schema.Remove("definitions");
+        if (target is not null && definitions.Any(entry => target.ContainsKey(entry.Key)))
+        {
+            schema.Insert(index, "definitions", definitions);
+            return;
+        }
 
         if (target is null)
         {
@@ -99,7 +107,7 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
         foreach ((string name, JsonNode? value) in definitions.ToArray())
         {
             definitions.Remove(name);
-            target.TryAdd(name, value);
+            target.Add(name, value);
         }
 
         RewriteReferences(schema, reference => reference.StartsWith(Old, StringComparison.Ordinal) ? string.Concat(New, reference.AsSpan(Old.Length)) : null);
@@ -112,24 +120,68 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
         return found;
     }
 
-    private static void ResolveAnchors(JsonObject schema)
+    /// <summary>
+    /// Writes anchors as pointers. A reference is read from its resource, and a provider without <c>$id</c> reads the whole
+    /// document as one, so there a pointer inside a resource has to start at the document.
+    /// </summary>
+    private static void FlattenReferences(JsonObject schema, bool keepsIds)
     {
-        Dictionary<string, string> anchors = new(StringComparer.Ordinal);
+        HashSet<string> resources = new(StringComparer.Ordinal) { string.Empty };
+        Dictionary<(string Resource, string Name), string> anchors = [];
+
+        JsonSchemaWalker.Walk(schema, (node, location, _) =>
+        {
+            if (location.Length > 0 && LocalReferences.AsString(node["$id"]) is { } id && !id.StartsWith('#'))
+            {
+                resources.Add(location);
+            }
+        });
+
+        string Resource(string location)
+        {
+            string current = location;
+
+            while (!resources.Contains(current))
+            {
+                current = current[..current.LastIndexOf('/')];
+            }
+
+            return current;
+        }
 
         JsonSchemaWalker.Walk(schema, (node, location, _) =>
         {
             if (LocalReferences.AsString(node["$anchor"]) is { } name)
             {
-                anchors.TryAdd(name, location);
+                anchors.TryAdd((Resource(location), name), location);
             }
         });
 
-        RewriteReferences(
-            schema,
-            reference => reference.Length > 1 && reference[0] == '#' && reference[1] != '/' && anchors.TryGetValue(reference[1..], out string? location)
-                ? $"#{location}"
-                : null);
+        JsonSchemaWalker.Walk(schema, (node, location, _) =>
+        {
+            if (LocalReferences.AsString(node["$ref"]) is not { } reference || !reference.StartsWith('#'))
+            {
+                return;
+            }
+
+            string resource = Resource(location);
+
+            if (reference.Length > 1 && reference[1] != '/')
+            {
+                if (anchors.TryGetValue((resource, Uri.UnescapeDataString(reference[1..])), out string? place))
+                {
+                    node["$ref"] = "#" + Fragment(keepsIds ? place[resource.Length..] : place);
+                }
+            }
+            else if (!keepsIds && resource.Length > 0)
+            {
+                node["$ref"] = "#" + Fragment(resource) + reference[1..];
+            }
+        });
     }
+
+    private static string Fragment(string pointer) =>
+        string.Join('/', pointer.Split('/').Select(token => Uri.EscapeDataString(token).Replace("%24", "$", StringComparison.Ordinal).Replace("%7E", "~", StringComparison.Ordinal)));
 
     private void Enforce(JsonObject node, string location, EmitContext context)
     {

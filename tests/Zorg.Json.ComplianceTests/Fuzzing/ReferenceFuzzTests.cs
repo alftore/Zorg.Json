@@ -11,6 +11,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
+using Zorg.Json.Emission;
 using Zorg.Json.Import;
 using Zorg.Json.Sampling;
 
@@ -128,7 +129,7 @@ public sealed class ReferenceFuzzTests
             Console.Error.WriteLine($"{dialect} {scenario} {document.ToJsonString()}");
         }
 
-        string secondText = scenario == "two-imports" ? second.ToJsonString() : "{}";
+        string secondText = scenario is "two-imports" or "two-named" ? second.ToJsonString() : "{}";
 
         void Refused(string code)
         {
@@ -166,6 +167,31 @@ public sealed class ReferenceFuzzTests
                 report.Add(iteration, @case, variant, failure);
             }
         }
+
+        CheckTogether(iteration, document.ToJsonString(), second.ToJsonString(), dialect, report);
+    }
+
+    /// <summary>Both documents, and the first again, as three endpoints of one OpenAPI document.</summary>
+    private static void CheckTogether(int iteration, string first, string second, JsonSchemaImportDialect dialect, ReferenceReport report)
+    {
+        if (ReferenceCase.Build("plain", first, second, dialect) is not { } one || ReferenceCase.Build("plain", second, "{}", dialect) is not { } two)
+        {
+            return;
+        }
+
+        JsonSchemaOptions options = new() { Target = JsonSchemaProfile.OpenApi31, Reused = ReusedSchemaHandling.Ref, ReferencePrefix = "#/components/schemas/" };
+
+        try
+        {
+            foreach ((string kind, string detail) in ReferenceChecker.CheckComponents([one.Probe.Emit(options), two.Probe.Emit(options), one.Probe.Emit(options)], report.Counters).DistinctBy(entry => entry.Kind))
+            {
+                report.AddTogether(iteration, kind, detail, first);
+            }
+        }
+        catch (InvalidOperationException exception)
+        {
+            report.Counters.Count($"stated limit: {exception.Message[..Math.Min(60, exception.Message.Length)]}");
+        }
     }
 
     /// <summary>Writes what each variant emits, and whether it was sound, to compare two versions of the emitter.</summary>
@@ -177,7 +203,7 @@ public sealed class ReferenceFuzzTests
 
             try
             {
-                Zorg.Json.Emission.EmitResult result = @case.Probe.Emit(variant.Options);
+                EmitResult result = @case.Probe.Emit(variant.Options);
                 emitted = result.Schema.ToJsonString() + " DEFS " + string.Join(",", result.Definitions.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => entry.Key + "=" + entry.Value.ToJsonString()));
             }
             catch (InvalidOperationException exception)

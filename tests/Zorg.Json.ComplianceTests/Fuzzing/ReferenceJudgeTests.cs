@@ -208,5 +208,40 @@ public sealed class ReferenceJudgeTests
 
     [Fact]
     public void Each_profile_has_every_variant() =>
-        Assert.Equal(4, ReferenceVariant.All.GroupBy(variant => variant.Profile).Count(group => group.Select(variant => variant.Name).Distinct().Count() == 7));
+        Assert.Equal(4, ReferenceVariant.All.GroupBy(variant => variant.Profile).Count(group => group.Select(variant => variant.Name).Distinct().Count() == 8));
+
+    [Fact]
+    public void Judge_d_catches_an_emit_over_its_budget()
+    {
+        ReferenceCase @case = Case();
+
+        List<ReferenceFailure> failures = ReferenceChecker.Check(@case, Base, [], @case.Probe.Emit, budget: TimeSpan.Zero);
+
+        Assert.Contains("d-emit-slow", Kinds(failures));
+    }
+
+    [Fact]
+    public void Judge_h_catches_a_made_up_name_with_two_meanings()
+    {
+        JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"k":{"$ref":"#"}}}""");
+        EmitResult first = schema.Emit(options);
+        EmitResult second = schema.Emit(options);
+        Assert.Empty(ReferenceChecker.CheckComponents([first, second]));
+
+        Assert.Single(second.Definitions).Value["title"] = "changed";
+
+        Assert.Contains(ReferenceChecker.CheckComponents([first, second]), found => found.Kind == "h-components-clash");
+    }
+
+    [Fact]
+    public void Judge_h_catches_a_reference_that_leaves_the_components()
+    {
+        JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };
+        EmitResult result = Z.FromJsonSchema("""{"$defs":{"a":{}},"properties":{"k":{"$ref":"#/$defs/a"}}}""").Emit(options);
+
+        result.Schema["properties"]!["k"]!["$ref"] = "#/components/schemas/gone";
+
+        Assert.Contains(ReferenceChecker.CheckComponents([result]), found => found.Kind == "a-dangling");
+    }
 }

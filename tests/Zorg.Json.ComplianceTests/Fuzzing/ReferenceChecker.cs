@@ -3,15 +3,18 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Json.Schema;
 using Zorg.Json.Emission;
 using Zorg.Json.Import;
+using Zorg.Json.Llm;
 
 namespace Zorg.Json.ComplianceTests.Fuzzing;
 
@@ -28,7 +31,7 @@ internal sealed record ReferenceCase(
     public static readonly string[] Scenarios =
     [
         "plain", "plain", "plain", "property", "array", "nested-twice", "used-twice", "two-imports", "any-of", "all-of",
-        "named-twice", "lazy-import", "lazy-tree", "named-in-named",
+        "named-twice", "two-named", "lazy-import", "lazy-tree", "named-in-named",
     ];
 
     /// <summary>Null when the document is refused, which is a clean answer.</summary>
@@ -79,6 +82,8 @@ internal sealed record ReferenceCase(
             case "named-twice":
                 JsonValueSchema named = one.Named("shared");
                 return Case(Z.Object().Property("x", named).Property("y", named), (a, _) => new JsonObject { ["x"] = Copy(a), ["y"] = Copy(a) });
+            case "two-named":
+                return Case(Z.Object().Property("x", one.Named("A")).Property("y", two.Named("B")), (a, b) => new JsonObject { ["x"] = Copy(a), ["y"] = Copy(b) });
             case "lazy-import":
                 return Case(Z.Object().Property("x", Z.Lazy("imported", () => one)), (a, _) => new JsonObject { ["x"] = Copy(a) });
             case "lazy-tree":
@@ -112,7 +117,21 @@ internal sealed record ReferenceVariant(string Profile, string Name, JsonSchemaP
         (JsonSchemaProfile.OpenApi31, "OpenAPI 3.1"),
     ];
 
-    public static readonly ReferenceVariant[] All = [.. Profiles.SelectMany(entry => Of(entry.Profile, entry.Name))];
+    public static readonly ReferenceVariant[] All =
+    [
+        .. Profiles.SelectMany(entry => Of(entry.Profile, entry.Name)),
+        Relocating("OpenAI strict", LlmProfiles.OpenAIStrict),
+        Relocating("Anthropic strict", LlmProfiles.AnthropicStrict),
+        Relocating("Gemini JSON Schema", LlmProfiles.GeminiJsonSchema),
+
+        // Its types are in upper case, which JsonSchema.Net can't read, so only the references are judged.
+        Relocating("Gemini OpenAPI", LlmProfiles.GeminiOpenApi) with { IsLoadable = false },
+    ];
+
+    /// <summary>A profile that closes objects or requires properties is meant to be stricter than parsing, so its verdicts on values prove nothing.</summary>
+    public bool ChecksValues { get; init; } = true;
+
+    public bool IsLoadable { get; init; } = true;
 
     public bool IsInput => Options.Direction == SchemaDirection.Input;
 
@@ -120,9 +139,13 @@ internal sealed record ReferenceVariant(string Profile, string Name, JsonSchemaP
 
     public bool WrapsRoot => Target.Rewriters.Contains(Rewriters.RequireObjectRoot);
 
+    private static ReferenceVariant Relocating(string profile, JsonSchemaProfile target, string name = "base") =>
+        new(profile, name, target, new() { Target = target }) { ChecksValues = false };
+
     private static IEnumerable<ReferenceVariant> Of(JsonSchemaProfile profile, string name)
     {
         JsonSchemaProfile objectRoot = profile.With(Rewriters.RequireObjectRoot);
+        yield return Relocating(name, profile.With(Rewriters.CloseAllObjects), "close-all");
         yield return new(name, "base", profile, new() { Target = profile });
         yield return new(name, "output", profile, new() { Target = profile, Direction = SchemaDirection.Output });
         yield return new(name, "reused-ref", profile, new() { Target = profile, Reused = ReusedSchemaHandling.Ref });
@@ -139,7 +162,7 @@ internal sealed record ReferenceVariant(string Profile, string Name, JsonSchemaP
 /// document accepts. (d) Emit doesn't crash or hang, though <see cref="InvalidOperationException"/> states a limit. (e) With no
 /// diagnostics the document claims to be exact, so what parsing rejects it rejects too. That catches a reference aimed at the wrong place.
 /// </summary>
-internal static class ReferenceChecker
+internal static partial class ReferenceChecker
 {
     /// <summary>The document that a <see cref="JsonSchemaOptions.ReferencePrefix"/> leaves for its caller to write: the root and the definitions, as components of one document.</summary>
     private const string RootComponent = "zorg-root";
@@ -148,6 +171,9 @@ internal static class ReferenceChecker
     public const string OracleLimit = "n-oracle-gave-up-on-sound-references";
 
     private static readonly TimeSpan EmitTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>A generated document is tiny, so an emit that takes this long has run away, even if it would have ended.</summary>
+    private static readonly TimeSpan EmitBudget = TimeSpan.FromSeconds(3);
 
     /// <summary>
     /// JsonSchema.Net sees a cycle in a reference to a child of the same schema, finds no anchor under keywords it builds late,
@@ -161,14 +187,20 @@ internal static class ReferenceChecker
         || exception.Message.Contains("same key has already been added", StringComparison.Ordinal);
 
     /// <summary>Every failure of one case under one variant. <paramref name="emit"/> stands in for the emitter, to prove that a judge can fail.</summary>
-    public static List<ReferenceFailure> Check(ReferenceCase @case, ReferenceVariant variant, IReadOnlyList<JsonElement> instances, Func<JsonSchemaOptions, EmitResult>? emit = null, ReferenceCounters? counters = null, TimeSpan? timeout = null)
+    public static List<ReferenceFailure> Check(ReferenceCase @case, ReferenceVariant variant, IReadOnlyList<JsonElement> instances, Func<JsonSchemaOptions, EmitResult>? emit = null, ReferenceCounters? counters = null, TimeSpan? timeout = null, TimeSpan? budget = null)
     {
         List<ReferenceFailure> failures = [];
 
         void Fail(string kind, string detail, string? instance = null) =>
             failures.Add(new ReferenceFailure(kind, variant.Profile, variant.Name, detail, instance));
 
+        Stopwatch clock = Stopwatch.StartNew();
         EmitResult? result = Emit(emit ?? @case.Probe.Emit, variant, Fail, counters, timeout ?? EmitTimeout);
+
+        if (clock.Elapsed > (budget ?? EmitBudget) && failures.Count == 0)
+        {
+            Fail("d-emit-slow", $"{clock.Elapsed.TotalSeconds:F1} seconds for a small document");
+        }
 
         if (result is null)
         {
@@ -189,6 +221,11 @@ internal static class ReferenceChecker
         // With the references sound by the reading above, that's its limit, not a defect here, and the report shows them apart.
         bool isSound = broken.Count == 0;
 
+        if (!variant.IsLoadable)
+        {
+            return failures;
+        }
+
         JsonObject loadable = Loadable(document, dialect);
         JsonSchema? oracle;
 
@@ -208,7 +245,7 @@ internal static class ReferenceChecker
             return failures;
         }
 
-        if (!variant.IsInput)
+        if (!variant.IsInput || !variant.ChecksValues)
         {
             return failures;
         }
@@ -232,7 +269,7 @@ internal static class ReferenceChecker
     /// </summary>
     private static void ReadBack(ReferenceCase @case, ReferenceVariant variant, JsonObject document, string? container, IReadOnlyList<JsonElement> instances, Action<string, string, string?> fail, ReferenceCounters? counters, List<ReferenceFailure> failures)
     {
-        if (!failures.Any(failure => failure.Kind == OracleLimit) || !variant.IsInput || variant.WrapsRoot || container is not null)
+        if (!failures.Any(failure => failure.Kind == OracleLimit) || !variant.IsInput || !variant.ChecksValues || variant.WrapsRoot || container is not null)
         {
             return;
         }
@@ -362,6 +399,61 @@ internal static class ReferenceChecker
 
         return (document, "components");
     }
+
+    /// <summary>
+    /// Judge (h). Schemas with a prefix share one document, as the endpoints of an OpenAPI document do. A name the emitter made up
+    /// must not clash, and every reference must still land once all of them sit together. A clash of names from the documents themselves
+    /// is the caller's, and only counted.
+    /// </summary>
+    public static List<(string Kind, string Detail)> CheckComponents(IReadOnlyList<EmitResult> results, ReferenceCounters? counters = null)
+    {
+        List<(string Kind, string Detail)> found = [];
+        JsonObject schemas = [];
+
+        for (int index = 0; index < results.Count; index++)
+        {
+            schemas[$"{RootComponent}-{index.ToString(CultureInfo.InvariantCulture)}"] = results[index].Schema.DeepClone();
+
+            foreach ((string name, JsonObject definition) in results[index].Definitions)
+            {
+                if (schemas[name] is not { } held)
+                {
+                    schemas[name] = definition.DeepClone();
+                }
+                else if (!JsonNode.DeepEquals(held, definition))
+                {
+                    if (!MadeUpName().IsMatch(name))
+                    {
+                        counters?.Count("components: documents with one name for two definitions");
+                        return [];
+                    }
+
+                    found.Add(("h-components-clash", $"two definitions are named {name}"));
+                }
+            }
+        }
+
+        if (found.Count == 0)
+        {
+            foreach ((string kind, string detail) in ReferenceGraph.Check(new JsonObject { ["components"] = new JsonObject { ["schemas"] = schemas } }, JsonSchemaDialect.OpenApi31, "components"))
+            {
+                // Each root is written whole, so one schema on two endpoints repeats what it declares. No reference is the worse for it.
+                if (kind is "a-duplicate-id" or "a-duplicate-anchor")
+                {
+                    counters?.Count("components: a repeated $id or $anchor across documents");
+                }
+                else
+                {
+                    found.Add((kind, detail));
+                }
+            }
+        }
+
+        return found;
+    }
+
+    [GeneratedRegex("-[0-9a-f]{8}[0-9]*$")]
+    private static partial Regex MadeUpName();
 
     /// <summary>OpenAPI 3.0 reads neither <c>$id</c> nor <c>$anchor</c>, so its documents are judged without them.</summary>
     private static void RemoveIdentity(JsonNode? node)
@@ -843,6 +935,13 @@ internal sealed class ReferenceReport(bool shrink)
     /// <summary>The documents that failed each way. <see cref="ReferenceChecker.OracleLimit"/> is reported, but isn't a failure.</summary>
     public IEnumerable<(string Kind, string Profile, int Documents)> Failing =>
         _documents.Where(entry => entry.Key.Kind != ReferenceChecker.OracleLimit).Select(entry => (entry.Key.Kind, entry.Key.Profile, entry.Value.Count));
+
+    /// <summary>A failure of several documents together, which has no one document to shrink.</summary>
+    public void AddTogether(int iteration, string kind, string detail, string document)
+    {
+        _documents.GetOrAdd((kind, "together"), _ => new())[iteration] = 0;
+        _shapes.AddOrUpdate($"{kind} | together | {ReferenceShrinker.Shape(document)}", (1, $"iteration {iteration}: {document} ({detail})"), (_, known) => (known.Count + 1, known.Example));
+    }
 
     /// <summary>Import didn't end. The profile doesn't matter, so it's counted once, under no profile.</summary>
     public void AddRunaway(int iteration, string document)

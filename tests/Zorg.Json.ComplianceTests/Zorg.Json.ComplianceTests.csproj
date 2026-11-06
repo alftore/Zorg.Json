@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Zorg.Json\Zorg.Json.csproj" />
+    <ProjectReference Include="..\..\src\Zorg.Json.Llm\Zorg.Json.Llm.csproj" />
   </ItemGroup>
 
   <ItemGroup>

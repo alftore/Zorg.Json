@@ -325,6 +325,12 @@ internal sealed class ReferenceDocumentGenerator(Random random)
                 new JsonObject { ["$ref"] = $"#/{(IsLegacy ? "definitions" : "$defs")}/chain" };
         }
 
+        // A document that is only a reference, which a name can't take for a Z.Lazy.
+        if (random.Next(8) == 0 && root[IsLegacy ? "definitions" : "$defs"] is JsonObject { Count: > 0 } named)
+        {
+            root["$ref"] = $"#/{(IsLegacy ? "definitions" : "$defs")}/{Spell(named.First().Key)}";
+        }
+
         // A reference to what isn't a schema at all, such as a map of properties.
         if (random.Next(30) == 0 && root.ContainsKey("properties"))
         {

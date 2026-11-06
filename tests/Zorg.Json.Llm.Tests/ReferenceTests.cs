@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Text;
 using System.Threading.Tasks;
 using Xunit;
@@ -48,6 +49,58 @@ public sealed class ReferenceTests
         Assert.Contains("\"$defs\":{\"x\"", text, StringComparison.Ordinal);
         Assert.DoesNotContain("definitions", text, StringComparison.Ordinal);
         Assert.DoesNotContain(emitted.Diagnostics, diagnostic => diagnostic.Message.Contains("lead anywhere", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_tiny_recursive_resource_takes_no_time_on_a_strict_profile()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$id":"http://x/t.json","type":"object","additionalProperties":{"$ref":"#"}}""");
+        Stopwatch clock = Stopwatch.StartNew();
+
+        _ = schema.Emit(LlmProfiles.OpenAIStrict);
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
+    }
+
+    [Theory]
+    [InlineData("openai-strict")]
+    [InlineData("gemini-json-schema")]
+    public void Ordinary_definitions_that_refer_to_each_other_stay_clean(string name)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"type":"object","definitions":{"a":{"type":"string"},"b":{"type":"object","properties":{"x":{"$ref":"#/definitions/a"}}}},"properties":{"p":{"$ref":"#/definitions/b"}}}
+            """);
+
+        EmitResult emitted = schema.Emit(Profile(name));
+
+        Assert.DoesNotContain("definitions", emitted.Schema.ToJsonString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "definitions");
+    }
+
+    [Fact]
+    public void An_anchor_is_read_from_the_resource_of_the_reference()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"type":"object","$defs":{"r":{"$id":"r.json","$defs":{"a":{"$anchor":"z","type":"string"}}},"a":{"$anchor":"z","type":"integer"}},"properties":{"p":{"$ref":"#z"}}}
+            """);
+
+        EmitResult emitted = schema.Emit(LlmProfiles.OpenAIStrict);
+
+        Assert.Contains("\"$ref\":\"#/$defs/a\"", emitted.Schema.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_pointer_in_a_resource_follows_when_the_provider_has_no_id()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"type":"object","$defs":{"r":{"$id":"r.json","type":"object","$defs":{"t":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/t"}}}},"properties":{"x":{"$ref":"#/$defs/r"}}}
+            """);
+
+        EmitResult emitted = schema.Emit(LlmProfiles.OpenAIStrict);
+        string text = emitted.Schema.ToJsonString();
+
+        Assert.Contains("\"$ref\":\"#/$defs/r/$defs/t\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
     }
 
     [Theory]
