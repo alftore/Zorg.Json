@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a source generator, in the `Zorg.Json` package. `[GenerateSchema(typeof(AppJson))]` on a partial type writes a static `Schema` property from its contract and its validation attributes: `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]`, `[Range]`, `[RegularExpression]`, `[EmailAddress]`, `[Url]`, `[Required]` and `[Description]`. What it writes is ordinary fluent code, so it works under Native AOT. An attribute it can't state is a warning.
 - Added `JsonSchemaImportOptions.Documents`: other documents a `$ref` can reach, by URI. They're bundled into the schema as embedded resources, so nothing is fetched and the emitted schema needs nothing else.
 - `$dynamicRef` and `$dynamicAnchor` now work. They were refused with `unsupported_keyword`. They're written to 2020-12 and OpenAPI 3.1, and left out with a diagnostic where they can't work: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. They can't sit beside `$ref` in one schema object.
 - Added Draft 2019-09 import, including `$recursiveRef` and `$recursiveAnchor`, which are written as `$dynamicRef` and `$dynamicAnchor` when emitted.

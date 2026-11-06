@@ -12,6 +12,7 @@
     <ProjectReference Include="..\..\src\Zorg.Json.Extensions.AI\Zorg.Json.Extensions.AI.csproj" />
     <ProjectReference Include="..\..\src\Zorg.Json.Llm\Zorg.Json.Llm.csproj" />
     <ProjectReference Include="..\..\src\Zorg.Json\Zorg.Json.csproj" />
+    <ProjectReference Include="..\..\src\Zorg.Json.SourceGeneration\Zorg.Json.SourceGeneration.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

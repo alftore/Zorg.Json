@@ -12,4 +12,10 @@
     <InternalsVisibleTo Include="Zorg.Json.Llm" />
   </ItemGroup>
 
+  <!-- The generator ships in this package, as the one of System.Text.Json does, so [GenerateSchema] needs nothing else. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Zorg.Json.SourceGeneration\Zorg.Json.SourceGeneration.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="..\Zorg.Json.SourceGeneration\bin\$(Configuration)\netstandard2.0\Zorg.Json.SourceGeneration.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
 </Project>

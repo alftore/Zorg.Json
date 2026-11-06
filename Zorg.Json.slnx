@@ -14,12 +14,14 @@
     <Project Path="src/Zorg.Json.AspNetCore.OpenApi/Zorg.Json.AspNetCore.OpenApi.csproj" />
     <Project Path="src/Zorg.Json.Extensions.AI/Zorg.Json.Extensions.AI.csproj" />
     <Project Path="src/Zorg.Json.Llm/Zorg.Json.Llm.csproj" />
+    <Project Path="src/Zorg.Json.SourceGeneration/Zorg.Json.SourceGeneration.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Zorg.Json.AspNetCore.Tests/Zorg.Json.AspNetCore.Tests.csproj" />
     <Project Path="tests/Zorg.Json.ComplianceTests/Zorg.Json.ComplianceTests.csproj" />
     <Project Path="tests/Zorg.Json.Extensions.AI.Tests/Zorg.Json.Extensions.AI.Tests.csproj" />
     <Project Path="tests/Zorg.Json.Llm.Tests/Zorg.Json.Llm.Tests.csproj" />
+    <Project Path="tests/Zorg.Json.SourceGeneration.Tests/Zorg.Json.SourceGeneration.Tests.csproj" />
     <Project Path="tests/Zorg.Json.Tests/Zorg.Json.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmarks/">

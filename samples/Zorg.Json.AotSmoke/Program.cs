@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -138,6 +139,11 @@ Check("enum parsed", tier.SafeParse("\"paid-plus\"").Value == Tier.PaidPlus && !
 // Microsoft.Extensions.AI: a tool whose arguments are checked, and a typed answer from a chat client.
 CheckExtensionsAIAsync().GetAwaiter().GetResult();
 
+// A schema written by the source generator, from attributes.
+Check("a generated schema accepts", Generated.Schema.SafeParse("""{"name":"ann","age":3}""").IsSuccess);
+Check("a generated schema applies MinLength", !Generated.Schema.SafeParse("""{"name":"","age":3}""").IsSuccess);
+Check("a generated schema applies Range", !Generated.Schema.SafeParse("""{"name":"ann","age":200}""").IsSuccess);
+
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 
@@ -221,6 +227,9 @@ internal sealed class PersonPatch
     public Optional<int> Age { get; init; }
 }
 
+[GenerateSchema(typeof(SmokeJson))]
+internal sealed partial record Generated([property: MinLength(1)] string Name, [property: Range(0, 150)] int Age);
+
 internal static partial class Patterns
 {
     [GeneratedRegex("^[a-z]+$")]
@@ -228,6 +237,7 @@ internal static partial class Patterns
 }
 
 [JsonSerializable(typeof(Person))]
+[JsonSerializable(typeof(Generated))]
 [JsonSerializable(typeof(Point))]
 [JsonSerializable(typeof(PersonPatch))]
 [JsonSerializable(typeof(string))]

@@ -27,6 +27,42 @@ public static readonly ObjectSchema SearchSchema = Z.Object()
 
 Schemas are immutable and thread-safe. Every method returns a new schema, so store them in `static readonly` fields, and don't discard a result: `schema.MinLength(1);` on its own line does nothing.
 
+## Generating a schema from attributes
+
+The source generator writes the schema of a type from its contract and its validation attributes. It ships in the `Zorg.Json` package, so there's nothing else to add.
+
+```csharp
+[GenerateSchema(typeof(AppJson))]
+[Description("A person")]
+public partial record Person(
+    [property: MinLength(1), MaxLength(100)] string Name,
+    [property: Range(0, 150)] int Age,
+    [property: EmailAddress] string? Email);
+
+[JsonSerializable(typeof(Person))]
+public partial class AppJson : JsonSerializerContext;
+
+ParseResult<Person> person = Person.Schema.SafeParse(json);
+```
+
+`Person.Schema` is the same fluent code you would write by hand, so it's an ordinary `ObjectSchema<Person>`. You can add to it, it emits JSON Schema, and it needs no reflection, so it works under Native AOT.
+
+| Attribute | Rule |
+|---|---|
+| `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, `minItems` and `maxItems` on a collection |
+| `[Range]` with numbers | `minimum` and `maximum`, or the exclusive ones with `MinimumIsExclusive` and `MaximumIsExclusive` |
+| `[RegularExpression]` | `pattern`. It's read as ECMA-262, as every Zorg pattern is, not as a .NET regex |
+| `[EmailAddress]`, `[Url]` | `format: email` and `format: uri` |
+| `[Required]` on text | `minLength: 1`, unless `AllowEmptyStrings` is set |
+| `[Description]` | `description`, on the type or a property |
+
+A property whose type also has `[GenerateSchema]` uses that schema, directly or as the items of a collection, and a recursive type goes through a named definition.
+
+- The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. Otherwise it's a compile error.
+- **Presence** comes from the contract, as in every typed schema: `required`, or a constructor parameter. `[Required]` on anything else gets a warning, `ZORG0006`, because System.Text.Json decides what must be present.
+- An attribute that can't be stated, such as `[CreditCard]` or `[Range]` on a date, gets a warning, `ZORG0005`, and isn't checked. Add it with `.Property(...)` or `.Refine(...)`.
+- Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too.
+
 ## Parsing
 
 ```csharp

@@ -15,6 +15,11 @@
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
   </ItemGroup>
 
+  <ItemGroup Label="SourceGeneration">
+    <!-- Sets the oldest compiler the generator runs on. It ships with the generator as a build-time reference only. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+
   <ItemGroup Label="Tests">
     <!-- Test oracle only: its binaries carry a maintenance-fee agreement. -->
     <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
