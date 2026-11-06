@@ -1220,15 +1220,8 @@ internal sealed class ValidationPlan
     /// <summary>Runs a subschema to see whether it passes, which decides whether what it evaluated counts.</summary>
     private static bool Passes(ValidationPlan plan, JsonElement value, ValidationContext context)
     {
-        // Under a dynamic scope the same subschema can mean something else at the same place.
-        if (plan._resource is not null)
-        {
-            ValidationContext scoped = context.Fork();
-            plan.Run(value, scoped);
-            return !scoped.HasIssues;
-        }
-
-        if (context.TryRecall(plan, out bool passed, out string place))
+        // Under a dynamic scope the same subschema can mean something else at the same place, so the scope is part of what's recalled.
+        if (context.TryRecall(plan, inDynamicScope: plan._resource is not null, out bool passed, out string place))
         {
             return passed;
         }

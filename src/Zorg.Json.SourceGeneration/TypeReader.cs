@@ -196,7 +196,7 @@ internal static class TypeReader
         }
         else if (!IsReachable(context, type))
         {
-            stop(Descriptors.BadContext, $"'{context.Name}' has no [JsonSerializable(typeof({type.Name}))]");
+            stop(Descriptors.BadContext, $"'{context.Name}' has no [JsonSerializable(typeof({type.Name}))] that generates metadata");
         }
 
         return context.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -208,9 +208,12 @@ internal static class TypeReader
         HashSet<ITypeSymbol> seen = new(SymbolEqualityComparer.Default);
         Stack<ITypeSymbol> pending = new();
 
+        AttributeData? options = context.GetAttributes().FirstOrDefault(attribute => NameOf(attribute) == Serialization + "JsonSourceGenerationOptionsAttribute");
+        bool includesFields = options is not null && options.NamedArguments.Any(argument => argument.Key == "IncludeFields" && argument.Value.Value is true);
+
         foreach (AttributeData attribute in context.GetAttributes())
         {
-            if (NameOf(attribute) == Serialization + "JsonSerializableAttribute" && attribute.ConstructorArguments is [{ Value: ITypeSymbol listed }, ..])
+            if (NameOf(attribute) == Serialization + "JsonSerializableAttribute" && attribute.ConstructorArguments is [{ Value: ITypeSymbol listed }, ..] && !IsFastPathOnly(attribute, options))
             {
                 pending.Push(listed);
             }
@@ -235,20 +238,33 @@ internal static class TypeReader
                 pending.Push(array.ElementType);
             }
 
-            foreach (INamedTypeSymbol named in SelfAndInterfaces(current))
+            if (current is INamedTypeSymbol { IsGenericType: true } wrapper && wrapper.OriginalDefinition.ToDisplayString() is "System.Nullable<T>" or "Zorg.Json.Optional<T>")
             {
-                foreach (ITypeSymbol argument in named.TypeArguments)
-                {
-                    pending.Push(argument);
-                }
+                pending.Push(((INamedTypeSymbol)current).TypeArguments[0]);
+            }
+
+            // Only the items of a collection count. A type argument says nothing by itself: IComparable<T> or Func<T> gets no metadata.
+            INamedTypeSymbol? items = SelfAndInterfaces(current).FirstOrDefault(candidate => candidate.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T);
+
+            if (items is not null)
+            {
+                pending.Push(items.TypeArguments[0]);
+                continue;
             }
 
             // What the context generates metadata for: what the serializer reads, also from a base type.
-            for (ITypeSymbol? owner = current; owner is not null; owner = owner.BaseType)
+            foreach (ITypeSymbol owner in OwnersOf(current))
             {
-                foreach (IPropertySymbol property in owner.GetMembers().OfType<IPropertySymbol>().Where(IsJsonProperty))
+                foreach (ISymbol member in owner.GetMembers())
                 {
-                    pending.Push(property.Type);
+                    if (member is IPropertySymbol property && IsJsonProperty(property))
+                    {
+                        pending.Push(property.Type);
+                    }
+                    else if (member is IFieldSymbol field && IsJsonField(field, includesFields))
+                    {
+                        pending.Push(field.Type);
+                    }
                 }
             }
         }
@@ -256,8 +272,45 @@ internal static class TypeReader
         return false;
     }
 
+    /// <summary>Whether a listing only makes the fast path of the serializer, with no metadata for a schema to read.</summary>
+    private static bool IsFastPathOnly(AttributeData listing, AttributeData? options)
+    {
+        const int SerializationOnly = 2;
+
+        TypedConstant? mode = ModeOf(listing) ?? (options is null ? null : ModeOf(options));
+        return mode?.Value is SerializationOnly;
+
+        static TypedConstant? ModeOf(AttributeData attribute) =>
+            attribute.NamedArguments.Where(argument => argument.Key == "GenerationMode").Select(argument => (TypedConstant?)argument.Value).FirstOrDefault();
+    }
+
+    private static IEnumerable<ITypeSymbol> OwnersOf(ITypeSymbol type)
+    {
+        for (ITypeSymbol? owner = type; owner is not null; owner = owner.BaseType)
+        {
+            yield return owner;
+        }
+
+        if (type.TypeKind == TypeKind.Interface)
+        {
+            foreach (INamedTypeSymbol parent in type.AllInterfaces)
+            {
+                yield return parent;
+            }
+        }
+    }
+
     private static bool IsJsonProperty(IPropertySymbol property) =>
-        property is { DeclaredAccessibility: Accessibility.Public, IsStatic: false, IsIndexer: false } && !IsIgnored(property.GetAttributes());
+        property is { IsStatic: false, IsIndexer: false }
+        && (property.DeclaredAccessibility == Accessibility.Public || IsIncluded(property.GetAttributes()))
+        && !IsIgnored(property.GetAttributes());
+
+    private static bool IsJsonField(IFieldSymbol field, bool includesFields) =>
+        field is { IsStatic: false, IsImplicitlyDeclared: false }
+        && ((includesFields && field.DeclaredAccessibility == Accessibility.Public) || IsIncluded(field.GetAttributes()))
+        && !IsIgnored(field.GetAttributes());
+
+    private static bool IsIncluded(ImmutableArray<AttributeData> attributes) => Has(attributes, Serialization + "JsonIncludeAttribute");
 
     private static INamedTypeSymbol? ContextOf(AttributeData attribute) =>
         attribute.ConstructorArguments is [{ Value: INamedTypeSymbol context }] ? context : null;

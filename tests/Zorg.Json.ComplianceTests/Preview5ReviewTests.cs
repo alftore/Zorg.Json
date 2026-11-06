@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Xunit;
 using Zorg.Json.Emission;
 using Zorg.Json.Import;
@@ -152,6 +153,86 @@ public sealed class Preview5ReviewTests
             Assert.DoesNotContain("\"$ref\":\"http", text, StringComparison.Ordinal);
             Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"c":"s"}"""), text);
         }
+    }
+
+    private static string Nested(int depth) => string.Concat(Enumerable.Repeat("""{"c":""", depth)) + "{}" + new string('}', depth);
+
+    [Theory]
+    [InlineData("""{"$dynamicAnchor":"n","anyOf":[{"properties":{"c":{"$dynamicRef":"#n"}}},{"required":["q"]}],"unevaluatedProperties":false}""")]
+    [InlineData("""{"$schema":"https://json-schema.org/draft/2019-09/schema","$recursiveAnchor":true,"anyOf":[{"properties":{"c":{"$recursiveRef":"#"}}},{"required":["q"]}],"unevaluatedProperties":false}""")]
+    [InlineData("""{"$id":"http://e/t","$dynamicAnchor":"n","oneOf":[{"properties":{"c":{"$dynamicRef":"#n"}}},{"required":["q"]}],"unevaluatedProperties":false}""")]
+    [InlineData("""{"$defs":{"v":{"type":"string"},"w":{"$dynamicRef":"#/$defs/v"}},"anyOf":[{"properties":{"c":{"$ref":"#"}}},{"required":["q"]}],"unevaluatedProperties":false}""")]
+    public void A_deep_instance_is_no_problem_under_a_dynamic_scope(string document)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+
+        Assert.True(schema.SafeParse(Nested(60)).IsSuccess);
+        Assert.False(schema.SafeParse(Nested(60).Replace("{}", """{"x":1}""", StringComparison.Ordinal)).IsSuccess);
+    }
+
+    [Fact]
+    public void What_is_recalled_depends_on_the_dynamic_scope()
+    {
+        // One branch at one place, reached through two resources that give "n" different meanings. It fails through a and passes through b.
+        const string Document = """{"$id":"http://e/r","anyOf":[{"$ref":"a"},{"$ref":"b"}],"$defs":{"a":{"$id":"a","$ref":"shared","$defs":{"t":{"$dynamicAnchor":"n","type":"string"}}},"b":{"$id":"b","$ref":"shared","$defs":{"t":{"$dynamicAnchor":"n","properties":{"p":true}}}},"shared":{"$id":"shared","anyOf":[{"$dynamicRef":"#n"},{"type":"object"}],"unevaluatedProperties":false,"$defs":{"t":{"$dynamicAnchor":"n","type":"string"}}}}}""";
+
+        Assert.True(Z.FromJsonSchema(Document).SafeParse("""{"p":1}""").IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("""{"$id":"http://e/a","$ref":"b#/foo/x","$defs":{"b":{"$id":"b","$anchor":"z","type":"object","foo":{"x":{"properties":{"k":{"$ref":"#z"}}}}}}}""", """{"k":{}}""", """{"k":1}""")]
+    public void A_copied_reference_reads_in_the_resource_it_came_from(string document, string good, string bad)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+        Assert.True(schema.SafeParse(good).IsSuccess);
+        Assert.False(schema.SafeParse(bad).IsSuccess);
+
+        foreach (JsonSchemaProfile profile in new[] { JsonSchemaProfile.Draft202012, JsonSchemaProfile.Draft07 })
+        {
+            string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+            Assert.True(EmissionReviewTests.Accepts(text, profile, good), text);
+            Assert.False(EmissionReviewTests.Accepts(text, profile, bad), text);
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"$id":"http://e/a","$ref":"b#/foo/x","$defs":{"b":{"$id":"b","$dynamicAnchor":"n","type":"object","foo":{"x":{"properties":{"k":{"$dynamicRef":"#n"}}}}}}}""")]
+    [InlineData("""{"$id":"http://e/a","$ref":"b#/not/properties/k","$defs":{"b":{"$id":"b","$dynamicAnchor":"n","type":"object","not":{"properties":{"k":{"$dynamicRef":"#n"}},"required":["zz"]}}}}""")]
+    public void A_copy_in_another_resource_leaves_a_dynamic_reference_out(string document)
+    {
+        EmitResult result = Z.FromJsonSchema(document).Emit();
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Keyword == "$dynamicRef");
+        Assert.True(EmissionReviewTests.Accepts(result.Schema.ToJsonString(), JsonSchemaProfile.Draft202012, """{"k":{}}"""), result.Schema.ToJsonString());
+    }
+
+    [Fact]
+    public void The_dialect_of_a_bundled_resource_does_not_follow_it_to_another_dialect()
+    {
+        const string Document = """{"$defs":{"x":{"$id":"http://e/x","$schema":"https://json-schema.org/draft/2020-12/schema","prefixItems":[{"type":"string"}],"items":false}},"$ref":"http://e/x"}""";
+        string text = Z.FromJsonSchema(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.Draft07 }).ToJsonString();
+
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft07, """["a"]"""), text);
+        Assert.False(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft07, """[1]"""), text);
+    }
+
+    [Fact]
+    public void An_anchor_only_2019_allows_is_written_as_a_pointer()
+    {
+        const string Document = """{"$schema":"https://json-schema.org/draft/2019-09/schema","$defs":{"a":{"$anchor":"a:b","type":"string"}},"$ref":"#a:b"}""";
+        string text = Z.FromJsonSchema(Document).ToJsonSchema().ToJsonString();
+
+        Assert.DoesNotContain("a:b", text, StringComparison.Ordinal);
+        Assert.False(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, "1"), text);
+    }
+
+    [Fact]
+    public void A_looser_contains_is_reported()
+    {
+        const string Document = """{"$schema":"https://json-schema.org/draft/2019-09/schema","contains":{"type":"integer"},"unevaluatedItems":false}""";
+
+        Assert.Contains(Z.FromJsonSchema(Document).Emit().Diagnostics, diagnostic => diagnostic.Keyword == "unevaluatedItems");
     }
 
     [Fact]

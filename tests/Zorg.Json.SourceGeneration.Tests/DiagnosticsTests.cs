@@ -164,6 +164,12 @@ public sealed class DiagnosticsTests
     [InlineData("public record W { private N? I { get; set; } }", true)]
     [InlineData("public record B { public N? I { get; set; } } public record W : B;", false)]
     [InlineData("public class W : System.Collections.Generic.List<N>;", false)]
+    [InlineData("public class W : System.IComparable<N> { public int CompareTo(N? other) => 0; }", true)]
+    [InlineData("public record W { public System.Func<N>? I { get; set; } }", true)]
+    [InlineData("public record W { public System.Collections.Generic.Dictionary<string, N>? D { get; set; } }", false)]
+    [InlineData("public record W { [JsonInclude] internal N? I { get; set; } }", false)]
+    [InlineData("public record W { [JsonInclude] public N? I; }", false)]
+    [InlineData("public interface IB { N? I { get; } } public interface W : IB;", false)]
     public void Only_what_the_serializer_reads_counts_as_known(string source, bool reported)
     {
         (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial record N(string A);\n" + source + """
@@ -173,6 +179,32 @@ public sealed class DiagnosticsTests
             """);
 
         Assert.Equal(reported, found.Any(diagnostic => diagnostic.Id == "ZORG0004"));
+    }
+
+    [Theory]
+    [InlineData("[JsonSerializable(typeof(P), GenerationMode = JsonSourceGenerationMode.Serialization)] public partial class C : JsonSerializerContext;", true)]
+    [InlineData("[JsonSourceGenerationOptions(GenerationMode = JsonSourceGenerationMode.Serialization)] [JsonSerializable(typeof(P))] public partial class C : JsonSerializerContext;", true)]
+    [InlineData("[JsonSourceGenerationOptions(GenerationMode = JsonSourceGenerationMode.Serialization)] [JsonSerializable(typeof(P), GenerationMode = JsonSourceGenerationMode.Metadata)] public partial class C : JsonSerializerContext;", false)]
+    [InlineData("[JsonSerializable(typeof(P), GenerationMode = JsonSourceGenerationMode.Metadata)] public partial class C : JsonSerializerContext;", false)]
+    public void A_listing_without_metadata_is_reported(string context, bool reported)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial record P(string A);\n" + context);
+
+        Assert.Equal(reported, found.Any(diagnostic => diagnostic.Id == "ZORG0004"));
+    }
+
+    [Fact]
+    public void Fields_count_when_the_context_includes_them()
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("""
+            [GenerateSchema(typeof(C))] public partial record N(string A);
+            public class W { public N? I; }
+            [JsonSourceGenerationOptions(IncludeFields = true)]
+            [JsonSerializable(typeof(W))]
+            public partial class C : JsonSerializerContext;
+            """);
+
+        Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "ZORG0004");
     }
 
     [Theory]

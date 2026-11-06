@@ -219,13 +219,30 @@ internal sealed class ValidationContext
     /// Whether a subschema passed at this place, from an earlier look. Finding what was evaluated would otherwise run each branch
     /// again at every level of a recursive schema, which doubles with the depth.
     /// </summary>
-    public bool TryRecall(object plan, out bool passed, out string place)
+    public bool TryRecall(object plan, bool inDynamicScope, out bool passed, out string place)
     {
         StringBuilder key = new();
 
         foreach (PathSegment segment in _path)
         {
             key.Append(segment.Index).Append('/');
+        }
+
+        if (inDynamicScope)
+        {
+            // The outermost resource with a name wins, so only the first time each resource comes up can change an answer.
+            Dictionary<SchemaResource, int> numbers = _limits.ResourceNumbers ??= [];
+            HashSet<SchemaResource> seen = [];
+            key.Append('@');
+
+            foreach (SchemaResource resource in _limits.Scope)
+            {
+                if (seen.Add(resource))
+                {
+                    numbers.TryAdd(resource, numbers.Count);
+                    key.Append(numbers[resource]).Append(',');
+                }
+            }
         }
 
         place = key.ToString();
@@ -598,6 +615,8 @@ internal sealed class ValidationContext
         public long TotalSteps { get; set; }
 
         public List<SchemaResource> Scope { get; } = [];
+
+        public Dictionary<SchemaResource, int>? ResourceNumbers { get; set; }
 
         /// <summary>Whether a subschema passed at a place. A place is the same value in one parse, because nothing that rewrites a value sits under <c>unevaluated*</c>.</summary>
         public Dictionary<(object Plan, string Place), bool>? Passed { get; set; }

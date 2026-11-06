@@ -16,6 +16,11 @@
 - A `$ref` can now reach any `$id` in the same document by URI: relative, absolute or URN, with a pointer or an anchor. Bundled documents import. Nothing is fetched, and what isn't in the document stays `unresolved_ref`. Refused cases of the official suite dropped from 252 to 88 for 2020-12, from 63 to 27 for draft-07, from 55 to 27 for draft-06 and from 32 to 21 for draft-04.
 - With `ReferencePrefix`, imported schemas no longer write `$id` or `$anchor`, because a pointer in a component reads from the whole document. A schema on two endpoints no longer repeats them, and two definitions that differ only in `#z` against `#/$defs/t` no longer throw. A root with an `$id` now moves its definitions to `EmitResult.Definitions` like any other.
 - An imported `format` that parsing doesn't check is written as `x-inert-format` to draft-07 and OpenAPI 3.0, with a diagnostic, because validators of those dialects may check it and reject what parsing accepts. Import with `Formats = FormatHandling.AssertKnown` to keep `format` there. 2020-12 and OpenAPI 3.1 output keep `format`.
+- A deep instance is no longer rejected under `$dynamicRef` or `$recursiveRef` beside `anyOf`, `oneOf` and `unevaluated*`. Finding what was evaluated doubled with the depth there and ran out of steps at about 13 levels.
+- A reference copied out of its resource no longer keeps a `#name` that can't be found where it landed. A `$ref` is written as a pointer, and a `$dynamicRef` is left out with a diagnostic.
+- An embedded `$schema` that isn't the target's is written as `x-inert-$schema`, so a bundled 2020-12 resource can be loaded as draft-07.
+- A 2019-09 `$anchor` that 2020-12 doesn't allow, such as `a:b`, is written as a pointer.
+- `contains` beside `unevaluatedItems` from a 2019-09 document now gets a diagnostic when it's written to 2020-12, where it's looser.
 - Two resources with the same URI in one document are now refused with `invalid_schema`.
 - A draft-07 `$id` that spells its place, such as `#/definitions/a`, is now read. It used to be refused.
 - Fixed `"$id":"http://x/y#"` beside an anchor being written to draft-07 as `http://x/y##a`.

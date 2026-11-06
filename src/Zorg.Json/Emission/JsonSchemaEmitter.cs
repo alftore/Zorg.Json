@@ -75,6 +75,9 @@ internal sealed class JsonSchemaEmitter
     private List<(JsonObject Schema, string Anchor)>? _anchors;
     private Pointing? _pointing;
     private bool _writingHome;
+
+    /// <summary>The home being written sits in another resource than what it copies, where a dynamic name would read differently.</summary>
+    private bool _homeIsAway;
     private bool _isUnread;
     private int _emitted;
     private int _depth;
@@ -92,7 +95,7 @@ internal sealed class JsonSchemaEmitter
     /// The dynamic scope needs resources that stay what they are, in a dialect that has it. Inside another schema an import shares its
     /// resource with what surrounds it, so its anchors could clash and its scope would change.
     /// </summary>
-    private bool LeavesOutDynamic => IsDraft07 || IsOpenApi30 || _options.ReferencePrefix is not null || !_profile.Rewriters.IsEmpty || !_isWholeImport;
+    private bool LeavesOutDynamic => IsDraft07 || IsOpenApi30 || _options.ReferencePrefix is not null || !_profile.Rewriters.IsEmpty || !_isWholeImport || _homeIsAway;
 
     /// <summary>True when the document being written is one imported document, as it was.</summary>
     private bool _isWholeImport;
@@ -567,7 +570,10 @@ internal sealed class JsonSchemaEmitter
         _definitions[name] = new JsonObject();
         _base = BaseOf(site.Owner);
         _writingHome = true;
+        SchemaNode around = site.Owner is null ? rootNode : _resources![site.Owner];
+        _homeIsAway = !ReferenceEquals(target.Behavior.Resource, around.Behavior.Resource);
         JsonNode definition = EmitNode(Rewrite(target, isRoot: false) with { Defs = [] }, $"/{_profile.DefinitionsKeyword}/{Escape(name)}");
+        _homeIsAway = false;
         _writingHome = false;
         _import = outer;
         _pointing!.Homes[(site.Owner, site.Scope, location)] = definition;
@@ -759,7 +765,7 @@ internal sealed class JsonSchemaEmitter
     /// <summary>A reference that still reads true keeps the text of its document, so that what didn't move doesn't change.</summary>
     private string Spell(Site site)
     {
-        if (site.Place is JsonObject schema && _pointing!.Anchors.TryGetValue(schema, out string? anchor) && site.Text == "#" + anchor)
+        if (site.Place is JsonObject schema && _pointing!.Anchors.TryGetValue(schema, out string? anchor) && site.Text == "#" + anchor && ReferenceEquals(Owner(schema), site.Owner))
         {
             return site.Text;
         }
@@ -769,6 +775,12 @@ internal sealed class JsonSchemaEmitter
     }
 
     private static string Decoded(string reference) => Uri.UnescapeDataString(reference);
+
+    /// <summary>What 2020-12 allows in an anchor: <c>^[A-Za-z_][-A-Za-z0-9._]*$</c>.</summary>
+    private static bool IsPlainAnchor(string anchor) =>
+        anchor.Length > 0
+        && (char.IsAsciiLetter(anchor[0]) || anchor[0] == '_')
+        && anchor.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_');
 
     /// <summary>A reference of an imported document: the object that holds it, what it first said, and what it means.</summary>
     private sealed class Site(JsonObject holder, string text, Func<SchemaNode> target, ImportScope scope)
@@ -1091,6 +1103,12 @@ internal sealed class JsonSchemaEmitter
             _writtenBases[schema] = resolved;
         }
 
+        // 2019-09 allows more in a name than 2020-12 does. A reference to it is written as a pointer.
+        if (!IsDraft07 && anchor is not null && !IsPlainAnchor(anchor))
+        {
+            anchor = null;
+        }
+
         if (IsDraft07 && anchor is not null)
         {
             // Draft-07 spells the base and the anchor as one: http://x/y#anchor.
@@ -1177,6 +1195,11 @@ internal sealed class JsonSchemaEmitter
             {
                 // The document this came from ignores it, but OpenAPI 3.0 would apply it.
                 schema["x-inert-nullable"] = ToNode(value);
+            }
+            else if (keyword == "$schema" && value.ValueKind == JsonValueKind.String && value.GetString() != _profile.MetaSchema)
+            {
+                // Bundled resources repeat it, and what's written beside it now follows the target.
+                schema["x-inert-$schema"] = ToNode(value);
             }
             else if (IsDraft07 && keyword == "definitions")
             {
@@ -1767,6 +1790,11 @@ internal sealed class JsonSchemaEmitter
             {
                 WriteSingle(schema, "unevaluatedItems", node.UnevaluatedItems, location);
                 WriteSingle(schema, "unevaluatedProperties", node.UnevaluatedProperties, location);
+
+                if (node.Behavior.ContainsEvaluatesNothing && node.UnevaluatedItems is not null)
+                {
+                    Unrepresentable("unevaluatedItems", "In 2019-09 contains evaluates nothing, but it does in what's written here, so the written schema can accept more.", location);
+                }
             }
         }
     }
