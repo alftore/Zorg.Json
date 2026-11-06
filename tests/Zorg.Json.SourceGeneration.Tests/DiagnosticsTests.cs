@@ -58,6 +58,118 @@ public sealed class DiagnosticsTests
         Assert.Contains(found, diagnostic => diagnostic.Id == id);
     }
 
+    [Theory]
+    [InlineData("[JsonDerivedType(typeof(D), \"d\")] public abstract partial record P(string A); public record D(string A) : P(A);")]
+    [InlineData("[JsonConverter(typeof(JsonConverter<P>))] public partial record P(string A);")]
+    public void A_type_whose_json_is_its_own_is_refused(string source)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] " + source + Context);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == "ZORG0007");
+    }
+
+    [Theory]
+    [InlineData("\\\\A\\\\d+\\\\z")]
+    [InlineData("(?i)abc")]
+    [InlineData("[")]
+    public void A_pattern_only_dotnet_reads_is_reported_and_left_out(string pattern)
+    {
+        (ImmutableArray<Diagnostic> found, ImmutableArray<Diagnostic> errors) = Run($"[GenerateSchema(typeof(C))] public partial record P([property: RegularExpression(\"{pattern}\")] string A);" + Context);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == "ZORG0005");
+        Assert.Empty(errors.Where(error => error.Id is not ("CS0117" or "CS0534" or "CS7036")));
+    }
+
+    [Theory]
+    [InlineData("[Range(300, 400)] byte")]
+    [InlineData("[Range(-5, -1)] uint")]
+    public void A_range_nothing_can_meet_is_reported(string property)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial class P { " + property + " A { get; set; } }" + Context);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == "ZORG0005");
+    }
+
+    [Theory]
+    [InlineData("public partial class P { [JsonInclude, MinLength(1)] public string A = \"\"; }")]
+    [InlineData("public partial class P { [JsonInclude, MinLength(1)] internal string B { get; set; } = \"\"; }")]
+    [InlineData("[CustomValidation(typeof(string), \"M\")] public partial class P;")]
+    [InlineData("public partial class P { public P([MinLength(1)] string a) => A = a; public string A { get; } }")]
+    [InlineData("public partial class P { [JsonConverter(typeof(JsonConverter<string>)), MinLength(1)] public string? A { get; set; } }")]
+    [InlineData("public partial class P { public System.Collections.Generic.List<string?>? A { get; set; } }")]
+    public void A_rule_nothing_applies_is_reported(string source)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] " + source + Context);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == "ZORG0005");
+    }
+
+    [Theory]
+    [InlineData("public partial class P { [Required] public required string? A { get; set; } }", true)]
+    [InlineData("public partial record P([property: Required] string? A);", true)]
+    [InlineData("public partial record P([property: Required] string A = \"x\");", true)]
+    [InlineData("public partial class P { [JsonConstructor] public P() { } public P(string a) { } [Required] public string A { get; set; } = \"\"; }", true)]
+    [InlineData("public partial class P { [Required, JsonRequired] public string A { get; set; } = \"\"; }", false)]
+    [InlineData("public partial record P([property: Required] string A);", false)]
+    public void Required_that_can_not_hold_is_reported(string source, bool reported)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] " + source + Context);
+
+        Assert.Equal(reported, found.Any(diagnostic => diagnostic.Id == "ZORG0006"));
+    }
+
+    [Fact]
+    public void A_type_named_schema_is_reported()
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("""
+            [GenerateSchema(typeof(C))] public partial record Schema(string A);
+            [JsonSerializable(typeof(Schema))]
+            public partial class C : JsonSerializerContext;
+            """);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == "ZORG0003");
+    }
+
+    [Fact]
+    public void One_awkward_type_does_not_stop_the_others()
+    {
+        (ImmutableArray<Diagnostic> found, ImmutableArray<Diagnostic> errors) = Run("""
+            namespace @class.Foo
+            {
+                [GenerateSchema(typeof(C))] public partial record Foo(string A);
+                [GenerateSchema(typeof(C))] public partial record FOO(string A);
+                [JsonSerializable(typeof(Foo))]
+                [JsonSerializable(typeof(FOO))]
+                public partial class C : JsonSerializerContext;
+            }
+            """);
+
+        Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "CS8785");
+        Assert.Empty(errors.Where(error => error.Id is not ("CS0117" or "CS0534" or "CS7036")));
+    }
+
+    [Fact]
+    public void A_type_from_a_different_context_is_not_used_as_a_nested_schema()
+    {
+        const string Source = """
+            [GenerateSchema(typeof(C1))] public partial record A(B Inner);
+            [GenerateSchema(typeof(C2))] public partial record B(string V);
+            [JsonSerializable(typeof(A))] public partial class C1 : JsonSerializerContext;
+            [JsonSerializable(typeof(B))] public partial class C2 : JsonSerializerContext;
+            """;
+        (_, ImmutableArray<Diagnostic> errors) = Run(Source);
+
+        Assert.Empty(errors.Where(error => error.Id is not ("CS0117" or "CS0534" or "CS7036")));
+    }
+
+    [Fact]
+    public void A_warning_can_be_turned_off_where_it_is()
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial record P([property: CreditCard] string A);" + Context);
+
+        Assert.True(found.Single(diagnostic => diagnostic.Id == "ZORG0005").Location.IsInSource);
+    }
+
     [Fact]
     public void A_nested_type_is_refused()
     {

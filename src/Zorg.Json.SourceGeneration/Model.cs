@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.Text;
 
 #pragma warning disable IDE0130 // The namespaces are for the compiler only.
 namespace System.Runtime.CompilerServices
@@ -56,25 +55,14 @@ namespace Zorg.Json.SourceGeneration
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    /// <summary>A diagnostic that holds no symbols, so that it can be cached between runs.</summary>
-    internal sealed record Finding(string Id, string? Argument, string? File, TextSpan Span, LinePositionSpan Lines)
+    /// <summary>A diagnostic to report. It keeps its real location, so that <c>#pragma warning disable</c> works on it.</summary>
+    internal sealed record Finding(string Id, string? Argument, Location? Location)
     {
-        public static Finding At(DiagnosticDescriptor descriptor, string? argument, Location? location)
-        {
-            FileLinePositionSpan lines = location?.GetLineSpan() ?? default;
-            return new Finding(descriptor.Id, argument, location?.SourceTree?.FilePath, location?.SourceSpan ?? default, lines.Span);
-        }
-
-        public Diagnostic ToDiagnostic()
-        {
-            DiagnosticDescriptor descriptor = Descriptors.All.First(candidate => candidate.Id == Id);
-            Location location = File is null ? Location.None : Location.Create(File, Span, Lines);
-            return Diagnostic.Create(descriptor, location, Argument);
-        }
+        public Diagnostic ToDiagnostic() => Diagnostic.Create(Descriptors.All.First(candidate => candidate.Id == Id), Location, Argument);
     }
 
     /// <summary>One property with rules. <see cref="Nested"/> is the type with a generated schema that it holds, directly or as its items.</summary>
-    internal sealed record PropertyModel(string Name, string Calls, string? Nested, bool NestedIsItem, string TypeDescription);
+    internal sealed record PropertyModel(string Name, string Calls, string? Nested, bool NestedIsItem);
 
     /// <summary>What a type with <c>[GenerateSchema]</c> states.</summary>
     internal sealed record TypeModel(
@@ -85,6 +73,7 @@ namespace Zorg.Json.SourceGeneration
         string Name,
         string Context,
         string TypeCalls,
+        bool HidesSchema,
         EquatableArray<PropertyModel> Properties,
         EquatableArray<Finding> Findings,
         bool CanGenerate);

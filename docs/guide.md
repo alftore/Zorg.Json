@@ -49,18 +49,19 @@ ParseResult<Person> person = Person.Schema.SafeParse(json);
 
 | Attribute | Rule |
 |---|---|
-| `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, `minItems` and `maxItems` on a collection |
-| `[Range]` with numbers | `minimum` and `maximum`, or the exclusive ones with `MinimumIsExclusive` and `MaximumIsExclusive` |
-| `[RegularExpression]` | `pattern`. It's read as ECMA-262, as every Zorg pattern is, not as a .NET regex |
-| `[EmailAddress]`, `[Url]` | `format: email` and `format: uri` |
-| `[Required]` on text | `minLength: 1`, unless `AllowEmptyStrings` is set |
-| `[Description]` | `description`, on the type or a property |
+| `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, in code points, and `minItems` and `maxItems` on a collection. Not on `byte[]`, which is a base64 string in JSON. When several apply, the tightest wins |
+| `[Range]` with numbers | `minimum` and `maximum`, or the exclusive ones with `MinimumIsExclusive` and `MaximumIsExclusive`. Whole numbers get exact whole bounds |
+| `[RegularExpression]` | `pattern`, as a whole match, and an empty string passes, as with the attribute. It's read as ECMA-262, as every Zorg pattern is, so `\\d` is ASCII only. A pattern only .NET reads, such as `\\A` or `(?i)`, gets a warning |
+| `[EmailAddress]` | `format: email`, which is stricter than the attribute, which only looks for an `@` |
+| `[Url]` | `format: uri`, and it must start with `http://`, `https://` or `ftp://` |
+| `[Required]` on text | `minLength: 1` and not only whitespace, unless `AllowEmptyStrings` is set |
+| `[Description]` | `description`, on the type, or on a property of text, numbers, a collection or a type with a generated schema |
 
-A property whose type also has `[GenerateSchema]` uses that schema, directly or as the items of a collection, and a recursive type goes through a named definition.
+A property whose type also has `[GenerateSchema]` with the same context uses that schema, directly, as `Optional<T>`, or as the items of a list or array, and a recursive type goes through a named definition. Nothing else is followed: not dictionary values, jagged arrays or types without the attribute.
 
-- The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. Otherwise it's a compile error.
-- **Presence** comes from the contract, as in every typed schema: `required`, or a constructor parameter. `[Required]` on anything else gets a warning, `ZORG0006`, because System.Text.Json decides what must be present.
-- An attribute that can't be stated, such as `[CreditCard]` or `[Range]` on a date, gets a warning, `ZORG0005`, and isn't checked. Add it with `.Property(...)` or `.Refine(...)`.
+- The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. A polymorphic type, or one with a custom converter, has JSON its properties don't describe. All of these are compile errors.
+- **Presence and null** come from the contract, as in every typed schema: `required`, `[JsonRequired]`, or a constructor parameter with no default. `[Required]` on anything else, or on something nullable, gets a warning, `ZORG0006`.
+- An attribute that can't be stated gets a warning, `ZORG0005`, and isn't checked. That covers `[CreditCard]`, `[Range]` on a date or one nothing can meet, a rule on a field, on a parameter of a class, on a property with a converter, and on a shape the fluent API has no overload for, such as `bool?`. Add it with `.Property(...)` or `.Refine(...)`.
 - Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too.
 - Under Native AOT, .NET marks `[MinLength]`, `[MaxLength]` and `[Length]` themselves as needing reflection, so using them gives a trim warning, whatever reads them. For text, `[StringLength]` says the same without it.
 
@@ -104,6 +105,7 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Names** come from the contract, so `[JsonPropertyName]` and naming policies apply.
 - **Required:** a property marked `required`, or a constructor parameter with no default. System.Text.Json doesn't enforce the second kind itself, but `record Person(string Name)` says it's needed.
 - **Nullable:** follows the declaration, so `string?` allows `null` and `string` doesn't. Absent and `null` are separate: `string? Nickname` as a constructor parameter must be present, and may be `null`. Use `.Optional(p => p.Nickname)` or give it a default to let it be absent.
+- **Items of a collection** aren't nullable: `List<string?>` rejects a `null` item, because a contract doesn't carry the annotation of a type argument. Give the items a schema with `.Property(p => p.X, s => s.Items(...))` to allow it. The source generator warns about this.
 - **Unknown properties** are rejected, unless the type has `[JsonExtensionData]`. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is rejected even with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.

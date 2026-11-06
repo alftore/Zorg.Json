@@ -24,7 +24,10 @@ internal static class Descriptors
         "ZORG0005", "An attribute can't be stated in the schema", "{0}", Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
 
     public static readonly DiagnosticDescriptor NotRequired = new(
-        "ZORG0006", "[Required] doesn't make a property required", "'{0}' has [Required], but System.Text.Json decides what must be present: mark it required, or make it a constructor parameter", Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
+        "ZORG0006", "[Required] doesn't make a property required", "'{0}' has [Required], but the contract decides what must be present and may be null: make it required and not nullable", Category, DiagnosticSeverity.Warning, isEnabledByDefault: true);
 
-    public static ImmutableArray<DiagnosticDescriptor> All { get; } = [NotPartial, Unsupported, NameTaken, BadContext, NotApplied, NotRequired];
+    public static readonly DiagnosticDescriptor CustomShape = new(
+        "ZORG0007", "The JSON of the type isn't what its properties say", "{0}. Write the schema by hand.", Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+    public static ImmutableArray<DiagnosticDescriptor> All { get; } = [NotPartial, Unsupported, NameTaken, BadContext, NotApplied, NotRequired, CustomShape];
 }
