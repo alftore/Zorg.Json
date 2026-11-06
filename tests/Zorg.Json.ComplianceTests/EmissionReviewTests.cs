@@ -24,7 +24,7 @@ public sealed class EmissionReviewTests
     private static JsonValueSchema Import(string document, JsonSchemaImportOptions? options = null) => Z.FromJsonSchema(document, options);
 
     /// <summary>The Schema Object of OpenAPI 3.0, translated into 2020-12 for the oracle.</summary>
-    private static JsonNode? ConvertOpenApi30(JsonNode? node)
+    internal static JsonNode? ConvertOpenApi30(JsonNode? node)
     {
         if (node is JsonArray list)
         {
