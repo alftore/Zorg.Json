@@ -53,7 +53,6 @@ public sealed class JsonSchemaImportTests
 
     [Theory]
     [InlineData("http://json-schema.org/draft-03/schema#")]
-    [InlineData("https://json-schema.org/draft/2019-09/schema")]
     [InlineData("https://spec.openapis.org/oas/3.0/schema/2021-09-28")]
     [InlineData("https://example.com/my-meta-schema")]
     public void Other_dialects_are_refused(string dialect)

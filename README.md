@@ -47,6 +47,16 @@ ObjectSchema search = Z.Object()
 - **Errors you can act on.** Stable codes and JSON Pointer paths, on raw JSON before deserialization.
 - **Honest schemas.** The emitted schema accepts everything parsing accepts, checked against an independent validator. What it can't express is reported, not dropped.
 
+## Checking `format`
+
+In JSON Schema, `format` is an annotation by default. Draft 2019-09 and later say validators must not check it unless asked. So an imported 2020-12 schema accepts `"nope"` for `"format": "email"`, as most JSON Schema validators do. To check formats, ask for it:
+
+```csharp
+JsonValueSchema schema = Z.FromJsonSchema(text, new() { Formats = FormatHandling.AssertKnown });
+```
+
+Fluent schemas such as `Z.String().Email()` always check. Imported draft-04, draft-06 and draft-07 schemas check too, which those drafts allow.
+
 ## Packages
 
 | Package | Contents |
@@ -57,7 +67,7 @@ ObjectSchema search = Z.Object()
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
 | `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 
-JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, Draft-07, Draft-06 and Draft-04.
+JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, 2019-09, Draft-07, Draft-06 and Draft-04.
 
 ## Documentation
 
@@ -73,12 +83,13 @@ Imported schemas run against the official [JSON-Schema-Test-Suite](https://githu
 
 | Draft | Passed | Refused at import | Failed |
 |---|---|---|---|
-| 2020-12 | 2,157 | 88 | 0 |
-| Draft-07 | 1,752 | 27 | 0 |
-| Draft-06 | 1,251 | 27 | 0 |
-| Draft-04 | 905 | 21 | 0 |
+| 2020-12 | 2,236 | 9 | 0 |
+| 2019-09 | 2,195 | 9 | 0 |
+| Draft-07 | 1,775 | 4 | 0 |
+| Draft-06 | 1,274 | 4 | 0 |
+| Draft-04 | 922 | 4 | 0 |
 
-The refused cases are features that are out of scope: a `$ref` to another document, `$dynamicRef`, and custom meta-schemas. Passed counts include the optional format, big number and float overflow tests, which run with `format` checking turned on: 2020-12 leaves it off by default, as the specification requires. CI also compares Zorg with a second independent validator on generated documents.
+The refused cases are a `$ref` to an official meta-schema and custom meta-schemas. Passed counts include the optional format, big number and float overflow tests, which run with `format` checking turned on: 2020-12 leaves it off by default, as the specification requires. CI also compares Zorg with a second independent validator on generated documents.
 
 ## How this is built
 

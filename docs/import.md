@@ -15,19 +15,30 @@ Imported schemas follow the document, not Zorg's fluent defaults: an absent `add
 
 ## What's supported
 
-Draft 2020-12, Draft-07, Draft-06, Draft-04 and OpenAPI 3.0. The first four are detected from `$schema`. With no `$schema`, 2020-12 is assumed, and `JsonSchemaImportOptions.DefaultDialect` can override that. An OpenAPI 3.0 schema has no `$schema`, so it can only be chosen that way: see [OpenAPI 3.0](#openapi-30).
+Draft 2020-12, Draft 2019-09, Draft-07, Draft-06, Draft-04 and OpenAPI 3.0. The first five are detected from `$schema`. With no `$schema`, 2020-12 is assumed, and `JsonSchemaImportOptions.DefaultDialect` can override that. An OpenAPI 3.0 schema has no `$schema`, so it can only be chosen that way: see [OpenAPI 3.0](#openapi-30).
 
 All core, applicator and validation keywords are honoured, including `not`, `if`/`then`/`else`, `dependent*`, `unevaluated*`, `$anchor` and `$ref` with cycles. Content keywords are annotations.
 
-`format` follows the specification. In Draft 2020-12 it is an annotation unless you set `Formats = FormatHandling.AssertKnown`, because the specification says checking "MUST be disabled by default". Draft-04, draft-06, draft-07 and OpenAPI 3.0 allow checking, so Zorg checks there unless you set `FormatHandling.AnnotateOnly`. Fluent schemas always check. With checking on, all 2020-12 formats are enforced. A format that parsing doesn't check is written to draft-07 and OpenAPI 3.0 as `x-inert-format`, with a diagnostic, because validators of those dialects may check it. A format Zorg doesn't know is written as it is, because its meaning isn't known: a validator that checks it can reject what parsing accepts.
+`format` follows the specification. In Draft 2019-09 and 2020-12 it is an annotation unless you set `Formats = FormatHandling.AssertKnown`, because the specification says checking "MUST be disabled by default". Draft-04, draft-06, draft-07 and OpenAPI 3.0 allow checking, so Zorg checks there unless you set `FormatHandling.AnnotateOnly`. Fluent schemas always check. With checking on, all 2020-12 formats are enforced. A format that parsing doesn't check is written to draft-07 and OpenAPI 3.0 as `x-inert-format`, with a diagnostic, because validators of those dialects may check it. A format Zorg doesn't know is written as it is, because its meaning isn't known: a validator that checks it can reject what parsing accepts.
 
-A `$ref` reaches `#`, a JSON Pointer, an `$anchor` and any `$id` in the same document, by a relative, absolute or URN reference. Nothing is ever fetched. Unknown and `x-*` keywords are kept and emitted again.
+A `$ref` reaches `#`, a JSON Pointer, an `$anchor` and any `$id` in the same document, by a relative, absolute or URN reference. Nothing is ever fetched. To reach other documents, pass them by URI, and they're bundled into the schema as embedded resources under `$defs`, as JSON Schema describes for bundling:
+
+```csharp
+JsonValueSchema schema = Z.FromJsonSchema(text, new()
+{
+    Documents = new Dictionary<string, string> { ["https://example.com/address.json"] = addressText },
+});
+```
+
+The emitted schema is one document that needs nothing else. A document has to use the dialect of the schema, and it answers to the URI it was given as well as its own `$id`.
+
+`$dynamicRef` and `$dynamicAnchor` work, as do `$recursiveRef` and `$recursiveAnchor` in Draft 2019-09, which are written as `$dynamicRef` and `$dynamicAnchor` when emitted. Where they can't work, they're left out with a diagnostic and handled like any rule that can't be stated exactly: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. `$dynamicRef` or `$recursiveRef` beside `$ref` in one schema object is `unsupported_keyword`: put one of them in an `allOf`. Unknown and `x-*` keywords are kept and emitted again.
 
 **Nothing is dropped silently.** A schema that can't be honoured throws `JsonSchemaImportException`, with a stable `Code` and the schema location:
 
 | Code | Meaning |
 |---|---|
-| `unsupported_keyword` | `$dynamicRef` and `$dynamicAnchor` |
+| `unsupported_keyword` | `$dynamicRef` or `$recursiveRef` beside `$ref` in one schema object |
 | `unsupported_dialect` | Draft-03, 2019-09 or a custom meta-schema. Also a boolean `nullable` in a document with no `$schema`, while `DefaultDialect` is left alone, because that is OpenAPI 3.0 and `nullable` would be ignored |
 | `unresolved_ref` | A `$ref` to something that isn't in the document, or that points at nothing. Nothing is ever fetched |
 | `ref_cycle` | A reference cycle that never consumes input, such as `{ "$ref": "#" }` |

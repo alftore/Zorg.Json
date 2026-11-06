@@ -36,6 +36,7 @@ public sealed partial class GoValidatorTests
         JsonSchemaImportDialect.Draft04 => "4",
         JsonSchemaImportDialect.Draft06 => "6",
         JsonSchemaImportDialect.Draft07 => "7",
+        JsonSchemaImportDialect.Draft201909 => "2019",
         _ => "2020",
     };
 
@@ -172,7 +173,7 @@ public sealed partial class GoValidatorTests
             }
 
             // jv applies a const beside $ref in draft-07 and before, where the specification ignores everything beside it.
-            if (dialect != JsonSchemaImportDialect.Draft202012 && HasConstBesideReference(JsonNode.Parse(document)))
+            if (dialect is not (JsonSchemaImportDialect.Draft202012 or JsonSchemaImportDialect.Draft201909) && HasConstBesideReference(JsonNode.Parse(document)))
             {
                 Add(counts, "skipped for the const beside $ref bug in jv");
                 continue;

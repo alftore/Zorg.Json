@@ -115,7 +115,12 @@ internal sealed class SchemaImporter
         }
 
         _root = root;
-        _usesDynamicScope = dialect == JsonSchemaImportDialect.Draft202012 && root.GetRawText().Contains("$dynamic", StringComparison.Ordinal);
+        _usesDynamicScope = dialect switch
+        {
+            JsonSchemaImportDialect.Draft202012 => root.GetRawText().Contains("$dynamic", StringComparison.Ordinal),
+            JsonSchemaImportDialect.Draft201909 => root.GetRawText().Contains("$recursive", StringComparison.Ordinal),
+            _ => false,
+        };
         _options = options;
         _dialect = dialect;
         _isDialectAssumed = isDialectAssumed;
@@ -129,7 +134,9 @@ internal sealed class SchemaImporter
         Opaque,
     }
 
-    private bool IsLegacy => _dialect != JsonSchemaImportDialect.Draft202012;
+    private bool IsLegacy => _dialect is not (JsonSchemaImportDialect.Draft202012 or JsonSchemaImportDialect.Draft201909);
+
+    private bool IsDraft201909 => _dialect == JsonSchemaImportDialect.Draft201909;
 
     private bool IsDraft04 => _dialect == JsonSchemaImportDialect.Draft04;
 
@@ -171,7 +178,7 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, "A schema with Documents must be an object.");
         }
 
-        string container = dialect == JsonSchemaImportDialect.Draft202012 ? "$defs" : "definitions";
+        string container = dialect is JsonSchemaImportDialect.Draft202012 or JsonSchemaImportDialect.Draft201909 ? "$defs" : "definitions";
         string idKeyword = dialect == JsonSchemaImportDialect.Draft04 ? "id" : "$id";
         List<string> members = [];
         List<string> definitions = [];
@@ -242,6 +249,12 @@ internal sealed class SchemaImporter
         members.AddRange(document.EnumerateObject().Select(property => property.ToString()));
         return $"{{{string.Join(',', members)}}}";
     }
+
+    /// <summary>The name <c>$recursiveAnchor</c> goes by, in the spelling of 2020-12.</summary>
+    private const string RecursiveAnchor = "zorg-recursive";
+
+    private bool IsRecursiveAnchor(string resource) =>
+        Walk(resource) is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("$recursiveAnchor", out JsonElement value) && value.ValueKind == JsonValueKind.True;
 
     private SchemaResource ResourceOf(string pointer)
     {
@@ -335,6 +348,7 @@ internal sealed class SchemaImporter
     private static JsonSchemaImportDialect? ToDialect(string uri) => uri.TrimEnd('#') switch
     {
         "https://json-schema.org/draft/2020-12/schema" => JsonSchemaImportDialect.Draft202012,
+        "https://json-schema.org/draft/2019-09/schema" => JsonSchemaImportDialect.Draft201909,
         "http://json-schema.org/draft-07/schema" or "https://json-schema.org/draft-07/schema" => JsonSchemaImportDialect.Draft07,
         "http://json-schema.org/draft-06/schema" or "https://json-schema.org/draft-06/schema" => JsonSchemaImportDialect.Draft06,
         "http://json-schema.org/draft-04/schema" or "https://json-schema.org/draft-04/schema" => JsonSchemaImportDialect.Draft04,
@@ -432,9 +446,12 @@ internal sealed class SchemaImporter
 
     private static void RejectUnsupported(Dictionary<string, JsonElement> values, Scope at)
     {
-        if (values.ContainsKey("$dynamicRef") && values.ContainsKey("$ref"))
+        foreach (string keyword in (ReadOnlySpan<string>)["$dynamicRef", "$recursiveRef"])
         {
-            throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword("$dynamicRef"), "$dynamicRef beside $ref isn't supported. Put one of them in an allOf.");
+            if (values.ContainsKey(keyword) && values.ContainsKey("$ref"))
+            {
+                throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} beside $ref isn't supported. Put one of them in an allOf.");
+            }
         }
     }
 
@@ -569,14 +586,46 @@ internal sealed class SchemaImporter
             reference = NormalizeReference(reference, scope);
         }
 
-        string? dynamicRef = IsLegacy ? null : keywords.String("$dynamicRef");
-        string? dynamicAnchor = IsLegacy ? null : keywords.String("$dynamicAnchor");
+        string? dynamicRef = _dialect == JsonSchemaImportDialect.Draft202012 ? keywords.String("$dynamicRef") : null;
+        string? dynamicAnchor = _dialect == JsonSchemaImportDialect.Draft202012 ? keywords.String("$dynamicAnchor") : null;
+
+        // $recursiveAnchor is $dynamicAnchor with one name, on the root of a resource.
+        if (IsDraft201909)
+        {
+            if (keywords.Boolean("$recursiveAnchor") == true && at.Pointer == scope.Resource)
+            {
+                dynamicAnchor = RecursiveAnchor;
+            }
+
+            if (keywords.String("$recursiveRef") is { } recursive)
+            {
+                if (recursive == "#" && IsRecursiveAnchor(scope.Resource))
+                {
+                    dynamicRef = "#" + RecursiveAnchor;
+                }
+                else
+                {
+                    reference = recursive;
+                }
+            }
+        }
 
         if (dynamicRef is not null)
         {
             ReferenceTarget target = new();
             _references.Add(new PendingReference(target, dynamicRef, scope));
             behavior = behavior with { Target = target.Get };
+        }
+        else if (reference is not null && behavior.Target is null)
+        {
+            ReferenceTarget target = new();
+            _references.Add(new PendingReference(target, reference, scope));
+            behavior = behavior with { Target = target.Get };
+        }
+
+        if (IsDraft201909)
+        {
+            behavior = behavior with { ContainsEvaluatesNothing = true };
         }
 
         if (dynamicAnchor is not null)
@@ -604,7 +653,7 @@ internal sealed class SchemaImporter
         if (format is not null)
         {
             CheckFormat(format, at);
-            bool annotates = _options.Formats == FormatHandling.AnnotateOnly || (_options.Formats == FormatHandling.ByDialect && _dialect == JsonSchemaImportDialect.Draft202012);
+            bool annotates = _options.Formats == FormatHandling.AnnotateOnly || (_options.Formats == FormatHandling.ByDialect && !IsLegacy);
             behavior = annotates ? behavior with { FormatIsAnnotation = true } : behavior;
         }
 
@@ -834,7 +883,7 @@ internal sealed class SchemaImporter
 
     private (ImmutableArray<SchemaNode> PrefixItems, SchemaNode? Items) ReadItems(Keywords keywords, Scope scope)
     {
-        if (!IsLegacy)
+        if (!IsLegacy && !IsDraft201909)
         {
             return (keywords.NonEmptyList("prefixItems", scope), keywords.Schema("items", scope));
         }
@@ -930,6 +979,11 @@ internal sealed class SchemaImporter
 
     private bool IsInert(string keyword, bool ignoresSiblings)
     {
+        if (IsDraft201909)
+        {
+            return keyword is "$schema" or "prefixItems" or "$dynamicRef" or "$dynamicAnchor";
+        }
+
         if (!IsLegacy)
         {
             return false;
@@ -963,6 +1017,7 @@ internal sealed class SchemaImporter
         return _dialect switch
         {
             JsonSchemaImportDialect.Draft202012 => !UntilDraft07.Contains(keyword),
+            JsonSchemaImportDialect.Draft201909 => keyword is "additionalItems" || (!UntilDraft07.Contains(keyword) && keyword is not ("prefixItems" or "$dynamicRef" or "$dynamicAnchor")),
             JsonSchemaImportDialect.Draft07 => !Only202012.Contains(keyword),
             JsonSchemaImportDialect.Draft06 => !Only202012.Contains(keyword) && !SinceDraft07.Contains(keyword),
             JsonSchemaImportDialect.OpenApi30 => OpenApi30Keywords.Contains(keyword),
@@ -999,7 +1054,7 @@ internal sealed class SchemaImporter
     /// </summary>
     private string NormalizeReference(string reference, Scope scope)
     {
-        if (!IsLegacy || !reference.StartsWith("#/", StringComparison.Ordinal))
+        if ((!IsLegacy && !IsDraft201909) || !reference.StartsWith("#/", StringComparison.Ordinal))
         {
             return reference;
         }

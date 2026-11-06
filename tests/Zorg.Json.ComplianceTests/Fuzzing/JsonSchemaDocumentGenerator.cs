@@ -30,7 +30,7 @@ internal sealed class JsonSchemaDocumentGenerator(Random random)
 
     public JsonObject Root()
     {
-        Dialect = (JsonSchemaImportDialect)_random.Next(4);
+        Dialect = _random.Next(5) is var pick && pick == 4 ? JsonSchemaImportDialect.Draft201909 : (JsonSchemaImportDialect)pick;
         JsonObject root = Schema(0);
 
         if (_random.Next(3) == 0)

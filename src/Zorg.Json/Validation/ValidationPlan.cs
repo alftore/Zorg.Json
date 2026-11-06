@@ -1359,7 +1359,7 @@ internal sealed class ValidationPlan
             foreach (JsonElement item in value.EnumerateArray())
             {
                 context.Push(index);
-                evaluated[index] |= all || index < _prefixItems.Length || (_contains is not null && Passes(_contains, item, context));
+                evaluated[index] |= all || index < _prefixItems.Length || (_contains is not null && !_node.Behavior.ContainsEvaluatesNothing && Passes(_contains, item, context));
                 context.Pop();
                 index++;
             }

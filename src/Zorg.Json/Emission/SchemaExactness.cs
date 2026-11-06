@@ -290,6 +290,12 @@ internal static class SchemaExactness
             return node.MinProperties is not null ? "minProperties" : "maxProperties";
         }
 
+        // 2020-12 lets contains evaluate items, so the written schema can be looser here.
+        if (behavior.ContainsEvaluatesNothing && node.Contains is not null && node.UnevaluatedItems is not null)
+        {
+            return "contains";
+        }
+
         if (HasUnwritableValue(node))
         {
             return node.Const is { } constant && IsUnwritable(constant) ? "const" : "enum";

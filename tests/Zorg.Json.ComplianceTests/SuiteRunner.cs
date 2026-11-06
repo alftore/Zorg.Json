@@ -35,6 +35,7 @@ internal static class SuiteRunner
     private static readonly (string Name, JsonSchemaImportDialect Dialect)[] Drafts =
     [
         ("draft2020-12", JsonSchemaImportDialect.Draft202012),
+        ("draft2019-09", JsonSchemaImportDialect.Draft201909),
         ("draft7", JsonSchemaImportDialect.Draft07),
         ("draft6", JsonSchemaImportDialect.Draft06),
         ("draft4", JsonSchemaImportDialect.Draft04),
@@ -239,7 +240,7 @@ internal static class SuiteRunner
 
     private static void RoundTrip(FileResult result, string relative, string description, JsonValueSchema schema, ImmutableArray<JsonElement> tests, JsonSchemaImportOptions options)
     {
-        JsonSchemaProfile[] targets = result.Draft == "draft2020-12"
+        JsonSchemaProfile[] targets = result.Draft is "draft2020-12" or "draft2019-09"
             ? [JsonSchemaProfile.Draft202012]
             : [JsonSchemaProfile.Draft202012, JsonSchemaProfile.Draft07];
 

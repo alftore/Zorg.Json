@@ -3,7 +3,7 @@
     {
       "kind": "ImportError",
       "code": "unresolved_ref",
-      "reason": "$ref is local only in v1: #, JSON Pointer and $anchor. Remote, URN, absolute and relative-URI targets are refused, and nothing is fetched (note 05 A.4).",
+      "reason": "A $ref to an official meta-schema. A reference reaches the document and Documents, and meta-schemas are not built in.",
       "cases": {
         "draft2020-12/defs.json": [
           "validate definition against metaschema"
@@ -27,6 +27,12 @@
           "validate definition against metaschema"
         ],
         "draft4/ref.json": [
+          "remote ref, containing refs itself"
+        ],
+        "draft2019-09/defs.json": [
+          "validate definition against metaschema"
+        ],
+        "draft2019-09/ref.json": [
           "remote ref, containing refs itself"
         ]
       }
@@ -55,6 +61,10 @@
       "reason": "A custom meta-schema is an unknown dialect, and $vocabulary is not honoured (note 05 A.2).",
       "cases": {
         "draft2020-12/vocabulary.json": [
+          "schema that uses custom metaschema with with no validation vocabulary",
+          "ignore unrecognized optional vocabulary"
+        ],
+        "draft2019-09/vocabulary.json": [
           "schema that uses custom metaschema with with no validation vocabulary",
           "ignore unrecognized optional vocabulary"
         ]

@@ -100,6 +100,9 @@ public enum JsonSchemaImportDialect
     /// boolean <c>exclusiveMinimum</c> and <c>exclusiveMaximum</c>, and <c>$ref</c> into the document's own <c>components/schemas</c>.
     /// </summary>
     OpenApi30,
+
+    /// <summary>Draft 2019-09. <c>$recursiveRef</c> is written as <c>$dynamicRef</c> when emitted.</summary>
+    Draft201909,
 }
 
 /// <summary>What to do with keywords no dialect defines. Zod keeps them as metadata, as <see cref="Preserve"/> does.</summary>
@@ -126,7 +129,7 @@ public enum UnknownKeywordHandling
 public enum FormatHandling
 {
     /// <summary>
-    /// What the dialect says. Draft 2020-12 requires that <c>format</c> isn't checked unless asked for, so it is an annotation there.
+    /// What the dialect says. Draft 2019-09 and 2020-12 require that <c>format</c> isn't checked unless asked for, so it is an annotation there.
     /// Draft-04, draft-06, draft-07 and OpenAPI 3.0 allow checking, and Zorg checks every format it knows.
     /// </summary>
     ByDialect,

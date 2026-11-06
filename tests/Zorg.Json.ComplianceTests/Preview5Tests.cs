@@ -201,7 +201,7 @@ public sealed class Preview5Tests
     {
         JsonValueSchema schema = Z.FromJsonSchema(
             """{"$id":"http://e.com/o","$dynamicAnchor":"n","$ref":"http://e.com/i"}""",
-            With(("http://e.com/i", """{"$dynamicAnchor":"n","allOf":[{"$dynamicRef":"#n"}]}""")));
+            With(("http://e.com/i", """{"$defs":{"n":{"$dynamicAnchor":"n"}},"allOf":[{"$dynamicRef":"#n"}]}""")));
 
         Assert.False(schema.SafeParse("1").IsSuccess);
     }

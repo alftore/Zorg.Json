@@ -44,6 +44,9 @@ public sealed record SchemaBehavior
     /// <summary>What <see cref="SchemaNode.Ref"/> points at. Evaluated on first use, so that schemas can be recursive.</summary>
     public Func<SchemaNode>? Target { get; init; }
 
+    /// <summary>Set in Draft 2019-09, where <c>contains</c> evaluates no items for <c>unevaluatedItems</c>.</summary>
+    internal bool ContainsEvaluatesNothing { get; init; }
+
     /// <summary>The resource an imported node belongs to, set only in a document that uses <c>$dynamicRef</c>.</summary>
     internal SchemaResource? Resource { get; init; }
 

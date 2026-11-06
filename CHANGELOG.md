@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Added `JsonSchemaImportOptions.Documents`: other documents a `$ref` can reach, by URI. They're bundled into the schema as embedded resources, so nothing is fetched and the emitted schema needs nothing else.
+- `$dynamicRef` and `$dynamicAnchor` now work. They were refused with `unsupported_keyword`. They're written to 2020-12 and OpenAPI 3.1, and left out with a diagnostic where they can't work: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. They can't sit beside `$ref` in one schema object.
+- Added Draft 2019-09 import, including `$recursiveRef` and `$recursiveAnchor`, which are written as `$dynamicRef` and `$dynamicAnchor` when emitted.
+- Refused cases of the official suite dropped from 88 to 9 for 2020-12, and to 4 each for draft-07, draft-06 and draft-04. Draft 2019-09 refuses 9 of 2,204. What remains is a `$ref` to an official meta-schema and custom meta-schemas.
+
 ## 0.1.0-preview.4
 
 **Breaking:** an imported Draft 2020-12 schema no longer checks `format` unless you ask. The specification says that checking "MUST be disabled by default". Pass `Formats = FormatHandling.AssertKnown` to keep checking. Draft-04, draft-06, draft-07 and OpenAPI 3.0 still check, which those drafts allow, and fluent schemas are unchanged. `FormatHandling.ByDialect` is the new default.
