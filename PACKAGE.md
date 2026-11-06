@@ -49,5 +49,6 @@ Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthrop
 | `Zorg.Json.AspNetCore` | Request validation with problem details, serving schemas, options validation |
 | `Zorg.Json.AspNetCore.OpenApi` | Schemas in the OpenAPI document |
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
+| `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 
 JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, Draft-07, Draft-06 and Draft-04, and passes the official JSON-Schema-Test-Suite: every case passes, or its schema is refused at import with a stable error code. Every public member has XML documentation naming the JSON Schema keyword and the Zod equivalent.

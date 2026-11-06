@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Unicode;
+using System.Threading;
+using System.Threading.Tasks;
 using Zorg.Json.Emission;
 
 namespace Zorg.Json.Llm;
@@ -145,6 +147,59 @@ public static class LlmSchemaExtensions
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(emitted);
         return schema.SafeParse(ModelOutputAdapter.Adapt(schema.ToNode(), emitted, json));
+    }
+
+    /// <summary>
+    /// Validates a model's answer as <see cref="ParseModelOutput{T}(Schema{T}, EmitResult, string)"/> does, and runs the
+    /// schema's async refinements. Zod equivalent: <c>safeParseAsync</c> on the original schema.
+    /// </summary>
+    /// <typeparam name="T">The type of the parsed value.</typeparam>
+    /// <param name="schema">The schema that was emitted.</param>
+    /// <param name="emitted">The result of emitting it.</param>
+    /// <param name="json">The model's JSON text.</param>
+    /// <param name="cancellationToken">Passed to the async refinements.</param>
+    /// <returns>The value, or the issues. Malformed JSON is an <see cref="IssueCodes.InvalidJson"/> issue.</returns>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;JsonElement&gt; answer = await schema.ParseModelOutputAsync(emitted, responseText, cancellationToken);
+    /// </code>
+    /// </example>
+    public static ValueTask<ParseResult<T>> ParseModelOutputAsync<T>(this Schema<T> schema, EmitResult emitted, string json, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(json);
+
+        JsonElement element;
+
+        try
+        {
+            element = JsonElement.Parse(json, DocumentOptions);
+        }
+        catch (Exception exception) when (IsUnreadable(exception))
+        {
+            return ValueTask.FromResult(schema.SafeParse(json));
+        }
+
+        return schema.ParseModelOutputAsync(emitted, element, cancellationToken);
+    }
+
+    /// <summary>Validates a parsed answer as <see cref="ParseModelOutput{T}(Schema{T}, EmitResult, JsonElement)"/> does, and runs the schema's async refinements.</summary>
+    /// <typeparam name="T">The type of the parsed value.</typeparam>
+    /// <param name="schema">The schema that was emitted.</param>
+    /// <param name="emitted">The result of emitting it.</param>
+    /// <param name="json">The element. Duplicate properties can't be detected at this point.</param>
+    /// <param name="cancellationToken">Passed to the async refinements.</param>
+    /// <returns>The value, or the issues.</returns>
+    /// <example>
+    /// <code>
+    /// ParseResult&lt;JsonElement&gt; answer = await schema.ParseModelOutputAsync(emitted, document.RootElement, cancellationToken);
+    /// </code>
+    /// </example>
+    public static ValueTask<ParseResult<T>> ParseModelOutputAsync<T>(this Schema<T> schema, EmitResult emitted, JsonElement json, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(emitted);
+        return schema.SafeParseAsync(ModelOutputAdapter.Adapt(schema.ToNode(), emitted, json), cancellationToken);
     }
 
     /// <summary>
