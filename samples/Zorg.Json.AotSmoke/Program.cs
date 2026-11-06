@@ -127,6 +127,10 @@ EmitResult callback = Z.String().Refine(_ => true, "x").Emit(new JsonSchemaOptio
 });
 Check("unrepresentable callback", callback.Schema["x-refined"]?.GetValue<string>() == "x" && callback.Diagnostics.Length == 1);
 
+EnumSchema<Tier> tier = Z.Enum<Tier>(JsonNamingPolicy.CamelCase);
+Check("enum names", tier.ToJsonSchema()["enum"]?.ToJsonString() == "[\"free\",\"paid-plus\"]");
+Check("enum parsed", tier.SafeParse("\"paid-plus\"").Value == Tier.PaidPlus && !tier.SafeParse("\"Free\"").IsSuccess && !tier.SafeParse("1").IsSuccess);
+
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 
@@ -143,6 +147,14 @@ void CheckIssue(string name, ParseResult<string> result, string expectedCode) =>
     Check(name, !result.IsSuccess && result.Issues[0].Code == expectedCode && !string.IsNullOrEmpty(result.Issues[0].Message));
 
 static string? Text(JsonObject schema, string keyword) => schema[keyword]?.GetValue<string>();
+
+internal enum Tier
+{
+    Free,
+
+    [JsonStringEnumMemberName("paid-plus")]
+    PaidPlus,
+}
 
 internal enum Kind
 {

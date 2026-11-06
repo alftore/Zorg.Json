@@ -63,6 +63,35 @@ public static class Z
     /// </example>
     public static BooleanSchema Boolean() => new(new SchemaNode { Types = JsonTypes.Boolean });
 
+    /// <summary>
+    /// Creates a schema for a C# enum, written as the name of a member and parsed to <typeparamref name="TEnum"/>.
+    /// JSON Schema: <c>enum</c>, with <c>type: string</c>. Zod equivalent: <c>z.enum()</c>.
+    /// </summary>
+    /// <typeparam name="TEnum">The enum type.</typeparam>
+    /// <param name="namingPolicy">
+    /// Changes the names, as the same argument of <see cref="System.Text.Json.Serialization.JsonStringEnumConverter"/> does.
+    /// A name set with <see cref="System.Text.Json.Serialization.JsonStringEnumMemberNameAttribute"/> is used as written.
+    /// </param>
+    /// <returns>A new schema.</returns>
+    /// <exception cref="ArgumentException">
+    /// <typeparamref name="TEnum"/> has no members, or two members would be written with the same name.
+    /// </exception>
+    /// <remarks>
+    /// Names are matched exactly, with the case as written. A number is not accepted, whatever the serializer does.
+    /// Members that share a value are all accepted. A <c>[Flags]</c> enum takes one member at a time, so <c>"A, B"</c> is
+    /// not accepted. The schema needs no reflection beyond the public fields of <typeparamref name="TEnum"/>, so it works
+    /// under trimming and Native AOT.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// EnumSchema&lt;DayOfWeek&gt; day = Z.Enum&lt;DayOfWeek&gt;();
+    /// DayOfWeek monday = day.Parse("\"Monday\"");
+    /// </code>
+    /// </example>
+    public static EnumSchema<TEnum> Enum<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicFields)] TEnum>(
+        System.Text.Json.JsonNamingPolicy? namingPolicy = null)
+        where TEnum : struct, Enum => EnumSchema<TEnum>.Create(namingPolicy);
+
     /// <summary>Creates a schema that only accepts <c>null</c>. JSON Schema: <c>type: null</c>. Zod equivalent: <c>z.null()</c>.</summary>
     /// <returns>A new schema.</returns>
     /// <example>

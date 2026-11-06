@@ -121,8 +121,8 @@ public sealed class StringSchema : Schema<string, StringSchema>
     }
 
     /// <summary>
-    /// Sets the format. <c>email</c>, <c>uuid</c>, <c>uri</c>, <c>date-time</c> and <c>date</c> are enforced;
-    /// any other name is only emitted. JSON Schema: <c>format</c>.
+    /// Sets the format. Every format in the JSON Schema specification is enforced, such as <c>email</c>, <c>uuid</c>,
+    /// <c>hostname</c> and <c>ipv4</c>; any other name is only emitted. JSON Schema: <c>format</c>.
     /// </summary>
     /// <param name="format">The format name.</param>
     /// <returns>A new schema.</returns>
@@ -188,6 +188,136 @@ public sealed class StringSchema : Schema<string, StringSchema>
     /// </example>
     [Pure]
     public StringSchema Date() => Format("date");
+
+    /// <summary>Requires an RFC 3339 time of day. JSON Schema: <c>format: time</c>. Zod equivalent: <c>z.iso.time()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Time();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Time() => Format("time");
+
+    /// <summary>Requires an RFC 3339 duration, such as <c>P1DT2H</c>. JSON Schema: <c>format: duration</c>. Zod equivalent: <c>z.iso.duration()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Duration();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Duration() => Format("duration");
+
+    /// <summary>Requires an RFC 1123 host name. JSON Schema: <c>format: hostname</c>. Zod equivalent: <c>z.hostname()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Hostname();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Hostname() => Format("hostname");
+
+    /// <summary>Requires an internationalized host name. JSON Schema: <c>format: idn-hostname</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().IdnHostname();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema IdnHostname() => Format("idn-hostname");
+
+    /// <summary>Requires an internationalized email address. JSON Schema: <c>format: idn-email</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().IdnEmail();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema IdnEmail() => Format("idn-email");
+
+    /// <summary>Requires a dotted-quad IPv4 address. JSON Schema: <c>format: ipv4</c>. Zod equivalent: <c>z.ipv4()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Ipv4();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Ipv4() => Format("ipv4");
+
+    /// <summary>Requires an IPv6 address. JSON Schema: <c>format: ipv6</c>. Zod equivalent: <c>z.ipv6()</c>.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Ipv6();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Ipv6() => Format("ipv6");
+
+    /// <summary>Requires an absolute IRI, a URI that may hold non-ASCII text. JSON Schema: <c>format: iri</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().Iri();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema Iri() => Format("iri");
+
+    /// <summary>Requires an IRI or a relative reference. JSON Schema: <c>format: iri-reference</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().IriReference();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema IriReference() => Format("iri-reference");
+
+    /// <summary>Requires a URI or a relative reference. JSON Schema: <c>format: uri-reference</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().UriReference();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema UriReference() => Format("uri-reference");
+
+    /// <summary>Requires an RFC 6570 URI template. JSON Schema: <c>format: uri-template</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().UriTemplate();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema UriTemplate() => Format("uri-template");
+
+    /// <summary>Requires an RFC 6901 JSON Pointer. JSON Schema: <c>format: json-pointer</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().JsonPointer();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema JsonPointer() => Format("json-pointer");
+
+    /// <summary>Requires a relative JSON Pointer. JSON Schema: <c>format: relative-json-pointer</c>. Zod equivalent: none.</summary>
+    /// <returns>A new schema.</returns>
+    /// <example>
+    /// <code>
+    /// StringSchema schema = Z.String().RelativeJsonPointer();
+    /// </code>
+    /// </example>
+    [Pure]
+    public StringSchema RelativeJsonPointer() => Format("relative-json-pointer");
 
     /// <summary>Requires exactly this value. JSON Schema: <c>const</c>. Zod equivalent: <c>z.literal()</c>.</summary>
     /// <param name="value">The only allowed value.</param>

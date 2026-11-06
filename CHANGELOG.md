@@ -4,6 +4,9 @@
 
 - Fixed an imported `oneOf` being written as `anyOf` when a branch held a `format`, though its branches can't overlap, as in a nullable `$ref`. Branches of different types now keep `oneOf`, so these schemas round trip again and `UnrepresentablePolicy.Throw` doesn't throw on them. Branches that can overlap once `format` is ignored still become `anyOf`.
 - The diagnostic for that `anyOf` now says why it's needed.
+- Diagnostics for a relaxed `oneOf`, and for a left-out `not`, `if` or `maxContains`, now name the rule that caused it and where it is, such as `format at /not/properties/id`. The `UnrepresentablePolicy.Throw` message says the same. Verdicts are unchanged.
+- Added `Z.Enum<TEnum>()` for C# enums. It emits `enum` with the member names and parses to `TEnum`. Names are case-sensitive, numbers are refused, and `[JsonStringEnumMemberName]` and an optional `JsonNamingPolicy` set the names. It works under Native AOT.
+- Added string shortcuts for formats Zorg already enforces: `Time`, `Duration`, `Hostname`, `IdnHostname`, `IdnEmail`, `Ipv4`, `Ipv6`, `Iri`, `IriReference`, `UriReference`, `UriTemplate`, `JsonPointer` and `RelativeJsonPointer`.
 
 ## 0.1.0-preview.2
 

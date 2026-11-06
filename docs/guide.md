@@ -189,6 +189,24 @@ Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Sche
 
 There's no general `Transform`. Use `ParseResult<T>.Map` to convert to another type.
 
+## C# enums
+
+`Z.Enum<TEnum>()` accepts the name of a member and parses to `TEnum`. It emits `type: string` with an `enum` of the names.
+
+```csharp
+EnumSchema<DayOfWeek> day = Z.Enum<DayOfWeek>();
+day.Parse("\"Monday\"");        // DayOfWeek.Monday
+day.SafeParse("1");             // fails with invalid_type
+day.SafeParse("\"monday\"");    // fails with invalid_value: names are case-sensitive
+```
+
+- `[JsonStringEnumMemberName("x")]` sets the name of a member, as it does for `JsonStringEnumConverter`.
+- `Z.Enum<TEnum>(JsonNamingPolicy.CamelCase)` changes the other names, as the argument of `JsonStringEnumConverter` does. A name set by the attribute is used as written.
+- Members that share a value are all accepted. Writing a value back, as `Validate` and `Default` do, uses the first of them.
+- A `[Flags]` enum takes one member at a time. `"Read, Write"` and numbers are not accepted. Typed schemas are different: a flags property in a typed object takes any string or integer, because the serializer does.
+- An enum with no members, or two members with one name, throws `ArgumentException`.
+- It reads only the public fields of `TEnum`, so it works with trimming and Native AOT.
+
 ## Unknown properties
 
 Objects reject unknown properties by default.
@@ -306,6 +324,8 @@ JsonObject schema = PersonSchema.ToJsonSchema();
 - `format`, which Zorg enforces and other validators may treat as a note.
 
 Leaving a rule out makes a schema looser, but under `not`, `if`, `maxContains` or `oneOf` a looser subschema would make the document **stricter**. So a subschema that can't be stated exactly takes that keyword with it: `not`, `if` and `maxContains` are left out, and `oneOf` becomes `anyOf`. This applies to any subschema with a normalizer, a refinement, a known format, or a .NET numeric range. Discriminated unions stay `oneOf`, because their branches can't overlap, and so do branches of different types, such as a nullable `$ref` to an object. Branches that can overlap once a rule is ignored, such as two string formats, become `anyOf`, and `UnrepresentablePolicy.Throw` throws on those.
+
+The diagnostic for each of these names the first rule it found and where it is, such as `format at /properties/item/oneOf/0`. The place is a JSON Pointer that starts at the keyword's own location. A rule reached through a reference reads as `$ref`. `UnrepresentablePolicy.Throw` puts the same text in its exception.
 
 By default each of these is noted in `description`. `Emit()` also returns them as diagnostics:
 

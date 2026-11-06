@@ -10,6 +10,7 @@ Method names follow JSON Schema keywords first. Coming from Zod, look up the nam
 | `type: number` | `Z.Number()`, `Z.Number<decimal>()` | `z.number()` |
 | `type: integer` | `Z.Integer()`, `Z.Number<int>()` | `z.int()`, `z.int32()` |
 | `type: boolean` | `Z.Boolean()` | `z.boolean()` |
+| `type: string`, `enum` of member names | `Z.Enum<TEnum>()` | `z.enum()` |
 | `type: null` | `Z.Null()` | `z.null()` |
 | `{}` | `Z.Any()` | `z.unknown()` |
 | `false` | `Z.Never()` | `z.never()` |
@@ -32,6 +33,19 @@ Method names follow JSON Schema keywords first. Coming from Zod, look up the nam
 | `format: uri` | `.Uri()` | `z.url()` |
 | `format: date-time` | `.DateTime()` | `z.iso.datetime()` |
 | `format: date` | `.Date()` | `z.iso.date()` |
+| `format: time` | `.Time()` | `z.iso.time()` |
+| `format: duration` | `.Duration()` | `z.iso.duration()` |
+| `format: hostname` | `.Hostname()` | `z.hostname()` |
+| `format: ipv4` | `.Ipv4()` | `z.ipv4()` |
+| `format: ipv6` | `.Ipv6()` | `z.ipv6()` |
+| `format: idn-email` | `.IdnEmail()` | |
+| `format: idn-hostname` | `.IdnHostname()` | |
+| `format: iri` | `.Iri()` | |
+| `format: iri-reference` | `.IriReference()` | |
+| `format: uri-reference` | `.UriReference()` | |
+| `format: uri-template` | `.UriTemplate()` | |
+| `format: json-pointer` | `.JsonPointer()` | |
+| `format: relative-json-pointer` | `.RelativeJsonPointer()` | |
 | `const` | `.Const(value)` | `z.literal()` |
 | `enum` | `.Enum(a, b)` | `z.enum()` |
 | | `.Trim()`, `.TrimStart()`, `.TrimEnd()` | `.trim()` |

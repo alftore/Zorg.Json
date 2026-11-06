@@ -12,6 +12,27 @@ namespace Zorg.Json.ComplianceTests;
 
 public sealed record Item(string Name, int Count, string? Note = null);
 
+public enum Shape
+{
+    circle,
+    Square,
+
+    [JsonStringEnumMemberName("round")]
+    Round,
+}
+
+[Flags]
+public enum Edges
+{
+    None = 0,
+    Top = 1,
+    Left = 2,
+#pragma warning disable CA1069
+    Start = Left,
+#pragma warning restore CA1069
+    Both = Top | Left,
+}
+
 public sealed class Patch
 {
     [JsonConverter(typeof(OptionalJsonConverter<string>))]
@@ -39,7 +60,7 @@ public sealed class StructuredGuaranteeTests
     private static readonly string[] Scalars =
     [
         "null", "true", "false", "0", "1", "-1", "1.0", "1.5", "2", "10", "1e2", "5", "50", "51", "2147483648", "0.1", "0.3",
-        "\"\"", "\"a\"", "\" a \"", "\"ab\"", "\"true\"", "\"1\"", "\"42\"", "\"x\"", "\"circle\"", "\"square\"",
+        "\"\"", "\"a\"", "\" a \"", "\"ab\"", "\"true\"", "\"1\"", "\"42\"", "\"x\"", "\"circle\"", "\"square\"", "\"Square\"", "\"round\"", "\"Round\"", "\"Top\"", "\"Start\"", "\"Top, Left\"",
     ];
 
     private static readonly string[] Objects =
@@ -58,6 +79,9 @@ public sealed class StructuredGuaranteeTests
         { "exclusive", Z.Number().ExclusiveMinimum(0).ExclusiveMaximum(2) },
         { "multipleOf", Z.Number().MultipleOf(0.1) },
         { "boolean", Z.Boolean() },
+        { "enum", Z.Enum<Shape>() },
+        { "enum with a naming policy", Z.Enum<Shape>(JsonNamingPolicy.SnakeCaseLower) },
+        { "flags enum", Z.Enum<Edges>() },
         { "null", Z.Null() },
         { "any", Z.Any() },
         { "never", Z.Never() },
@@ -182,6 +206,8 @@ public sealed class StructuredGuaranteeTests
         Schema<bool> boolean => document => boolean.SafeParse(document).IsSuccess,
         Schema<Item> item => document => item.SafeParse(document).IsSuccess,
         Schema<Patch> patch => document => patch.SafeParse(document).IsSuccess,
+        Schema<Shape> shape => document => shape.SafeParse(document).IsSuccess,
+        Schema<Edges> edges => document => edges.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<string>> list => document => list.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<JsonElement>> list => document => list.SafeParse(document).IsSuccess,
         Schema<IReadOnlyList<long>> list => document => list.SafeParse(document).IsSuccess,
@@ -200,6 +226,8 @@ public sealed class StructuredGuaranteeTests
         Schema<bool> boolean => FromText(boolean.Emit(options).Schema),
         Schema<Item> item => FromText(item.Emit(options).Schema),
         Schema<Patch> patch => FromText(patch.Emit(options).Schema),
+        Schema<Shape> shape => FromText(shape.Emit(options).Schema),
+        Schema<Edges> edges => FromText(edges.Emit(options).Schema),
         Schema<IReadOnlyList<string>> list => FromText(list.Emit(options).Schema),
         Schema<IReadOnlyList<JsonElement>> list => FromText(list.Emit(options).Schema),
         Schema<IReadOnlyList<long>> list => FromText(list.Emit(options).Schema),
