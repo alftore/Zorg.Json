@@ -402,7 +402,9 @@ public static class Rewriters
                 return Reject(node, tooLarge: true);
             }
 
+            int rejectedBefore = _rejected;
             SchemaNode expanded = Walk(target with { Defs = [] });
+            bool lostInTarget = _rejected != rejectedBefore;
             _active.Remove(target);
             SchemaNode beside = WalkChildren(node with
             {
@@ -411,6 +413,12 @@ public static class Rewriters
                 Description = null,
                 Behavior = node.Behavior with { Target = null, DefinitionName = null, IsOptional = false, FillDefault = false },
             });
+
+            // What the reference evaluated went with it, so unevaluated* beside it can't stay.
+            if (lostInTarget)
+            {
+                beside = beside with { UnevaluatedItems = null, UnevaluatedProperties = null };
+            }
 
             SchemaNode inlined = expanded with
             {
@@ -607,7 +615,7 @@ public static class Rewriters
         /// </summary>
         private bool LosesEvaluations(SchemaNode node) =>
             !node.AllOf.IsEmpty || !node.AnyOf.IsEmpty || !node.OneOf.IsEmpty || node.If is not null || !node.DependentSchemas.IsEmpty
-            || node.Behavior.Target is not null
+            || node.Behavior.Target is not null || (node.Contains is not null && node.MaxContains is not null)
             || Relocations.Any(relocation => keywords.Contains(relocation.Keyword) && Evaluating.Contains(relocation.Keyword) && relocation.Read(node) is not null);
 
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
@@ -756,8 +764,10 @@ public static class Rewriters
                     continue;
                 }
 
+                // A definition that loses unevaluated* gets looser like one that loses any other keyword.
                 if (Relocations.Any(relocation => keywords.Contains(relocation.Keyword) && relocation.Read(next) is not null)
-                    || next.Extensions.Any(extension => keywords.Contains(extension.Key)))
+                    || next.Extensions.Any(extension => keywords.Contains(extension.Key))
+                    || ((next.UnevaluatedProperties is not null || next.UnevaluatedItems is not null) && LosesEvaluations(next)))
                 {
                     return true;
                 }

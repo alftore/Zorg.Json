@@ -388,6 +388,80 @@ public sealed class Preview4ReviewTests
         Assert.False(Z.FromJsonSchema(Document).SafeParse("""{"p":1}""").IsSuccess);
     }
 
+    [Theory]
+    [InlineData("""{"$defs":{"d":{"$ref":"#/$defs/e","unevaluatedProperties":false},"e":{"properties":{"a":true}}},"not":{"$ref":"#/$defs/d"}}""", "pattern", """{"b":1}""")]
+    [InlineData("""{"$defs":{"d":{"allOf":[{"properties":{"a":true}}],"unevaluatedProperties":false}},"if":{"$ref":"#/$defs/d"},"then":false}""", "pattern", """{"b":1}""")]
+    [InlineData("""{"$defs":{"d":{"allOf":[{"properties":{"a":true}}],"unevaluatedProperties":false}},"title":"t","oneOf":[{"$ref":"#/$defs/d"},{"required":["b"]}]}""", "pattern", """{"b":1}""")]
+    [InlineData("""{"contains":{"type":"string","pattern":"^a"},"maxContains":2,"unevaluatedItems":false}""", "pattern", """["a"]""")]
+    [InlineData("""{"contains":{"minimum":1},"maxContains":1,"unevaluatedItems":false}""", "minimum", "[1]")]
+    public void Losing_unevaluated_counts_as_loosening(string document, string keyword, string instance)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+        string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = Relocating(keyword) }).ToJsonString();
+
+        Assert.True(schema.SafeParse(instance).IsSuccess);
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, instance), text);
+    }
+
+    [Theory]
+    [InlineData("""{"$defs":{"t":{"properties":{"p":{"$ref":"#/$defs/s"}}},"s":{"$ref":"#/$defs/v","unevaluatedProperties":false},"v":{"allOf":[{"$ref":"#/$defs/t"}]}},"$ref":"#/$defs/t"}""", """{"p":{"p":{}}}""")]
+    [InlineData("""{"$defs":{"t":{"prefixItems":[{"$ref":"#/$defs/s"}]},"s":{"$ref":"#/$defs/v","unevaluatedItems":false},"v":{"allOf":[{"$ref":"#/$defs/t"}]}},"$ref":"#/$defs/t"}""", "[[[]]]")]
+    public void A_rejection_inside_a_target_takes_unevaluated_beside_the_reference(string document, string instance)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.InlineOrRejectRecursion);
+        string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+        Assert.True(schema.SafeParse(instance).IsSuccess);
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, instance), text);
+    }
+
+    private static string Tree(int depth) => depth == 0 ? "{}" : "{\"l\":" + Tree(depth - 1) + ",\"r\":" + Tree(depth - 1) + "}";
+
+    [Fact]
+    public void A_tree_of_ordinary_size_passes_under_unevaluated()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$defs":{"n":{"anyOf":[{"properties":{"l":{"$ref":"#/$defs/n"},"r":{"$ref":"#/$defs/n"}}},{"title":"x"}],"unevaluatedProperties":false}},"$ref":"#/$defs/n"}""");
+
+        Assert.True(schema.SafeParse(Tree(13)).IsSuccess);
+    }
+
+    [Fact]
+    public void An_id_may_look_like_a_file()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$defs":{"a":{"$id":"document.json","type":"string"}},"properties":{"p":{"$ref":"document.json"}}}""");
+
+        Assert.False(schema.SafeParse("""{"p":1}""").IsSuccess);
+    }
+
+    [Fact]
+    public void A_fragment_on_the_base_is_written_as_a_name()
+    {
+        const string Document = """{"$schema":"http://json-schema.org/draft-07/schema#","$id":"http://x.test/root","definitions":{"a":{"$id":"http://x.test/root#foo","type":"string"}},"properties":{"p":{"$ref":"#foo"}}}""";
+        string text = Z.FromJsonSchema(Document).ToJsonSchema().ToJsonString();
+
+        Assert.DoesNotContain("root-2", text, StringComparison.Ordinal);
+        Assert.False(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"p":1}"""), text);
+    }
+
+    [Fact]
+    public void A_pointer_fragment_on_the_base_starts_no_resource()
+    {
+        const string Document = """{"$schema":"http://json-schema.org/draft-07/schema#","$id":"http://x.test/root.json","definitions":{"a":{"$id":"http://x.test/root.json#/definitions/a","properties":{"p":{"$ref":"#/definitions/b"}}},"b":{"type":"string"}},"properties":{"q":{"$ref":"#/definitions/a"}}}""";
+        JsonValueSchema schema = Z.FromJsonSchema(Document);
+
+        Assert.True(schema.SafeParse("""{"q":{"p":"s"}}""").IsSuccess);
+        Assert.False(schema.SafeParse("""{"q":{"p":1}}""").IsSuccess);
+    }
+
+    [Fact]
+    public void Fragments_on_another_base_still_share_one_resource_only_once()
+    {
+        const string Document = """{"$schema":"http://json-schema.org/draft-07/schema#","definitions":{"a":{"$id":"http://o.test/x#a"},"b":{"$id":"http://o.test/x#b"}}}""";
+
+        Assert.Equal(JsonSchemaImportCodes.InvalidSchema, Assert.Throws<JsonSchemaImportException>(() => Z.FromJsonSchema(Document)).Code);
+    }
+
     [Fact]
     public void A_small_stack_fails_the_parse_and_keeps_the_process()
     {

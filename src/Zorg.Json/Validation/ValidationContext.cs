@@ -221,15 +221,6 @@ internal sealed class ValidationContext
     /// </summary>
     public bool TryRecall(object plan, out bool passed, out string place)
     {
-        place = string.Empty;
-        passed = false;
-
-        // Building the key costs as much as the path is long.
-        if (!Spend(_path.Count + 1))
-        {
-            return false;
-        }
-
         StringBuilder key = new();
 
         foreach (PathSegment segment in _path)

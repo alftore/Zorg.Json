@@ -74,7 +74,7 @@ internal sealed class SchemaImporter
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>The base of a document without an <c>$id</c>, which only lets relative references resolve against each other.</summary>
-    internal const string DocumentBase = DocumentOrigin + "document.json";
+    internal const string DocumentBase = DocumentOrigin + "zorg-document-without-an-id";
 
     /// <summary>Where the invented base lives. A real document doesn't refer here, and a resource under it has no base of its own.</summary>
     internal const string DocumentOrigin = "https://zorg.invalid/";
@@ -567,7 +567,8 @@ internal sealed class SchemaImporter
             }
 
             // Before 2019-09 a fragment names the schema, and the rest is its base. 2020-12 spells the two separately.
-            bool namesOnly = hasFragment;
+            // A fragment on the URI of the resource around it names a schema in that resource, and starts no new one.
+            bool sameResource = fragment > 0 && SplitUri(at.Base, id[..fragment]) is { } named && named.Uri == at.Base;
 
             if (hasFragment && id[fragment + 1] == '/')
             {
@@ -586,22 +587,19 @@ internal sealed class SchemaImporter
                 }
             }
 
-            // A fragment on the URI of the resource around it names a schema in that resource, and starts no new one.
-            bool sameResource = fragment > 0 && SplitUri(at.Base, id![..fragment]) is { } named && named.Uri == at.Base;
-
             if (fragment != 0 && at.Pointer.Length > 0 && !sameResource)
             {
                 scope = at with { Resource = at.Pointer };
             }
 
-            id = fragment == 0 && hasFragment ? null : hasFragment ? id![..fragment] : id;
+            id = sameResource || (fragment == 0 && hasFragment) ? null : hasFragment ? id![..fragment] : id;
 
             if (id is not null && SplitUri(at.Base, id) is { } own)
             {
                 scope = scope with { Base = own.Uri };
 
                 // 11: two resources can't share a URI, and a target outside the walked tree can only add to what's known.
-                if (!_resources.TryAdd(own.Uri, scope.Resource) && _resources[own.Uri] != scope.Resource && at.IsWalked && !namesOnly)
+                if (!_resources.TryAdd(own.Uri, scope.Resource) && _resources[own.Uri] != scope.Resource && at.IsWalked)
                 {
                     throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(keyword), $"The $id \"{id}\" is declared twice.");
                 }
