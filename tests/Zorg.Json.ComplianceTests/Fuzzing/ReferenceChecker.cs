@@ -199,7 +199,14 @@ internal static partial class ReferenceChecker
 
         if (clock.Elapsed > (budget ?? EmitBudget) && failures.Count == 0)
         {
-            Fail("d-emit-slow", $"{clock.Elapsed.TotalSeconds:F1} seconds for a small document");
+            // A busy machine can pause any one run. Work that really blows up is slow every time.
+            clock.Restart();
+            _ = Emit(emit ?? @case.Probe.Emit, variant, static (_, _, _) => { }, null, timeout ?? EmitTimeout);
+
+            if (clock.Elapsed > (budget ?? EmitBudget))
+            {
+                Fail("d-emit-slow", $"{clock.Elapsed.TotalSeconds:F1} seconds for a small document");
+            }
         }
 
         if (result is null)

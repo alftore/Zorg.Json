@@ -221,6 +221,28 @@ public sealed class ReferenceJudgeTests
     }
 
     [Fact]
+    public void One_slow_emit_on_a_busy_machine_is_not_a_failure()
+    {
+        ReferenceCase @case = Case();
+        int calls = 0;
+
+        EmitResult SlowOnce(JsonSchemaOptions options)
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                Thread.Sleep(300);
+            }
+
+            return @case.Probe.Emit(options);
+        }
+
+        List<ReferenceFailure> failures = ReferenceChecker.Check(@case, Base, [], SlowOnce, budget: TimeSpan.FromMilliseconds(250));
+
+        Assert.DoesNotContain("d-emit-slow", Kinds(failures));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public void Judge_h_catches_a_made_up_name_with_two_meanings()
     {
         JsonSchemaOptions options = new() { ReferencePrefix = "#/components/schemas/" };
