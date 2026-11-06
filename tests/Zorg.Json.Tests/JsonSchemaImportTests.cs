@@ -60,7 +60,7 @@ public sealed class JsonSchemaImportTests
         string schema = $$"""{ "$schema": "{{dialect}}" }""";
 
         AssertFails(schema, JsonSchemaImportCodes.UnsupportedDialect, "/$schema");
-        Assert.Contains("Draft 2020-12, draft-07, draft-06 or draft-04", Failure(schema).Message, System.StringComparison.Ordinal);
+        Assert.Contains("Draft 2020-12, 2019-09, draft-07, draft-06 or draft-04", Failure(schema).Message, System.StringComparison.Ordinal);
     }
 
     [Fact]

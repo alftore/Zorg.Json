@@ -18,7 +18,7 @@ public static class JsonSchemaImportCodes
     public const string UnsupportedKeyword = "unsupported_keyword";
 
     /// <summary>
-    /// A <c>$schema</c> that isn't Draft 2020-12, draft-07, draft-06 or draft-04. Also a boolean <c>nullable</c> in a document that has no
+    /// A <c>$schema</c> that isn't Draft 2020-12, 2019-09, draft-07, draft-06 or draft-04. Also a boolean <c>nullable</c> in a document that has no
     /// <c>$schema</c> while <see cref="JsonSchemaImportOptions.DefaultDialect"/> is left alone, which would be ignored.
     /// </summary>
     public const string UnsupportedDialect = "unsupported_dialect";
