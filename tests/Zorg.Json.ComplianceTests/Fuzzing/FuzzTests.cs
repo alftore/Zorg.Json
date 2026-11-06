@@ -131,7 +131,7 @@ public sealed class FuzzTests
 
         try
         {
-            schema = Z.FromJsonSchema(document, new() { DefaultDialect = dialect });
+            schema = Z.FromJsonSchema(document, new() { DefaultDialect = dialect, Formats = random.Next(4) == 0 ? FormatHandling.ByDialect : FormatHandling.AssertKnown });
         }
         catch (JsonSchemaImportException)
         {

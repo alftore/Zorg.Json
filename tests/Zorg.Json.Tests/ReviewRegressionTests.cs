@@ -443,7 +443,7 @@ public sealed class ReviewRegressionTests
     private static string Union(int branches, string failing, string last) =>
         $"{{\"anyOf\":[{string.Concat(Enumerable.Repeat($"{{\"type\":\"{failing}\"}},", branches - 1))}{{\"type\":\"{last}\"}}]}}";
 
-    private static JsonValueSchema Open(string schema) => Z.FromJsonSchema(schema);
+    private static JsonValueSchema Open(string schema) => Z.FromJsonSchema(schema, new() { Formats = Zorg.Json.Import.FormatHandling.AssertKnown });
 
     [Theory]
     [InlineData(10)]

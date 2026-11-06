@@ -35,6 +35,23 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Get the Go validator
+        shell: bash
+        run: |
+          base=https://github.com/santhosh-tekuri/jsonschema/releases/download/v6.0.3
+          mkdir -p "$RUNNER_TEMP/jv" && cd "$RUNNER_TEMP/jv"
+          if [ "$RUNNER_OS" = Windows ]; then
+            curl -fsSL -o jv.zip "$base/jv-v6.0.3-windows-amd64.zip"
+            echo "a1ab4c5b1e735de28d34401402624194474aa006db0926f0c99ec043e4795c2c  jv.zip" | sha256sum -c -
+            unzip -q jv.zip
+            echo "ZORG_JV=$RUNNER_TEMP\\jv\\jv.exe" >> "$GITHUB_ENV"
+          else
+            curl -fsSL -o jv.tar.gz "$base/jv-v6.0.3-linux-amd64.tar.gz"
+            echo "36e9ab8481cc8e2cb27c8336decc9abdcbd606b05792ca88d6188e01ec28766b  jv.tar.gz" | sha256sum -c -
+            tar -xzf jv.tar.gz
+            echo "ZORG_JV=$RUNNER_TEMP/jv/jv" >> "$GITHUB_ENV"
+          fi
+
       - name: Build
         run: dotnet build Zorg.Json.slnx -c Release
 

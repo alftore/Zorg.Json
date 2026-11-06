@@ -41,7 +41,7 @@ internal sealed record ReferenceCase(
         JsonValueSchema two;
 
         // The generated documents are small, so this limit only stops an import that doesn't end. On a thread with a large stack that's a finding, not a dead process.
-        JsonSchemaImportOptions options = new() { DefaultDialect = dialect, MaxNodes = 5_000 };
+        JsonSchemaImportOptions options = new() { DefaultDialect = dialect, MaxNodes = 5_000, Formats = FormatHandling.AssertKnown };
 
         try
         {

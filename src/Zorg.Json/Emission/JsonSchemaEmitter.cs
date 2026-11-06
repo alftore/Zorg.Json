@@ -30,6 +30,7 @@ internal sealed class JsonSchemaEmitter
         _options = options;
         _profile = options.Target;
         _exactness = new SchemaExactness.Checker(_profile.Dialect);
+        _objectBranches = new ObjectBranchCheck(_profile.Dialect == JsonSchemaDialect.OpenApi30);
         _rewritten = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
         _rewrittenNegative = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
     }
@@ -47,6 +48,7 @@ internal sealed class JsonSchemaEmitter
     internal const int MaxDepth = 256;
 
     private readonly SchemaExactness.Checker _exactness;
+    private readonly ObjectBranchCheck _objectBranches;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
     private List<JsonObject>? _fragments;
@@ -1587,7 +1589,7 @@ internal sealed class JsonSchemaEmitter
     /// <summary>
     /// Branches that aren't exact can overlap in the emitted schema though only one matches in Zorg, so
     /// <c>oneOf</c> relaxes to <c>anyOf</c>. Discriminated branches can't overlap, whatever else they leave out, and
-    /// nor can branches of different types.
+    /// nor can branches that exclude each other by type or by what they require.
     /// </summary>
     private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
@@ -1605,7 +1607,7 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
-        if (cause is null || DiscriminatorKeys.TryBuild(node, out _) || HaveSeparateTypes(node.OneOf))
+        if (cause is null || DiscriminatorKeys.TryBuild(node, out _) || CannotOverlap(node.OneOf))
         {
             WriteList(schema, "oneOf", node.OneOf, location);
         }
@@ -1635,9 +1637,10 @@ internal sealed class JsonSchemaEmitter
 
     /// <summary>
     /// True when no value can match two branches as they are written, whatever else a branch leaves out, so <c>oneOf</c>
-    /// and <c>anyOf</c> agree. This judges the written <c>type</c>, so anything that could change it answers false.
+    /// and <c>anyOf</c> agree. Branches share no type, or share only object and exclude each other by what they require.
+    /// This judges what is written, so anything that could change it answers false.
     /// </summary>
-    private bool HaveSeparateTypes(ImmutableArray<SchemaNode> branches)
+    private bool CannotOverlap(ImmutableArray<SchemaNode> branches)
     {
         // A rewriter can replace a branch or a definition after this is judged.
         if (!_profile.Rewriters.IsEmpty)
@@ -1645,18 +1648,40 @@ internal sealed class JsonSchemaEmitter
             return false;
         }
 
-        JsonTypes seen = JsonTypes.None;
+        JsonTypes[] types = new JsonTypes[branches.Length];
+        ObjectBranch?[] objects = new ObjectBranch?[branches.Length];
 
-        foreach (SchemaNode branch in branches)
+        for (int i = 0; i < branches.Length; i++)
         {
-            JsonTypes types = WrittenTypes(branch);
+            types[i] = WrittenTypes(branches[i]);
 
-            if (types == JsonTypes.None || (seen & types) != JsonTypes.None)
+            if (types[i] == JsonTypes.None)
             {
                 return false;
             }
 
-            seen |= types;
+            for (int j = 0; j < i; j++)
+            {
+                JsonTypes shared = types[i] & types[j];
+
+                if (shared == JsonTypes.None)
+                {
+                    continue;
+                }
+
+                if (shared != JsonTypes.Object)
+                {
+                    return false;
+                }
+
+                objects[i] ??= _objectBranches.Read(branches[i]);
+                objects[j] ??= _objectBranches.Read(branches[j]);
+
+                if (objects[i] is not { } left || objects[j] is not { } right || !_objectBranches.Exclude(left, right))
+                {
+                    return false;
+                }
+            }
         }
 
         return true;

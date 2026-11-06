@@ -25,8 +25,8 @@ public sealed record JsonSchemaImportOptions
     /// <summary>What to do with keywords no dialect defines. Default: <see cref="UnknownKeywordHandling.Preserve"/>.</summary>
     public UnknownKeywordHandling UnknownKeywords { get; init; } = UnknownKeywordHandling.Preserve;
 
-    /// <summary>Whether the <c>format</c> keyword is checked. Default: <see cref="FormatHandling.AssertKnown"/>.</summary>
-    public FormatHandling Formats { get; init; } = FormatHandling.AssertKnown;
+    /// <summary>Whether the <c>format</c> keyword is checked. Default: <see cref="FormatHandling.ByDialect"/>, which is an annotation in Draft 2020-12.</summary>
+    public FormatHandling Formats { get; init; } = FormatHandling.ByDialect;
 
     /// <summary>What to do with a <c>format</c> Zorg doesn't know. Default: <see cref="UnknownFormatHandling.Annotate"/>.</summary>
     public UnknownFormatHandling UnknownFormats { get; init; } = UnknownFormatHandling.Annotate;
@@ -103,15 +103,21 @@ public enum UnknownKeywordHandling
 /// <summary>Whether the <c>format</c> keyword is checked. Zod equivalent: none, because its string formats always assert.</summary>
 /// <example>
 /// <code>
-/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { Formats = FormatHandling.AnnotateOnly });
+/// JsonValueSchema schema = Z.FromJsonSchema(text, new() { Formats = FormatHandling.AssertKnown });
 /// </code>
 /// </example>
 public enum FormatHandling
 {
-    /// <summary>Check every format Zorg knows, which is its stance for fluent schemas too.</summary>
+    /// <summary>
+    /// What the dialect says. Draft 2020-12 requires that <c>format</c> isn't checked unless asked for, so it is an annotation there.
+    /// Draft-04, draft-06, draft-07 and OpenAPI 3.0 allow checking, and Zorg checks every format it knows.
+    /// </summary>
+    ByDialect,
+
+    /// <summary>Check every format Zorg knows, in every dialect, as fluent schemas do. This is the format assertion of JSON Schema.</summary>
     AssertKnown,
 
-    /// <summary>Treat <c>format</c> as an annotation only, the default in the JSON Schema specification.</summary>
+    /// <summary>Treat <c>format</c> as an annotation only, in every dialect.</summary>
     AnnotateOnly,
 }
 

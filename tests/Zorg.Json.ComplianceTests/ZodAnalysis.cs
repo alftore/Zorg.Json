@@ -136,7 +136,7 @@ internal sealed class ZodAnalysis
 
                     try
                     {
-                        imported = Z.FromJsonSchema(schemaEntry.GetProperty("schema").GetRawText());
+                        imported = Z.FromJsonSchema(schemaEntry.GetProperty("schema").GetRawText(), new() { Formats = FormatHandling.AssertKnown });
                     }
                     catch (JsonSchemaImportException exception)
                     {
@@ -227,7 +227,7 @@ internal sealed class ZodAnalysis
 
                 try
                 {
-                    _ = Z.FromJsonSchema(text);
+                    _ = Z.FromJsonSchema(text, new() { Formats = FormatHandling.AssertKnown });
                     code = "imported";
                 }
                 catch (JsonSchemaImportException exception)

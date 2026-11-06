@@ -466,7 +466,8 @@ internal sealed class SchemaImporter
         if (format is not null)
         {
             CheckFormat(format, at);
-            behavior = _options.Formats == FormatHandling.AnnotateOnly ? behavior with { FormatIsAnnotation = true } : behavior;
+            bool annotates = _options.Formats == FormatHandling.AnnotateOnly || (_options.Formats == FormatHandling.ByDialect && _dialect == JsonSchemaImportDialect.Draft202012);
+            behavior = annotates ? behavior with { FormatIsAnnotation = true } : behavior;
         }
 
         ImmutableArray<SchemaProperty> defs = keywords.Named(IsLegacy ? "definitions" : "$defs", scope);

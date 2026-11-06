@@ -23,7 +23,7 @@ public sealed class EmissionReviewTests
     private static readonly JsonSchemaProfile[] Profiles =
         [JsonSchemaProfile.Draft202012, JsonSchemaProfile.Draft07, JsonSchemaProfile.OpenApi31, JsonSchemaProfile.OpenApi30];
 
-    private static JsonValueSchema Import(string document, JsonSchemaImportOptions? options = null) => Z.FromJsonSchema(document, options);
+    private static JsonValueSchema Import(string document, JsonSchemaImportOptions? options = null) => Z.FromJsonSchema(document, options ?? new JsonSchemaImportOptions { Formats = FormatHandling.AssertKnown });
 
     /// <summary>The Schema Object of OpenAPI 3.0, translated into 2020-12 for the oracle.</summary>
     internal static JsonNode? ConvertOpenApi30(JsonNode? node)
@@ -83,7 +83,7 @@ public sealed class EmissionReviewTests
         return result;
     }
 
-    private static bool Accepts(string schemaText, JsonSchemaProfile profile, string instance)
+    internal static bool Accepts(string schemaText, JsonSchemaProfile profile, string instance)
     {
         JsonNode node = JsonNode.Parse(schemaText)!;
 

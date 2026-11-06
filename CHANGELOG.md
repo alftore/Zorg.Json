@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed an imported `oneOf` of objects being written as `anyOf` when a branch held a `format`, though the branches exclude each other, as in a discriminated union or closed objects with different required properties. It now stays `oneOf` when each pair of branches shares no type, or shares only `object` and one requires a property the other forbids or limits to other values. These schemas round trip, and `UnrepresentablePolicy.Throw` doesn't throw on them. Only `required`, `properties`, `additionalProperties`, `const` and `enum` count, because every validator applies those. Branches without a `type` still become `anyOf`, since a string would match both.
+
 ## 0.1.0-preview.3
 
 - Added the package `Zorg.Json.Extensions.AI`, for Microsoft.Extensions.AI 10.11.0:

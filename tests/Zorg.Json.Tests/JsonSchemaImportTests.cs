@@ -394,10 +394,31 @@ public sealed class JsonSchemaImportTests
     }
 
     [Fact]
-    public void Formats_are_asserted_by_default()
+    public void Formats_are_annotations_by_default_in_2020_12_as_the_specification_requires()
     {
-        Assert.False(Z.FromJsonSchema("""{ "format": "ipv4" }""").SafeParse("\"1.2.3\"").IsSuccess);
-        Assert.True(Z.FromJsonSchema("""{ "format": "ipv4" }""").SafeParse("1").IsSuccess);
+        Assert.True(Z.FromJsonSchema("""{ "format": "ipv4" }""").SafeParse("\"1.2.3\"").IsSuccess);
+        Assert.True(Z.FromJsonSchema("""{ "$schema": "https://json-schema.org/draft/2020-12/schema", "format": "ipv4" }""").SafeParse("\"1.2.3\"").IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("http://json-schema.org/draft-07/schema#")]
+    [InlineData("http://json-schema.org/draft-06/schema#")]
+    [InlineData("http://json-schema.org/draft-04/schema#")]
+    public void Older_drafts_allow_checking_formats_and_keep_it(string dialect)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema($$"""{ "$schema": "{{dialect}}", "format": "ipv4" }""");
+
+        Assert.False(schema.SafeParse("\"1.2.3\"").IsSuccess);
+        Assert.True(schema.SafeParse("1").IsSuccess);
+    }
+
+    [Fact]
+    public void Formats_can_be_asserted_in_2020_12()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{ "format": "ipv4" }""", new() { Formats = FormatHandling.AssertKnown });
+
+        Assert.False(schema.SafeParse("\"1.2.3\"").IsSuccess);
+        Assert.True(schema.SafeParse("1").IsSuccess);
     }
 
     [Fact]
