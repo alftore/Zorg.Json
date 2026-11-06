@@ -96,6 +96,7 @@ internal sealed class SchemaImporter
     private readonly List<(string Resource, string Name, string Pointer)> _dynamicAnchors = [];
     private readonly Dictionary<string, SchemaResource> _dynamicResources = new(StringComparer.Ordinal);
     private readonly bool _usesDynamicScope;
+    private readonly HashSet<string> _dynamicNames = new(StringComparer.Ordinal) { "zorg-recursive" };
     private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
     private readonly bool _isDialectAssumed;
@@ -123,6 +124,11 @@ internal sealed class SchemaImporter
             JsonSchemaImportDialect.Draft201909 => HasName(root, "$recursiveRef", "$recursiveAnchor"),
             _ => false,
         };
+
+        if (dialect == JsonSchemaImportDialect.Draft202012 && _usesDynamicScope)
+        {
+            _dynamicNames.UnionWith(DynamicNames(root));
+        }
         _options = options;
         _dialect = dialect;
         _isDialectAssumed = isDialectAssumed;
@@ -290,6 +296,44 @@ internal sealed class SchemaImporter
 
     private bool IsRecursiveAnchor(string resource) =>
         Walk(resource) is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("$recursiveAnchor", out JsonElement value) && value.ValueKind == JsonValueKind.True;
+
+    private static string FragmentOf(string reference)
+    {
+        int hash = reference.IndexOf('#', StringComparison.Ordinal);
+        return hash < 0 ? string.Empty : Uri.UnescapeDataString(reference[(hash + 1)..]);
+    }
+
+    /// <summary>Every name a <c>$dynamicAnchor</c> has in the document.</summary>
+    private static HashSet<string> DynamicNames(JsonElement root)
+    {
+        HashSet<string> names = new(StringComparer.Ordinal);
+        Stack<JsonElement> pending = new([root]);
+
+        while (pending.TryPop(out JsonElement element))
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (property.NameEquals("$dynamicAnchor") && property.Value.ValueKind == JsonValueKind.String && JsonText.TryGetString(property.Value, out string name))
+                    {
+                        names.Add(name);
+                    }
+
+                    pending.Push(property.Value);
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    pending.Push(item);
+                }
+            }
+        }
+
+        return names;
+    }
 
     private SchemaResource ResourceOf(string pointer)
     {
@@ -643,8 +687,8 @@ internal sealed class SchemaImporter
             }
         }
 
-        // Only a plain name can be dynamic. Anything else is a $ref in all but spelling, and everything after this treats it as one.
-        if (dynamicRef is not null && (dynamicRef.IndexOf('#', StringComparison.Ordinal) is var hash && (hash < 0 || hash == dynamicRef.Length - 1 || dynamicRef[hash + 1] == '/')))
+        // Only a plain name of a $dynamicAnchor can be dynamic. Anything else is a $ref in all but spelling, and everything after this treats it as one.
+        if (dynamicRef is not null && !_dynamicNames.Contains(FragmentOf(dynamicRef)))
         {
             reference = dynamicRef;
             dynamicRef = null;

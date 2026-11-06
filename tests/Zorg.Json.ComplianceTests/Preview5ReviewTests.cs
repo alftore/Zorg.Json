@@ -155,6 +155,40 @@ public sealed class Preview5ReviewTests
     }
 
     [Fact]
+    public void Relative_ids_reach_a_provider_through_the_right_parent()
+    {
+        const string Document = """{"type":"object","properties":{"c":{"$ref":"#/$defs/b/$defs/u"}},"required":["c"],"additionalProperties":false,"$defs":{"a":{"$id":"http://a.com/a","$defs":{"x":{"$id":"x","type":"string"},"u":{"$id":"u","$ref":"x"}}},"b":{"$id":"http://b.com/b","$defs":{"x":{"$id":"x","type":"integer"},"u":{"$id":"u","$ref":"x"}}}}}""";
+        JsonValueSchema schema = Z.FromJsonSchema(Document);
+
+        foreach (JsonSchemaProfile profile in new[] { Zorg.Json.Llm.LlmProfiles.OpenAIStrict, Zorg.Json.Llm.LlmProfiles.GeminiJsonSchema })
+        {
+            string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+            Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"c":1}"""), text);
+            Assert.False(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"c":"s"}"""), text);
+        }
+    }
+
+    [Fact]
+    public void A_relative_reference_reaches_a_provider_as_a_pointer()
+    {
+        const string Document = """{"$id":"http://r.com/r","type":"object","properties":{"c":{"$ref":"sub"}},"required":["c"],"additionalProperties":false,"$defs":{"s":{"$id":"sub","type":"string"}}}""";
+        string text = Z.FromJsonSchema(Document).ToJsonSchema(new JsonSchemaOptions { Target = Zorg.Json.Llm.LlmProfiles.OpenAIStrict }).ToJsonString();
+
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"c":"s"}"""), text);
+    }
+
+    [Theory]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"$anchor":"t","type":"object","properties":{"c":{"$dynamicRef":"#t"}}}}}""")]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"type":"object","properties":{"c":{"$dynamicRef":"#%2F$defs/t"}}}}}""")]
+    public void A_dynamic_reference_with_no_dynamic_anchor_of_its_name_is_a_reference(string document)
+    {
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.InlineOrRejectRecursion);
+
+        Assert.Contains(Z.FromJsonSchema(document).Emit(new JsonSchemaOptions { Target = profile }).Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
+    }
+
+    [Fact]
     public void A_dynamic_reference_follows_the_id_of_a_document()
     {
         JsonValueSchema schema = Z.FromJsonSchema(

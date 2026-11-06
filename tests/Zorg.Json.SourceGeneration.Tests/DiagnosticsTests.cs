@@ -158,6 +158,36 @@ public sealed class DiagnosticsTests
         Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "ZORG0004");
     }
 
+    [Theory]
+    [InlineData("public record W { [JsonIgnore] public N? I { get; set; } }", true)]
+    [InlineData("public record W { public static N? I { get; set; } }", true)]
+    [InlineData("public record W { private N? I { get; set; } }", true)]
+    [InlineData("public record B { public N? I { get; set; } } public record W : B;", false)]
+    [InlineData("public class W : System.Collections.Generic.List<N>;", false)]
+    public void Only_what_the_serializer_reads_counts_as_known(string source, bool reported)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial record N(string A);\n" + source + """
+
+            [JsonSerializable(typeof(W))]
+            public partial class C : JsonSerializerContext;
+            """);
+
+        Assert.Equal(reported, found.Any(diagnostic => diagnostic.Id == "ZORG0004"));
+    }
+
+    [Theory]
+    [InlineData("public class B { public class Schema { } }")]
+    [InlineData("public class B { protected int Schema { get; set; } }")]
+    [InlineData("public class B { public string Schema() => string.Empty; }")]
+    [InlineData("public class B { [JsonIgnore] public int Schema { get; set; } }")]
+    public void A_member_of_a_base_that_is_no_json_property_is_only_hidden(string source)
+    {
+        (ImmutableArray<Diagnostic> found, ImmutableArray<Diagnostic> errors) = Run(source + " [GenerateSchema(typeof(C))] public partial class P : B;" + Context);
+
+        Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "ZORG0003");
+        Assert.Empty(errors.Where(error => error.Id is not ("CS0117" or "CS0534" or "CS7036")));
+    }
+
     [Fact]
     public void A_type_named_schema_is_reported()
     {

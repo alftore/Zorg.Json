@@ -120,8 +120,8 @@ internal static class TypeReader
         {
             hides |= parent.GetMembers("Schema").Any(member => member.DeclaredAccessibility != Accessibility.Private) || Has(parent.GetAttributes(), Attribute);
 
-            // The generated property would hide it, and a rule on it couldn't be written.
-            if (parent.GetMembers("Schema").Any(member => !member.IsStatic && member.DeclaredAccessibility != Accessibility.Private))
+            // The generated property would hide a JSON property, and a rule on it couldn't be written.
+            if (parent.GetMembers("Schema").OfType<IPropertySymbol>().Any(member => IsJsonProperty(member)))
             {
                 Stop(Descriptors.NameTaken, type.Name);
             }
@@ -235,7 +235,7 @@ internal static class TypeReader
                 pending.Push(array.ElementType);
             }
 
-            if (current is INamedTypeSymbol named)
+            foreach (INamedTypeSymbol named in SelfAndInterfaces(current))
             {
                 foreach (ITypeSymbol argument in named.TypeArguments)
                 {
@@ -243,14 +243,21 @@ internal static class TypeReader
                 }
             }
 
-            foreach (IPropertySymbol property in current.GetMembers().OfType<IPropertySymbol>())
+            // What the context generates metadata for: what the serializer reads, also from a base type.
+            for (ITypeSymbol? owner = current; owner is not null; owner = owner.BaseType)
             {
-                pending.Push(property.Type);
+                foreach (IPropertySymbol property in owner.GetMembers().OfType<IPropertySymbol>().Where(IsJsonProperty))
+                {
+                    pending.Push(property.Type);
+                }
             }
         }
 
         return false;
     }
+
+    private static bool IsJsonProperty(IPropertySymbol property) =>
+        property is { DeclaredAccessibility: Accessibility.Public, IsStatic: false, IsIndexer: false } && !IsIgnored(property.GetAttributes());
 
     private static INamedTypeSymbol? ContextOf(AttributeData attribute) =>
         attribute.ConstructorArguments is [{ Value: INamedTypeSymbol context }] ? context : null;

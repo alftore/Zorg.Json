@@ -130,14 +130,22 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
         Dictionary<string, string> bases = new(StringComparer.Ordinal) { [string.Empty] = NoBase };
         Dictionary<(string Resource, string Name), string> anchors = [];
 
+        List<(string Location, string Id)> ids = [];
+
         JsonSchemaWalker.Walk(schema, (node, location, _) =>
         {
             if (LocalReferences.AsString(node["$id"]) is { } id && !id.StartsWith('#'))
             {
-                bases[location] = Split(bases[Resource(location)], id)?.Uri ?? id;
-                resources.Add(location);
+                ids.Add((location, id));
             }
         });
+
+        // An $id reads against the resource around it, so parents come first, whatever order the walk has.
+        foreach ((string location, string id) in ids.OrderBy(entry => entry.Location.Count(character => character == '/')))
+        {
+            bases[location] = Split(bases[Resource(location)], id)?.Uri ?? id;
+            resources.Add(location);
+        }
 
         string Resource(string location)
         {
