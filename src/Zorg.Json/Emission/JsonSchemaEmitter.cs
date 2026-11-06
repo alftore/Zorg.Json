@@ -1184,9 +1184,9 @@ internal sealed class JsonSchemaEmitter
         {
             Add(schema, "minContains", node.MinContains);
 
-            if (node.MaxContains is not null && node.Contains is not null && IsInput && !_exactness.IsExact(node.Contains))
+            if (node.MaxContains is not null && node.Contains is not null && IsInput && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? cause))
             {
-                Unsupported("maxContains", notes, location);
+                UnsupportedBecause("maxContains", cause, $"{location}/contains", notes, location);
             }
             else
             {
@@ -1334,9 +1334,9 @@ internal sealed class JsonSchemaEmitter
 
         if (node.Not is not null)
         {
-            if (IsInput && !_exactness.IsExact(node.Not))
+            if (IsInput && !_exactness.IsExact(node.Not, out SchemaExactness.Cause? cause))
             {
-                Unsupported("not", notes, location);
+                UnsupportedBecause("not", cause, $"{location}/not", notes, location);
             }
             else
             {
@@ -1346,9 +1346,15 @@ internal sealed class JsonSchemaEmitter
 
         if (node.If is not null || node.Then is not null || node.Else is not null)
         {
-            if (IsOpenApi30 || (IsInput && node.If is not null && !_exactness.IsExact(node.If)))
+            SchemaExactness.Cause? cause = null;
+
+            if (IsOpenApi30)
             {
                 Unsupported("if", notes, location);
+            }
+            else if (IsInput && node.If is not null && !_exactness.IsExact(node.If, out cause))
+            {
+                UnsupportedBecause("if", cause, $"{location}/if", notes, location);
             }
             else
             {
@@ -1377,18 +1383,32 @@ internal sealed class JsonSchemaEmitter
     /// </summary>
     private void WriteOneOf(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
-        if (!IsInput || node.OneOf.All(branch => _exactness.IsExact(branch)) || DiscriminatorKeys.TryBuild(node, out _) || HaveSeparateTypes(node.OneOf))
+        SchemaExactness.Cause? cause = null;
+        string where = location;
+
+        if (IsInput)
+        {
+            for (int i = 0; i < node.OneOf.Length && cause is null; i++)
+            {
+                if (!_exactness.IsExact(node.OneOf[i], out cause))
+                {
+                    where = $"{location}/oneOf/{i}";
+                }
+            }
+        }
+
+        if (cause is null || DiscriminatorKeys.TryBuild(node, out _) || HaveSeparateTypes(node.OneOf))
         {
             WriteList(schema, "oneOf", node.OneOf, location);
         }
         else if (node.AnyOf.IsEmpty)
         {
-            Unrepresentable("oneOf", "Branches can overlap in a validator that doesn't apply every rule, such as format, so oneOf is written as anyOf.", location);
+            Unrepresentable("oneOf", $"Branches can overlap in a validator that doesn't apply every rule, so oneOf is written as anyOf. The rule is {cause.Describe(where)}.", location);
             WriteList(schema, "anyOf", node.OneOf, location);
         }
         else
         {
-            Unsupported("oneOf", notes, location);
+            UnsupportedBecause("oneOf", cause, where, notes, location);
         }
     }
 
@@ -1510,6 +1530,14 @@ internal sealed class JsonSchemaEmitter
     {
         notes.Add($"Also applies {keyword}, which {_profile.Name} can't state.");
         Unrepresentable(keyword, $"{_profile.Name} has no {keyword} keyword.", location);
+    }
+
+    /// <summary>Like <see cref="Unsupported"/>, for a keyword left out because a subschema isn't exact. Names the rule and where it is.</summary>
+    private void UnsupportedBecause(string keyword, SchemaExactness.Cause? cause, string where, List<string> notes, string location)
+    {
+        notes.Add($"Also applies {keyword}, which {_profile.Name} can't state.");
+        string because = cause is null ? string.Empty : $" The rule is {cause.Describe(where)}.";
+        Unrepresentable(keyword, $"{keyword} is left out, because a looser rule inside it would make the input schema reject values that Zorg accepts.{because}", location);
     }
 
     private enum PointerPosition

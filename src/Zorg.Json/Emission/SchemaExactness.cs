@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using Zorg.Json.Model;
 using Zorg.Json.Validation;
@@ -27,6 +28,19 @@ internal static class SchemaExactness
     /// </summary>
     public static bool IsExact(SchemaNode node, JsonSchemaDialect dialect) => new Checker(dialect).IsExact(node);
 
+    /// <summary>The first rule found that makes a subschema inexact, and where it sits.</summary>
+    /// <param name="Keyword">The keyword, or the name of the fluent step, that isn't stated exactly, such as <c>format</c>.</param>
+    /// <param name="Path">A JSON Pointer from the subschema that was checked. A followed reference reads as <c>$ref</c>. Empty for the subschema itself.</param>
+    internal sealed record Cause(string Keyword, string Path)
+    {
+        /// <summary>Reads as <c>format at /$defs/item/properties/id</c>, with <paramref name="prefix"/> for where the subschema sits.</summary>
+        public string Describe(string prefix)
+        {
+            string where = prefix + Path;
+            return where.Length == 0 ? $"{Keyword} at the root" : $"{Keyword} at {where}";
+        }
+    }
+
     /// <summary>
     /// Remembers what it has judged. Whether a subschema is exact doesn't depend on where it's used, and a schema used a
     /// thousand times would otherwise be walked a thousand times.
@@ -34,6 +48,66 @@ internal static class SchemaExactness
     internal sealed class Checker(JsonSchemaDialect dialect)
     {
         private readonly Dictionary<SchemaNode, bool> _known = new(ReferenceEqualityComparer.Instance);
+
+        private readonly Dictionary<SchemaNode, Cause?> _causes = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// Tells whether <paramref name="root"/> is exact and, when it isn't, names the first rule found. Finding the rule
+        /// walks again, but only for a subschema that is inexact, and only once for each.
+        /// </summary>
+        public bool IsExact(SchemaNode root, out Cause? cause)
+        {
+            if (IsExact(root))
+            {
+                cause = null;
+                return true;
+            }
+
+            if (!_causes.TryGetValue(root, out cause))
+            {
+                _causes[root] = cause = Locate(root);
+            }
+
+            return false;
+        }
+
+        /// <summary>Walks in the order <see cref="IsExact(SchemaNode)"/> does, so it stops at the same first rule, and keeps the path.</summary>
+        private Cause? Locate(SchemaNode root)
+        {
+            HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+            Stack<(SchemaNode Node, string Path)> pending = new();
+            pending.Push((root, string.Empty));
+
+            while (pending.TryPop(out (SchemaNode Node, string Path) item))
+            {
+                if (!visited.Add(item.Node))
+                {
+                    continue;
+                }
+
+                if (visited.Count > MaxWalked)
+                {
+                    throw TooLarge();
+                }
+
+                if (Inexact(item.Node, dialect) is { } keyword)
+                {
+                    return new Cause(keyword, item.Path);
+                }
+
+                foreach ((string segment, SchemaNode child) in NamedChildren(item.Node))
+                {
+                    pending.Push((child, item.Path + segment));
+                }
+
+                if (item.Node.Behavior.Target is { } target)
+                {
+                    pending.Push((target(), item.Path + "/$ref"));
+                }
+            }
+
+            return null;
+        }
 
         public bool IsExact(SchemaNode root)
         {
@@ -97,20 +171,102 @@ internal static class SchemaExactness
         }
     }
 
-    private static bool IsLocallyExact(SchemaNode node, JsonSchemaDialect dialect)
+    private static bool IsLocallyExact(SchemaNode node, JsonSchemaDialect dialect) => Inexact(node, dialect) is null;
+
+    /// <summary>Names the first rule of <paramref name="node"/> that the emitted schema can't state exactly, or null when there is none.</summary>
+    private static string? Inexact(SchemaNode node, JsonSchemaDialect dialect)
     {
         SchemaBehavior behavior = node.Behavior;
 
-        return behavior.Normalizers.IsEmpty
-            && behavior.Refinements.IsEmpty
-            && behavior.Coercion == SchemaCoercion.None
-            && behavior.NumberCheck is null
-            && behavior.PatternRegex is null
-            && !behavior.IgnoresNameCase
-            && !(node.Format is not null && !behavior.FormatIsAnnotation && StringFormats.IsKnown(node.Format))
-            && !CountsChange(node)
-            && !HasUnwritableValue(node)
-            && !LeavesOut(node, dialect);
+        if (!behavior.Normalizers.IsEmpty)
+        {
+            return behavior.Normalizers[0].Name;
+        }
+
+        if (!behavior.Refinements.IsEmpty)
+        {
+            return "refine";
+        }
+
+        if (behavior.Coercion != SchemaCoercion.None)
+        {
+            return "coerce";
+        }
+
+        if (behavior.NumberCheck is not null)
+        {
+            return "type";
+        }
+
+        if (behavior.PatternRegex is not null)
+        {
+            return "pattern";
+        }
+
+        if (behavior.IgnoresNameCase)
+        {
+            return "properties";
+        }
+
+        if (node.Format is not null && !behavior.FormatIsAnnotation && StringFormats.IsKnown(node.Format))
+        {
+            return "format";
+        }
+
+        if (CountsChange(node))
+        {
+            return node.MinProperties is not null ? "minProperties" : "maxProperties";
+        }
+
+        if (HasUnwritableValue(node))
+        {
+            return node.Const is { } constant && IsUnwritable(constant) ? "const" : "enum";
+        }
+
+        return LeavesOut(node, dialect);
+    }
+
+    /// <summary>The direct subschemas in the order of <see cref="SchemaNode.Children"/>, each with the pointer segment that leads to it.</summary>
+    private static IEnumerable<(string Segment, SchemaNode Node)> NamedChildren(SchemaNode node)
+    {
+        static string Escape(string name) => name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
+
+        foreach ((string keyword, ImmutableArray<SchemaProperty> list) in new[]
+        {
+            ("$defs", node.Defs), ("properties", node.Properties), ("patternProperties", node.PatternProperties), ("dependentSchemas", node.DependentSchemas),
+        })
+        {
+            foreach (SchemaProperty property in list)
+            {
+                yield return ($"/{keyword}/{Escape(property.Name)}", property.Schema);
+            }
+        }
+
+        foreach ((string keyword, ImmutableArray<SchemaNode> list) in new[]
+        {
+            ("prefixItems", node.PrefixItems), ("allOf", node.AllOf), ("anyOf", node.AnyOf), ("oneOf", node.OneOf),
+        })
+        {
+            for (int i = 0; i < list.Length; i++)
+            {
+                yield return ($"/{keyword}/{i}", list[i]);
+            }
+        }
+
+        (string, SchemaNode?)[] singles =
+        [
+            ("contentSchema", node.ContentSchema), ("items", node.Items), ("contains", node.Contains), ("additionalProperties", node.AdditionalProperties),
+            ("propertyNames", node.PropertyNames), ("not", node.Not), ("if", node.If), ("then", node.Then), ("else", node.Else),
+            ("unevaluatedItems", node.UnevaluatedItems), ("unevaluatedProperties", node.UnevaluatedProperties),
+        ];
+
+        foreach ((string keyword, SchemaNode? child) in singles)
+        {
+            if (child is not null)
+            {
+                yield return ($"/{keyword}", child);
+            }
+        }
     }
 
     /// <summary>Property counts apply after Strip and Default, which the input schema can't see, so it leaves them out.</summary>
@@ -125,34 +281,37 @@ internal static class SchemaExactness
     internal static bool IsUnwritable(System.Text.Json.JsonElement value) =>
         JsonText.HasUndecodableString(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value));
 
-    /// <summary>Keywords the emitter can't write in the dialect.</summary>
-    private static bool LeavesOut(SchemaNode node, JsonSchemaDialect dialect) => dialect switch
+    /// <summary>The first keyword the emitter can't write in the dialect, or null.</summary>
+    private static string? LeavesOut(SchemaNode node, JsonSchemaDialect dialect) => dialect switch
     {
         JsonSchemaDialect.Draft07 =>
-            node.UnevaluatedItems is not null
-            || node.UnevaluatedProperties is not null
-            || node.MinContains is not null
-            || node.MaxContains is not null
-            || node.Extensions.Any(extension => extension.Key is "additionalItems" or "dependencies"),
+            node.UnevaluatedItems is not null ? "unevaluatedItems"
+            : node.UnevaluatedProperties is not null ? "unevaluatedProperties"
+            : node.MinContains is not null ? "minContains"
+            : node.MaxContains is not null ? "maxContains"
+            : node.Extensions.Any(extension => extension.Key is "additionalItems") ? "additionalItems"
+            : node.Extensions.Any(extension => extension.Key is "dependencies") ? "dependencies"
+            : null,
 
         JsonSchemaDialect.OpenApi30 =>
-            !node.PrefixItems.IsEmpty
-            || node.Contains is not null
-            || node.MinContains is not null
-            || node.MaxContains is not null
-            || !node.PatternProperties.IsEmpty
-            || node.PropertyNames is not null
-            || !node.DependentRequired.IsEmpty
-            || !node.DependentSchemas.IsEmpty
-            || (node.Minimum is not null && node.ExclusiveMinimum is not null)
-            || (node.Maximum is not null && node.ExclusiveMaximum is not null)
-            || (node.Const is not null && !node.Enum.IsEmpty)
-            || node.If is not null
-            || node.Then is not null
-            || node.Else is not null
-            || node.UnevaluatedItems is not null
-            || node.UnevaluatedProperties is not null,
+            !node.PrefixItems.IsEmpty ? "prefixItems"
+            : node.Contains is not null ? "contains"
+            : node.MinContains is not null ? "minContains"
+            : node.MaxContains is not null ? "maxContains"
+            : !node.PatternProperties.IsEmpty ? "patternProperties"
+            : node.PropertyNames is not null ? "propertyNames"
+            : !node.DependentRequired.IsEmpty ? "dependentRequired"
+            : !node.DependentSchemas.IsEmpty ? "dependentSchemas"
+            : node.Minimum is not null && node.ExclusiveMinimum is not null ? "exclusiveMinimum"
+            : node.Maximum is not null && node.ExclusiveMaximum is not null ? "exclusiveMaximum"
+            : node.Const is not null && !node.Enum.IsEmpty ? "const"
+            : node.If is not null ? "if"
+            : node.Then is not null ? "then"
+            : node.Else is not null ? "else"
+            : node.UnevaluatedItems is not null ? "unevaluatedItems"
+            : node.UnevaluatedProperties is not null ? "unevaluatedProperties"
+            : null,
 
-        _ => false,
+        _ => null,
     };
 }
