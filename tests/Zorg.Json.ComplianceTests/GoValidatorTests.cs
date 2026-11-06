@@ -207,7 +207,7 @@ public sealed partial class GoValidatorTests
 
             for (int index = 0; index < instances.Count; index++)
             {
-                if (dialect == JsonSchemaImportDialect.Draft04 && HasFloatInteger(instances[index]))
+                if ((dialect == JsonSchemaImportDialect.Draft04 || document.Contains("draft-04/schema", StringComparison.Ordinal)) && HasFloatInteger(instances[index]))
                 {
                     // Draft-04 tells 1.0 from 1, as the official suite says, and jv doesn't.
                     Add(counts, "skipped for the integer of draft-04 in jv");
