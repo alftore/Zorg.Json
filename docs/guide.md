@@ -62,6 +62,7 @@ A property whose type also has `[GenerateSchema]` uses that schema, directly or 
 - **Presence** comes from the contract, as in every typed schema: `required`, or a constructor parameter. `[Required]` on anything else gets a warning, `ZORG0006`, because System.Text.Json decides what must be present.
 - An attribute that can't be stated, such as `[CreditCard]` or `[Range]` on a date, gets a warning, `ZORG0005`, and isn't checked. Add it with `.Property(...)` or `.Refine(...)`.
 - Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too.
+- Under Native AOT, .NET marks `[MinLength]`, `[MaxLength]` and `[Length]` themselves as needing reflection, so using them gives a trim warning, whatever reads them. For text, `[StringLength]` says the same without it.
 
 ## Parsing
 

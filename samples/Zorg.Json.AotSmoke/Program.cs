@@ -228,7 +228,7 @@ internal sealed class PersonPatch
 }
 
 [GenerateSchema(typeof(SmokeJson))]
-internal sealed partial record Generated([property: MinLength(1)] string Name, [property: Range(0, 150)] int Age);
+internal sealed partial record Generated([property: StringLength(100, MinimumLength = 1)] string Name, [property: Range(0, 150)] int Age);
 
 internal static partial class Patterns
 {
