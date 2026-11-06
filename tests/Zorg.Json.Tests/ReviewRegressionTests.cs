@@ -1045,4 +1045,29 @@ public sealed class ReviewRegressionTests
                 Z.Object().Passthrough().Property("n", Z.Lazy("a", () => Schema!)).Property("x", Z.Integer()),
                 Z.Object().Passthrough().Property("n", Z.Lazy("a", () => Schema!)).Property("y", Z.Integer())));
     }
+
+    [Theory]
+    [InlineData("type")]
+    [InlineData("enum")]
+    [InlineData("const")]
+    [InlineData("properties")]
+    [InlineData("$ref")]
+    [InlineData("nullable")]
+    [InlineData("oneOf")]
+    public void Meta_refuses_a_keyword_the_emitter_writes_itself(string keyword)
+    {
+        Assert.Throws<ArgumentException>(() => Z.String().Meta(keyword, JsonElement.Parse("\"integer\"")));
+    }
+
+    [Fact]
+    public void Meta_still_takes_a_custom_keyword_and_an_imported_one_is_kept()
+    {
+        Assert.Contains("\"x-order\":1", Z.String().Meta("x-order", JsonElement.Parse("1")).ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+        Assert.Contains("\"custom\":1", Z.String().Meta("custom", JsonElement.Parse("1")).ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+
+        JsonValueSchema imported = Z.FromJsonSchema("""{"type":"string","x-order":1,"custom":2}""");
+
+        Assert.Contains("\"x-order\":1", imported.ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+        Assert.Contains("\"custom\":2", imported.ToJsonSchema().ToJsonString(), StringComparison.Ordinal);
+    }
 }

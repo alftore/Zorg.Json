@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -62,7 +61,7 @@ public static class ChatSchemaExtensions
     {
         ArgumentNullException.ThrowIfNull(schema);
         emitted = schema.Emit(profile ?? JsonSchemaProfile.Draft202012);
-        return ChatResponseFormat.ForJsonSchema(JsonElement.Parse(emitted.Schema.ToJsonString()), schemaName, schemaDescription);
+        return ChatResponseFormat.ForJsonSchema(ErrorReport.ParseSchema(emitted.Schema.ToJsonString()), schemaName, schemaDescription);
     }
 
     /// <summary>
@@ -144,7 +143,7 @@ public static class ChatSchemaExtensions
         return chatClient.GetResponseAsync(schema, [new ChatMessage(ChatRole.User, chatMessage)], options, profile, schemaName, schemaDescription, cancellationToken);
     }
 
-    // The last message with text is the answer. Earlier ones can be a remark before a tool call.
+    // The last assistant message with text is the answer. Earlier ones can be a remark before a tool call.
     private static string AnswerText(ChatResponse? response)
     {
         if (response is null)
@@ -154,6 +153,12 @@ public static class ChatSchemaExtensions
 
         for (int index = response.Messages.Count - 1; index >= 0; index--)
         {
+            // Only the model's own words. A tool result or a user message in the list is not its answer.
+            if (response.Messages[index].Role != ChatRole.Assistant)
+            {
+                continue;
+            }
+
             string text = response.Messages[index].Text;
 
             if (text.Length > 0)

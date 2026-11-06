@@ -11,6 +11,12 @@ internal static class ErrorReport
 {
     private const int MaxIssues = 20;
 
+    // The emitter writes schemas far deeper than the default reader depth of 64.
+    private static readonly JsonDocumentOptions SchemaOptions = new() { MaxDepth = int.MaxValue };
+
+    /// <summary>Reads an emitted schema at any depth the emitter writes.</summary>
+    public static JsonElement ParseSchema(string text) => JsonElement.Parse(text, SchemaOptions);
+
     public static JsonElement Create(string message, ImmutableArray<ParseIssue> issues)
     {
         JsonArray list = [];

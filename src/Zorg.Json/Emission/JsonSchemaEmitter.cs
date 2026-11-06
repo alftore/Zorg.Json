@@ -607,13 +607,12 @@ internal sealed class JsonSchemaEmitter
 
     /// <summary>
     /// The root of an imported document is the base of its references. Written inside another schema, or with a
-    /// <see cref="JsonSchemaOptions.ReferencePrefix"/> that keeps definitions elsewhere, it no longer is, so its references are moved.
+    /// <see cref="JsonSchemaOptions.ReferencePrefix"/> that keeps definitions elsewhere, it no longer is, so its references are moved. With an id of its own the root is a
+    /// resource, and its references are read from it wherever it is written.
     /// </summary>
     private bool IsEmbeddedImport(SchemaNode node, string location) =>
         node.Behavior.Location is { Length: 0 }
         && (location.Length > 0 || _options.ReferencePrefix is not null)
-
-        // With an id of its own the root is a resource, and its references are read from it wherever it is written.
         && !(node.Id is { } id && !id.StartsWith('#'));
 
     /// <summary>
@@ -1404,7 +1403,20 @@ internal sealed class JsonSchemaEmitter
         else if (node.AnyOf.IsEmpty)
         {
             Unrepresentable("oneOf", $"Branches can overlap in a validator that doesn't apply every rule, so oneOf is written as anyOf. The rule is {cause.Describe(where)}.", location);
-            WriteList(schema, "anyOf", node.OneOf, location);
+
+            if (schema.ContainsKey("anyOf"))
+            {
+                // The types of this node are already in anyOf, and adding to that list would let the branches replace the type limit.
+                JsonObject relaxed = [];
+                WriteList(relaxed, "anyOf", node.OneOf, location);
+                JsonArray all = schema["allOf"] as JsonArray ?? [];
+                all.Add((JsonNode)relaxed);
+                schema["allOf"] = all;
+            }
+            else
+            {
+                WriteList(schema, "anyOf", node.OneOf, location);
+            }
         }
         else
         {
@@ -1442,7 +1454,7 @@ internal sealed class JsonSchemaEmitter
     }
 
     /// <summary>The types a subschema's written form can accept, or <see cref="JsonTypes.None"/> when that isn't known. Follows references.</summary>
-    private static JsonTypes WrittenTypes(SchemaNode node)
+    private JsonTypes WrittenTypes(SchemaNode node)
     {
         HashSet<SchemaNode> followed = new(ReferenceEqualityComparer.Instance);
 
@@ -1450,6 +1462,12 @@ internal sealed class JsonSchemaEmitter
         {
             // Coercion adds string to the written type.
             if (node.Behavior.Coercion != SchemaCoercion.None)
+            {
+                return JsonTypes.None;
+            }
+
+            // OpenAPI 3.0 has no null type, so a null node with a value list is written without any type.
+            if (IsOpenApi30 && node.Types == JsonTypes.Null && (node.Const is not null || !node.Enum.IsEmpty))
             {
                 return JsonTypes.None;
             }

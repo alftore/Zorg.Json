@@ -813,4 +813,63 @@ public sealed class EmissionReviewTests
         Assert.True(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":"s"}}"""), text);
         Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":1}}"""), text);
     }
+
+    // Review 5.
+
+    [Fact]
+    public void A_relaxed_oneOf_in_a_multi_type_branch_keeps_its_type_limit_in_OpenAPI_30()
+    {
+        const string Document = """{"oneOf":[{"type":"number"},{"type":["string","boolean"],"oneOf":[{"format":"email"}]}]}""";
+
+        AssertNeverStricter(Document, Import(Document), [JsonSchemaProfile.OpenApi30], "0", "\"a@b.co\"", "true", "\"x\"");
+
+        // Written as a number it must not pass the email branch, which the type excludes.
+        string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.OpenApi30 }).ToJsonString();
+        Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, "[]"), text);
+    }
+
+    [Theory]
+    [InlineData("""{"oneOf":[{"type":"null","const":"a@b.co"},{"type":"string","format":"email"}]}""", "\"a@b.co\"")]
+    [InlineData("""{"oneOf":[{"type":"null","enum":["a@b.co"]},{"type":"string","format":"email"}]}""", "\"a@b.co\"")]
+    [InlineData("""{"not":{"type":"null","const":"x"}}""", "\"x\"")]
+    public void A_null_node_with_a_value_list_is_not_exact_in_OpenAPI_30(string document, string instance) =>
+        AssertNeverStricter(document, Import(document), [JsonSchemaProfile.OpenApi30], instance, "null", "1");
+
+    private static long Allocated(Action action)
+    {
+        action();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Fact]
+    public void Naming_the_cause_over_a_long_shared_reference_does_not_copy_the_path_for_every_node()
+    {
+        string document = ChainDocument(3_000, "\"allOf\":[" + string.Join(",", Enumerable.Repeat("{\"not\":{\"$ref\":\"#/$defs/a0\"}}", 1_500)) + "]")
+            .Replace("\"a3000\":{\"type\":\"string\"}", "\"a3000\":{\"type\":\"string\",\"format\":\"email\"}", StringComparison.Ordinal);
+        JsonValueSchema schema = Import(document);
+
+        long bytes = Allocated(() => _ = schema.ToJsonSchema());
+
+        Assert.True(bytes < 200_000_000, $"allocated {bytes} bytes");
+    }
+
+    [Fact]
+    public void Naming_the_cause_in_a_deep_chain_keeps_the_diagnostic_short()
+    {
+        ISchema current = Z.String().Email();
+
+        for (int index = 0; index < 10_000; index++)
+        {
+            current = Z.AllOf(Z.String(), current, Z.String());
+        }
+
+        JsonValueSchema schema = Z.Not((JsonValueSchema)current);
+        EmitResult result = default!;
+        long bytes = Allocated(() => result = schema.Emit());
+
+        Assert.True(bytes < 200_000_000, $"allocated {bytes} bytes");
+        Assert.All(result.Diagnostics, diagnostic => Assert.True(diagnostic.Message.Length < 1_000, diagnostic.Message.Length.ToString()));
+    }
 }

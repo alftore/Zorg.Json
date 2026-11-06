@@ -177,16 +177,15 @@ public sealed class ZorgAIFunctionTests
     }
 
     [Fact]
-    public async Task A_lone_surrogate_in_a_dotnet_string_does_not_throw_and_reaches_the_function_as_a_replacement_character()
+    public async Task A_lone_surrogate_in_a_dotnet_string_is_refused_as_a_model_escape_is()
     {
-        // System.Text.Json writes U+FFFD for it, as it does everywhere else. A model's own escape is refused (above).
         ZorgAIFunction function = Counting(Arguments, out List<JsonElement> calls);
         AIFunctionArguments arguments = new() { ["city"] = "bad" + (char)0xD800, ["days"] = 3 };
 
-        object? result = await function.InvokeAsync(arguments, Token);
+        JsonElement result = AsJson(await function.InvokeAsync(arguments, Token));
 
-        Assert.Equal("done", result);
-        Assert.Equal("bad�", Assert.Single(calls).GetProperty("city").GetString());
+        Assert.Equal("invalid_arguments", result.GetProperty("error").GetString());
+        Assert.Empty(calls);
     }
 
     [Fact]
@@ -355,5 +354,58 @@ public sealed class ZorgAIFunctionTests
         Assert.Same(function, Assert.Single(options.Tools));
         Assert.IsAssignableFrom<AIFunctionDeclaration>(function);
         Assert.Equal(function.JsonSchema.GetRawText(), function.AsDeclarationOnly().JsonSchema.GetRawText());
+    }
+
+    private static async Task<int> SlowAsync()
+    {
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        return 42;
+    }
+
+    [Fact]
+    public async Task A_function_that_returns_a_task_is_awaited()
+    {
+        ZorgAIFunction function = ZorgAIFunction.Create("tool", "A tool.", Arguments, arguments => SlowAsync());
+
+        Assert.Equal(42, await function.InvokeAsync(Args("""{"city":"Oslo","days":3}"""), Token));
+    }
+
+    [Fact]
+    public async Task A_function_that_returns_a_value_task_is_awaited()
+    {
+        ZorgAIFunction function = ZorgAIFunction.Create("tool", "A tool.", Arguments, arguments => new ValueTask<int>(SlowAsync()));
+
+        Assert.Equal(42, await function.InvokeAsync(Args("""{"city":"Oslo","days":3}"""), Token));
+    }
+
+    [Fact]
+    public async Task A_function_that_returns_a_plain_task_gives_null()
+    {
+        ZorgAIFunction function = ZorgAIFunction.Create("tool", "A tool.", Arguments, arguments => Task.Delay(10, TestContext.Current.CancellationToken));
+
+        Assert.Null(await function.InvokeAsync(Args("""{"city":"Oslo","days":3}"""), Token));
+    }
+
+    [Fact]
+    public async Task A_task_hidden_in_an_object_is_refused_not_left_running()
+    {
+        ZorgAIFunction function = ZorgAIFunction.Create("tool", "A tool.", Arguments, (JsonElement arguments) => (object?)SlowAsync());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await function.InvokeAsync(Args("""{"city":"Oslo","days":3}"""), Token));
+    }
+
+    [Fact]
+    public void A_schema_nested_deeper_than_the_default_reader_depth_creates_a_function()
+    {
+        ObjectSchema schema = Z.Object().Property("n", Z.String());
+
+        for (int index = 0; index < 31; index++)
+        {
+            schema = Z.Object().Property("n", schema);
+        }
+
+        ZorgAIFunction function = ZorgAIFunction.Create("tool", "A tool.", schema, arguments => "done");
+
+        Assert.Equal(JsonValueKind.Object, function.JsonSchema.ValueKind);
     }
 }

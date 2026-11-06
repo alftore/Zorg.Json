@@ -13,6 +13,12 @@
 - Diagnostics for a relaxed `oneOf`, and for a left-out `not`, `if` or `maxContains`, now name the rule that caused it and where it is, such as `format at /not/properties/id`. The `UnrepresentablePolicy.Throw` message says the same. Verdicts are unchanged.
 - Added `Z.Enum<TEnum>()` for C# enums. It emits `enum` with the member names and parses to `TEnum`. Names are case-sensitive, numbers are refused, and `[JsonStringEnumMemberName]` and an optional `JsonNamingPolicy` set the names. It works under Native AOT.
 - Added string shortcuts for formats Zorg already enforces: `Time`, `Duration`, `Hostname`, `IdnHostname`, `IdnEmail`, `Ipv4`, `Ipv6`, `Iri`, `IriReference`, `UriReference`, `UriTemplate`, `JsonPointer` and `RelativeJsonPointer`.
+- `Meta` refuses, with an `ArgumentException`, the name of any JSON Schema or OpenAPI 3.0 keyword, such as `type` or `enum`. The emitter writes those itself, and a custom value replaced what it wrote, so the input schema could reject what `SafeParse` accepts. `x-` names and other custom names still work, and importing keeps unknown keywords as before.
+- Fixed an emitted OpenAPI 3.0 `oneOf` that relaxed to `anyOf` in a branch with several types, which dropped the type limit. The relaxed list now sits in `allOf`.
+- OpenAPI 3.0: a null-typed schema with `const` or `enum` is no longer taken for exact, because it is written without a type. `not` and `oneOf` around it are relaxed or left out with a diagnostic.
+- Naming the rule that relaxed a keyword no longer costs much more than judging exactness: the search keeps parent links instead of copying paths, skips what is known to be exact, and past 10,000 subschemas (100,000 in all) names only the keyword. Long paths in a diagnostic are shortened.
+- `Zorg.Json.Extensions.AI`: `ZorgAIFunction.Create` awaits functions that return `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>`. A schema nested more than 31 objects deep no longer throws. Only assistant messages count as the answer. A .NET `string` argument with a lone surrogate is refused.
+- `ParseModelOutput` and `ParseModelOutputAsync` return a failed result for a default `JsonElement` instead of throwing.
 
 ## 0.1.0-preview.2
 

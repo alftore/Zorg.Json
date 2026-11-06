@@ -81,6 +81,9 @@ ChatOptions options = new() { Tools = [forecast] };
 - The root of the schema must be an object, because providers take no other root for a tool.
 - Pass a profile as the last argument, such as `LlmProfiles.OpenAIStrict`, to send what that provider takes. A `null` the model sends for an optional property is then read as absent, as `ParseModelOutput` does.
 - `RefineAsync` checks run. Cancelling the token throws `OperationCanceledException`.
+- A function that returns a `Task`, `Task<T>`, `ValueTask` or `ValueTask<T>` is awaited, and the model gets the result (null for the ones without a value). A task hidden in an `object` can't be awaited under Native AOT, so `Create` throws `InvalidOperationException` when it sees one.
+- A .NET `string` argument with a lone surrogate is refused, like the same text from a model. A string nested inside an object or collection argument is written by System.Text.Json, which replaces a lone surrogate with U+FFFD, so the function sees the replacement.
+- The schema is sent at any depth the emitter writes.
 
 **A response format.**
 
@@ -101,7 +104,7 @@ if (answer.IsSuccess)
 }
 ```
 
-This sets the response format on a copy of your `ChatOptions`, asks, and reads the text of the last message that has any with `ParseModelOutputAsync`. Malformed, truncated, empty or non-JSON output, a lone surrogate, and a missing response are failed results with issues, never exceptions. An exception from the client, and cancellation, are exceptions. The usage and finish reason of the response aren't returned. If you need them, call the client yourself and pass `response.Text` to `ParseModelOutput`.
+This sets the response format on a copy of your `ChatOptions`, asks, and reads the text of the last assistant message that has any with `ParseModelOutputAsync`. Malformed, truncated, empty or non-JSON output, a lone surrogate, and a missing response are failed results with issues, never exceptions. An exception from the client, and cancellation, are exceptions. The usage and finish reason of the response aren't returned. If you need them, call the client yourself and pass `response.Text` to `ParseModelOutput`.
 
 ### The OpenAI adapter rewrites the schema again
 

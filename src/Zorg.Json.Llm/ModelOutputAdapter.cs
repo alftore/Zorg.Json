@@ -28,6 +28,12 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
     public static JsonElement Adapt(SchemaNode root, EmitResult emitted, JsonElement json)
     {
+        // There is no value to convert. SafeParse reports it.
+        if (json.ValueKind == JsonValueKind.Undefined)
+        {
+            return json;
+        }
+
         ImmutableArray<ISchemaRewriter> rewriters = emitted.Target?.Rewriters ?? [];
         bool requiredAll = rewriters.Contains(Rewriters.RequireAllAsNullable);
         bool unwrap = rewriters.Contains(Rewriters.RequireObjectRoot) && !Rewriters.HasObjectRoot(root) && IsWrapper(emitted.Schema);

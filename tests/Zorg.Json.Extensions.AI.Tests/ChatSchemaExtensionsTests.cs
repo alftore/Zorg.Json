@@ -363,4 +363,37 @@ public sealed class ChatSchemaExtensionsTests
 
         Assert.Equal(format.Schema!.Value.GetRawText(), function.JsonSchema.GetRawText());
     }
+
+    [Fact]
+    public async Task Text_from_other_roles_is_not_the_answer()
+    {
+        FakeChatClient client = new((_, _, _) => new ChatResponse(
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("1", "f")]),
+            new ChatMessage(ChatRole.Tool, Good),
+            new ChatMessage(ChatRole.User, Good),
+        ]));
+
+        ParseResult<JsonElement> result = await client.GetResponseAsync(Answer, "Rate it.", cancellationToken: Token);
+
+        Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task A_schema_nested_deeper_than_the_default_reader_depth_makes_a_request()
+    {
+        ObjectSchema schema = Z.Object().Property("n", Z.Integer());
+
+        for (int index = 0; index < 31; index++)
+        {
+            schema = Z.Object().Property("n", schema);
+        }
+
+        FakeChatClient client = new("""{"n":1}""");
+
+        ParseResult<JsonElement> result = await client.GetResponseAsync(schema, "Rate it.", cancellationToken: Token);
+
+        Assert.Equal(JsonValueKind.Object, Assert.IsType<ChatResponseFormatJson>(Assert.Single(client.Options)!.ResponseFormat).Schema!.Value.ValueKind);
+        Assert.False(result.IsSuccess);
+    }
 }

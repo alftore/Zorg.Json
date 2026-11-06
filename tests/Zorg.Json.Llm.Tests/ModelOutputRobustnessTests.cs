@@ -110,4 +110,14 @@ public sealed class ModelOutputRobustnessTests
 
         Assert.True(result.IsSuccess, string.Join(", ", result.Issues.Select(issue => issue.Message)));
     }
+
+    [Fact]
+    public async System.Threading.Tasks.Task An_undefined_element_is_a_failed_result_not_an_exception()
+    {
+        ParseResult<JsonElement> result = Pair.ParseModelOutput(PairEmitted, default(JsonElement));
+        ParseResult<JsonElement> async = await Pair.ParseModelOutputAsync(PairEmitted, default(JsonElement), TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.False(async.IsSuccess);
+    }
 }

@@ -18,6 +18,14 @@ internal static class SchemaExactness
     /// <summary>The most subschemas one walk visits. A reference that builds a fresh schema each time it is followed never ends otherwise.</summary>
     internal const int MaxWalked = 100_000;
 
+    /// <summary>The most subschemas one search for a cause visits. Past it the cause names the keyword and not the place.</summary>
+    private const int MaxLocateWalk = 10_000;
+
+    /// <summary>The most subschemas all searches for a cause visit in one emission.</summary>
+    private const int MaxLocateTotal = 100_000;
+
+    private const int MaxPathSegments = 16;
+
     internal static InvalidOperationException TooLarge() => new(
         $"The schema reaches more than {MaxWalked} subschemas, usually because a Z.Lazy builds a new schema each time it is read. "
         + "Build the schema once, store it in a field, and refer to that.");
@@ -30,12 +38,17 @@ internal static class SchemaExactness
 
     /// <summary>The first rule found that makes a subschema inexact, and where it sits.</summary>
     /// <param name="Keyword">The keyword, or the name of the fluent step, that isn't stated exactly, such as <c>format</c>.</param>
-    /// <param name="Path">A JSON Pointer from the subschema that was checked. A followed reference reads as <c>$ref</c>. Empty for the subschema itself.</param>
-    internal sealed record Cause(string Keyword, string Path)
+    /// <param name="Path">A JSON Pointer from the subschema that was checked. A followed reference reads as <c>$ref</c>. Empty for the subschema itself, and null when the walk to find it was cut short.</param>
+    internal sealed record Cause(string Keyword, string? Path)
     {
         /// <summary>Reads as <c>format at /$defs/item/properties/id</c>, with <paramref name="prefix"/> for where the subschema sits.</summary>
         public string Describe(string prefix)
         {
+            if (Path is null)
+            {
+                return prefix.Length == 0 ? $"{Keyword} somewhere in the schema" : $"{Keyword} somewhere below {prefix}";
+            }
+
             string where = prefix + Path;
             return where.Length == 0 ? $"{Keyword} at the root" : $"{Keyword} at {where}";
         }
@@ -50,6 +63,12 @@ internal static class SchemaExactness
         private readonly Dictionary<SchemaNode, bool> _known = new(ReferenceEqualityComparer.Instance);
 
         private readonly Dictionary<SchemaNode, Cause?> _causes = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The keyword of the inexact rule a walk met, for each subschema that walk judged inexact.</summary>
+        private readonly Dictionary<SchemaNode, string> _reasons = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Subschemas visited so far by walks that name a cause.</summary>
+        private int _located;
 
         /// <summary>
         /// Tells whether <paramref name="root"/> is exact and, when it isn't, names the first rule found. Finding the rule
@@ -71,42 +90,80 @@ internal static class SchemaExactness
             return false;
         }
 
-        /// <summary>Walks in the order <see cref="IsExact(SchemaNode)"/> does, so it stops at the same first rule, and keeps the path.</summary>
-        private Cause? Locate(SchemaNode root)
+        /// <summary>
+        /// Walks in the order <see cref="IsExact(SchemaNode)"/> does, so it stops at the same first rule, and keeps the path.
+        /// It stays cheap: it skips what is known to be exact, keeps parent links instead of copying paths, and gives up
+        /// past a limit. Then the cause names only the keyword that <see cref="IsExact(SchemaNode)"/> found.
+        /// </summary>
+        private Cause Locate(SchemaNode root)
         {
+            string fallbackKeyword = _reasons.GetValueOrDefault(root) ?? "rule";
+            int allowed = Math.Min(MaxLocateWalk, MaxLocateTotal - _located);
             HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
-            Stack<(SchemaNode Node, string Path)> pending = new();
-            pending.Push((root, string.Empty));
+            List<(int Parent, string Segment)> trail = [(-1, string.Empty)];
+            Stack<(SchemaNode Node, int Index)> pending = new();
+            pending.Push((root, 0));
 
-            while (pending.TryPop(out (SchemaNode Node, string Path) item))
+            while (pending.TryPop(out (SchemaNode Node, int Index) item))
             {
+                if (_known.TryGetValue(item.Node, out bool exact) && exact)
+                {
+                    continue;
+                }
+
                 if (!visited.Add(item.Node))
                 {
                     continue;
                 }
 
-                if (visited.Count > MaxWalked)
+                if (visited.Count > allowed)
                 {
-                    throw TooLarge();
+                    _located += visited.Count;
+                    return new Cause(fallbackKeyword, null);
                 }
 
                 if (Inexact(item.Node, dialect) is { } keyword)
                 {
-                    return new Cause(keyword, item.Path);
+                    _located += visited.Count;
+                    return new Cause(keyword, PathOf(trail, item.Index));
                 }
 
                 foreach ((string segment, SchemaNode child) in NamedChildren(item.Node))
                 {
-                    pending.Push((child, item.Path + segment));
+                    trail.Add((item.Index, segment));
+                    pending.Push((child, trail.Count - 1));
                 }
 
                 if (item.Node.Behavior.Target is { } target)
                 {
-                    pending.Push((target(), item.Path + "/$ref"));
+                    trail.Add((item.Index, "/$ref"));
+                    pending.Push((target(), trail.Count - 1));
                 }
             }
 
-            return null;
+            // The walk judged this inexact, so a cause is always named.
+            _located += visited.Count;
+            return new Cause(fallbackKeyword, null);
+        }
+
+        /// <summary>Joins the segments from the root. A long path keeps its start and its end, so a diagnostic stays short.</summary>
+        private static string PathOf(List<(int Parent, string Segment)> trail, int index)
+        {
+            List<string> segments = [];
+
+            for (int at = index; at > 0; at = trail[at].Parent)
+            {
+                segments.Add(trail[at].Segment);
+            }
+
+            segments.Reverse();
+
+            if (segments.Count <= MaxPathSegments)
+            {
+                return string.Concat(segments);
+            }
+
+            return string.Concat(segments.Take(MaxPathSegments / 2)) + "/..." + string.Concat(segments.Skip(segments.Count - MaxPathSegments / 2));
         }
 
         public bool IsExact(SchemaNode root)
@@ -117,11 +174,14 @@ internal static class SchemaExactness
             }
 
             HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
-            Stack<SchemaNode> pending = new();
-            pending.Push(root);
+            List<(SchemaNode Node, int Parent)> trail = [(root, -1)];
+            Stack<int> pending = new();
+            pending.Push(0);
 
-            while (pending.TryPop(out SchemaNode? node))
+            while (pending.TryPop(out int index))
             {
+                SchemaNode node = trail[index].Node;
+
                 if (_known.TryGetValue(node, out bool known))
                 {
                     if (known)
@@ -129,8 +189,7 @@ internal static class SchemaExactness
                         continue;
                     }
 
-                    _known[root] = false;
-                    return false;
+                    return Fail(trail, index, _reasons.GetValueOrDefault(node) ?? "rule");
                 }
 
                 if (!visited.Add(node))
@@ -143,21 +202,21 @@ internal static class SchemaExactness
                     throw TooLarge();
                 }
 
-                if (!IsLocallyExact(node, dialect))
+                if (Inexact(node, dialect) is { } keyword)
                 {
-                    _known[node] = false;
-                    _known[root] = false;
-                    return false;
+                    return Fail(trail, index, keyword);
                 }
 
                 foreach (SchemaNode child in node.Children)
                 {
-                    pending.Push(child);
+                    trail.Add((child, index));
+                    pending.Push(trail.Count - 1);
                 }
 
                 if (node.Behavior.Target is { } target)
                 {
-                    pending.Push(target());
+                    trail.Add((target(), index));
+                    pending.Push(trail.Count - 1);
                 }
             }
 
@@ -169,9 +228,22 @@ internal static class SchemaExactness
 
             return true;
         }
-    }
 
-    private static bool IsLocallyExact(SchemaNode node, JsonSchemaDialect dialect) => Inexact(node, dialect) is null;
+        /// <summary>
+        /// Everything on the way from the root to an inexact subschema reaches it, so none of those needs another walk. A
+        /// schema that refers many times to one long chain is then judged once.
+        /// </summary>
+        private bool Fail(List<(SchemaNode Node, int Parent)> trail, int index, string keyword)
+        {
+            for (int at = index; at >= 0; at = trail[at].Parent)
+            {
+                _known[trail[at].Node] = false;
+                _reasons[trail[at].Node] = keyword;
+            }
+
+            return false;
+        }
+    }
 
     /// <summary>Names the first rule of <paramref name="node"/> that the emitted schema can't state exactly, or null when there is none.</summary>
     private static string? Inexact(SchemaNode node, JsonSchemaDialect dialect)
@@ -281,7 +353,7 @@ internal static class SchemaExactness
     internal static bool IsUnwritable(System.Text.Json.JsonElement value) =>
         JsonText.HasUndecodableString(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value));
 
-    /// <summary>The first keyword the emitter can't write in the dialect, or null.</summary>
+    /// <summary>The first keyword the emitter can't write in the dialect, or null. In OpenAPI 3.0 a null node with const or enum counts, because there is no null type and the values are written beside nullable alone.</summary>
     private static string? LeavesOut(SchemaNode node, JsonSchemaDialect dialect) => dialect switch
     {
         JsonSchemaDialect.Draft07 =>
@@ -294,7 +366,9 @@ internal static class SchemaExactness
             : null,
 
         JsonSchemaDialect.OpenApi30 =>
-            !node.PrefixItems.IsEmpty ? "prefixItems"
+            node.Types == JsonTypes.Null && node.Const is not null ? "const"
+            : node.Types == JsonTypes.Null && !node.Enum.IsEmpty ? "enum"
+            : !node.PrefixItems.IsEmpty ? "prefixItems"
             : node.Contains is not null ? "contains"
             : node.MinContains is not null ? "minContains"
             : node.MaxContains is not null ? "maxContains"

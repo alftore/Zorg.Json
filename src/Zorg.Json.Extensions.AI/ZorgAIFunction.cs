@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
@@ -35,6 +36,8 @@ namespace Zorg.Json.Extensions.AI;
 /// </example>
 public sealed class ZorgAIFunction : AIFunction
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
 
     private readonly Func<JsonElement, CancellationToken, ValueTask<object?>> _invoke;
@@ -100,7 +103,7 @@ public sealed class ZorgAIFunction : AIFunction
                 : ErrorReport.Create("The arguments don't match the schema. Fix them and call the function again.", parsed.Issues);
         }
 
-        return new ZorgAIFunction(name, description, JsonElement.Parse(emitted.Schema.ToJsonString()), Invoke);
+        return new ZorgAIFunction(name, description, ErrorReport.ParseSchema(emitted.Schema.ToJsonString()), Invoke);
     }
 
     /// <summary>Creates a function that runs synchronously. See the other overload.</summary>
@@ -121,8 +124,105 @@ public sealed class ZorgAIFunction : AIFunction
     public static ZorgAIFunction Create<T>(string name, string description, Schema<T> arguments, Func<T, object?> function, JsonSchemaProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(function);
-        return Create(name, description, arguments, (T value, CancellationToken _) => ValueTask.FromResult(function(value)), profile);
+        return Create(name, description, arguments, (T value, CancellationToken _) => ValueTask.FromResult(NotATask(function(value))), profile);
     }
+
+    /// <summary>Creates a function that returns a <see cref="Task{TResult}"/>, which is awaited. See the other overloads.</summary>
+    /// <typeparam name="T">The type of the parsed arguments.</typeparam>
+    /// <typeparam name="TResult">The type of the result.</typeparam>
+    /// <param name="name">The function's name. It must not be empty.</param>
+    /// <param name="description">What the function does. It can be empty.</param>
+    /// <param name="arguments">The schema of the arguments. Its root must be an object.</param>
+    /// <param name="function">Called with the validated arguments. Its result goes back to the model.</param>
+    /// <param name="profile">The profile to emit <see cref="JsonSchema"/> with. The default is plain Draft 2020-12.</param>
+    /// <returns>The function.</returns>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty, or the root of <paramref name="arguments"/> isn't an object.</exception>
+    /// <example>
+    /// <code>
+    /// AIFunction lookup = ZorgAIFunction.Create("lookup", "Finds an order.", Arguments, arguments => orders.FindAsync(arguments));
+    /// </code>
+    /// </example>
+    public static ZorgAIFunction Create<T, TResult>(string name, string description, Schema<T> arguments, Func<T, Task<TResult>> function, JsonSchemaProfile? profile = null)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        return Create(name, description, arguments, async (T value, CancellationToken _) => (object?)await function(value).ConfigureAwait(false), profile);
+    }
+
+    /// <summary>Creates a function that returns a <see cref="Task"/>, which is awaited. The model gets null. See the other overloads.</summary>
+    /// <typeparam name="T">The type of the parsed arguments.</typeparam>
+    /// <param name="name">The function's name. It must not be empty.</param>
+    /// <param name="description">What the function does. It can be empty.</param>
+    /// <param name="arguments">The schema of the arguments. Its root must be an object.</param>
+    /// <param name="function">Called with the validated arguments.</param>
+    /// <param name="profile">The profile to emit <see cref="JsonSchema"/> with. The default is plain Draft 2020-12.</param>
+    /// <returns>The function.</returns>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty, or the root of <paramref name="arguments"/> isn't an object.</exception>
+    /// <example>
+    /// <code>
+    /// AIFunction notify = ZorgAIFunction.Create("notify", "Sends a message.", Arguments, arguments => mailer.SendAsync(arguments));
+    /// </code>
+    /// </example>
+    public static ZorgAIFunction Create<T>(string name, string description, Schema<T> arguments, Func<T, Task> function, JsonSchemaProfile? profile = null)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+
+        return Create(name, description, arguments, async (T value, CancellationToken _) =>
+        {
+            await function(value).ConfigureAwait(false);
+            return (object?)null;
+        }, profile);
+    }
+
+    /// <summary>Creates a function that returns a <see cref="ValueTask{TResult}"/>, which is awaited. See the other overloads.</summary>
+    /// <typeparam name="T">The type of the parsed arguments.</typeparam>
+    /// <typeparam name="TResult">The type of the result.</typeparam>
+    /// <param name="name">The function's name. It must not be empty.</param>
+    /// <param name="description">What the function does. It can be empty.</param>
+    /// <param name="arguments">The schema of the arguments. Its root must be an object.</param>
+    /// <param name="function">Called with the validated arguments. Its result goes back to the model.</param>
+    /// <param name="profile">The profile to emit <see cref="JsonSchema"/> with. The default is plain Draft 2020-12.</param>
+    /// <returns>The function.</returns>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty, or the root of <paramref name="arguments"/> isn't an object.</exception>
+    /// <example>
+    /// <code>
+    /// AIFunction lookup = ZorgAIFunction.Create("lookup", "Finds an order.", Arguments, arguments => cache.GetAsync(arguments));
+    /// </code>
+    /// </example>
+    public static ZorgAIFunction Create<T, TResult>(string name, string description, Schema<T> arguments, Func<T, ValueTask<TResult>> function, JsonSchemaProfile? profile = null)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        return Create(name, description, arguments, async (T value, CancellationToken _) => (object?)await function(value).ConfigureAwait(false), profile);
+    }
+
+    /// <summary>Creates a function that returns a <see cref="ValueTask"/>, which is awaited. The model gets null. See the other overloads.</summary>
+    /// <typeparam name="T">The type of the parsed arguments.</typeparam>
+    /// <param name="name">The function's name. It must not be empty.</param>
+    /// <param name="description">What the function does. It can be empty.</param>
+    /// <param name="arguments">The schema of the arguments. Its root must be an object.</param>
+    /// <param name="function">Called with the validated arguments.</param>
+    /// <param name="profile">The profile to emit <see cref="JsonSchema"/> with. The default is plain Draft 2020-12.</param>
+    /// <returns>The function.</returns>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty, or the root of <paramref name="arguments"/> isn't an object.</exception>
+    /// <example>
+    /// <code>
+    /// AIFunction notify = ZorgAIFunction.Create("notify", "Sends a message.", Arguments, arguments => queue.WriteAsync(arguments));
+    /// </code>
+    /// </example>
+    public static ZorgAIFunction Create<T>(string name, string description, Schema<T> arguments, Func<T, ValueTask> function, JsonSchemaProfile? profile = null)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+
+        return Create(name, description, arguments, async (T value, CancellationToken _) =>
+        {
+            await function(value).ConfigureAwait(false);
+            return (object?)null;
+        }, profile);
+    }
+
+    // A task typed as object can't be awaited without reflection, which Native AOT can't rely on, and running on would hand the model a task. So it is refused.
+    private static object? NotATask(object? result) => result is Task or ValueTask
+        ? throw new InvalidOperationException("The function returned a task typed as object, which can't be awaited. Return the Task or ValueTask itself, so that the overload for it is used.")
+        : result;
 
     /// <inheritdoc/>
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
@@ -180,6 +280,11 @@ public sealed class ZorgAIFunction : AIFunction
         {
             case null:
                 writer.WriteNullValue();
+                break;
+            case string text:
+                // Serializing would replace a lone surrogate with U+FFFD, and the function would run on text the model never sent.
+                _ = StrictUtf8.GetByteCount(text);
+                writer.WriteStringValue(text);
                 break;
             case JsonElement { ValueKind: JsonValueKind.Undefined }:
                 writer.WriteNullValue();

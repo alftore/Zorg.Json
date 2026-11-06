@@ -539,10 +539,15 @@ public abstract class Schema<T, TSelf> : Schema<T>
         return With(Node with { Examples = Node.Examples.AddRange(elements) });
     }
 
-    /// <summary>Adds a custom keyword to the emitted schema, such as <c>x-order</c>. Zod equivalent: <c>.meta()</c>.</summary>
-    /// <param name="keyword">The keyword.</param>
+    /// <summary>
+    /// Adds a custom keyword to the emitted schema, such as <c>x-order</c>. Zod equivalent: <c>.meta()</c>. A keyword of JSON
+    /// Schema or of the OpenAPI 3.0 schema object, such as <c>type</c> or <c>enum</c>, is refused, because the emitter writes it
+    /// from the schema's own rules.
+    /// </summary>
+    /// <param name="keyword">The keyword. It must not be a JSON Schema keyword.</param>
     /// <param name="value">Its value.</param>
     /// <returns>A new schema.</returns>
+    /// <exception cref="ArgumentException"><paramref name="keyword"/> is a JSON Schema keyword, or the text has an unpaired surrogate.</exception>
     /// <example>
     /// <code>
     /// StringSchema schema = Z.String().Meta("x-order", JsonElement.Parse("1"));
@@ -553,6 +558,7 @@ public abstract class Schema<T, TSelf> : Schema<T>
     {
         ArgumentNullException.ThrowIfNull(keyword);
         Validation.Arguments.WellFormed(keyword);
+        Validation.Arguments.CustomKeyword(keyword);
         Validation.Arguments.WellFormed(value);
         return With(Node with { Extensions = Node.Extensions.Add(KeyValuePair.Create(keyword, value.Clone())) });
     }

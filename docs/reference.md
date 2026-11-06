@@ -119,7 +119,7 @@ Booleans have `.Const(value)` and `.Coerce()`.
 | `$comment` | `.Comment(text)` | |
 | `examples` | `.Examples(a, b)` | `.meta({ examples })` |
 | `deprecated`, `readOnly`, `writeOnly` | `.Deprecated()`, `.ReadOnly()`, `.WriteOnly()` | `.meta()` |
-| `x-*` | `.Meta(keyword, value)` | `.meta()` |
+| `x-*` | `.Meta(keyword, value)`, which refuses the name of a JSON Schema keyword | `.meta()` |
 | `default` | `.Default(value)` | `.default()` |
 | not in `required` | `.Optional()` | `.optional()` |
 | adds `null` to `type` | `.Nullable()` | `.nullable()` |
