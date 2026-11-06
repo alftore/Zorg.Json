@@ -30,7 +30,7 @@ internal sealed class JsonSchemaEmitter
     {
         _options = options;
         _profile = options.Target;
-        _exactness = new SchemaExactness.Checker(_profile.Dialect, LeavesOutDynamic);
+        _exactness = new SchemaExactness.Checker(_profile.Dialect);
         _objectBranches = new ObjectBranchCheck(_profile.Dialect == JsonSchemaDialect.OpenApi30);
         _rewritten = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
         _rewrittenNegative = [.. _profile.Rewriters.Select(_ => new Dictionary<SchemaNode, SchemaNode>(ReferenceEqualityComparer.Instance))];
@@ -88,8 +88,14 @@ internal sealed class JsonSchemaEmitter
 
     private bool IsOpenApi30 => _profile.Dialect == JsonSchemaDialect.OpenApi30;
 
-    /// <summary>The dynamic scope needs resources that stay what they are, in a dialect that has it.</summary>
-    private bool LeavesOutDynamic => IsDraft07 || IsOpenApi30 || _options.ReferencePrefix is not null || !_profile.Rewriters.IsEmpty;
+    /// <summary>
+    /// The dynamic scope needs resources that stay what they are, in a dialect that has it. Inside another schema an import shares its
+    /// resource with what surrounds it, so its anchors could clash and its scope would change.
+    /// </summary>
+    private bool LeavesOutDynamic => IsDraft07 || IsOpenApi30 || _options.ReferencePrefix is not null || !_profile.Rewriters.IsEmpty || !_isWholeImport;
+
+    /// <summary>True when the document being written is one imported document, as it was.</summary>
+    private bool _isWholeImport;
 
     private string ReferencePrefix => _options.ReferencePrefix ?? $"#/{_profile.DefinitionsKeyword}/";
 
@@ -241,6 +247,7 @@ internal sealed class JsonSchemaEmitter
 
     private EmitResult EmitRoot(SchemaNode node)
     {
+        _isWholeImport = node.Behavior.Location is { Length: 0 };
         JsonNode emitted = EmitNode(node, string.Empty);
         JsonObject schema = emitted as JsonObject ?? BooleanRoot(emitted);
 
@@ -318,7 +325,7 @@ internal sealed class JsonSchemaEmitter
             // The hash reads every reference as it will be written, and those to a definition being named as that definition's hash.
             foreach (Site site in _sites)
             {
-                site.Holder["$ref"] = Spell(site);
+                site.Holder[site.Keyword] = Spell(site);
             }
 
             NameLeavingDefinitions();
@@ -331,8 +338,17 @@ internal sealed class JsonSchemaEmitter
 
         foreach (Site site in _sites)
         {
-            site.Holder["$ref"] = Spell(site);
+            site.Holder[site.Keyword] = site.Keyword == "$ref" ? Spell(site) : DynamicSpelling(site);
         }
+    }
+
+    /// <summary>The URI of where the target went, and the name it has to end in to stay dynamic.</summary>
+    private string DynamicSpelling(Site site)
+    {
+        string spelled = Spell(site);
+        int end = spelled.IndexOf('#', StringComparison.Ordinal);
+        int name = site.Text.IndexOf('#', StringComparison.Ordinal);
+        return (end < 0 ? spelled : spelled[..end]) + site.Text[name..];
     }
 
     /// <summary>What writing the references needs for as long as it takes.</summary>
@@ -770,6 +786,8 @@ internal sealed class JsonSchemaEmitter
         public JsonNode? Place { get; set; }
 
         public string? Pointer { get; set; }
+
+        public string Keyword { get; init; } = "$ref";
     }
 
     /// <summary>Where the extensions start in what was written. Not every extension is written, and a reference is written without any.</summary>
@@ -1060,7 +1078,7 @@ internal sealed class JsonSchemaEmitter
 
         List<string> notes = [];
         SchemaNode written = DropUnwritable(source, notes, location);
-        SchemaNode node = IsInput ? RelocateCounts(Relocate(written, notes, location), notes, location) : written;
+        SchemaNode node = PlainReference(IsInput ? RelocateCounts(Relocate(written, notes, location), notes, location) : written);
         JsonObject schema = [];
 
         string? anchor = node.Anchor;
@@ -1109,7 +1127,17 @@ internal sealed class JsonSchemaEmitter
         else
         {
             Add(schema, "$dynamicAnchor", node.DynamicAnchor);
-            Add(schema, "$dynamicRef", node.DynamicRef);
+
+            // In its own resource the name is all it says. Another resource is read by URI, and that can change.
+            if (node.DynamicRef is { } dynamicReference && dynamicReference.StartsWith('#'))
+            {
+                Add(schema, "$dynamicRef", dynamicReference);
+            }
+            else if (node.DynamicRef is { } remote && node.Behavior.Target is { } dynamicTarget)
+            {
+                _sites.Add(new Site(schema, remote, dynamicTarget, Scope) { Keyword = "$dynamicRef" });
+                schema["$dynamicRef"] = remote;
+            }
         }
 
         Add(schema, "title", node.Title);
@@ -1906,6 +1934,19 @@ internal sealed class JsonSchemaEmitter
         return false;
     }
 
+    /// <summary>A <c>$dynamicRef</c> that doesn't land on a <c>$dynamicAnchor</c> of its name is a <c>$ref</c>, and is written as one, so it moves like one.</summary>
+    private static SchemaNode PlainReference(SchemaNode node)
+    {
+        if (node.DynamicRef is not { } reference || node.Behavior.Target is not { } target)
+        {
+            return node;
+        }
+
+        int fragment = reference.IndexOf('#', StringComparison.Ordinal);
+        bool isDynamic = fragment >= 0 && target().DynamicAnchor == Uri.UnescapeDataString(reference[(fragment + 1)..]);
+        return isDynamic ? node : node with { Ref = reference, DynamicRef = null };
+    }
+
     /// <summary>The types a subschema's written form can accept, or <see cref="JsonTypes.None"/> when that isn't known. Follows references.</summary>
     private JsonTypes WrittenTypes(SchemaNode node)
     {
@@ -1913,8 +1954,8 @@ internal sealed class JsonSchemaEmitter
 
         while (followed.Add(node) && followed.Count <= SchemaExactness.MaxWalked)
         {
-            // Coercion adds string to the written type.
-            if (node.Behavior.Coercion != SchemaCoercion.None)
+            // Coercion adds string to the written type, and a dynamic scope can lead anywhere.
+            if (node.Behavior.Coercion != SchemaCoercion.None || node.DynamicRef is not null)
             {
                 return JsonTypes.None;
             }

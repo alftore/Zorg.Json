@@ -91,6 +91,7 @@ internal sealed class SchemaImporter
 
     /// <summary>The base URI of each resource, by its pointer.</summary>
     private readonly Dictionary<string, string> _bases = new(StringComparer.Ordinal) { [string.Empty] = DocumentBase };
+    private readonly Dictionary<string, string> _documents = new(StringComparer.Ordinal);
     private readonly List<PendingReference> _references = [];
     private readonly List<(string Resource, string Name, string Pointer)> _dynamicAnchors = [];
     private readonly Dictionary<string, SchemaResource> _dynamicResources = new(StringComparer.Ordinal);
@@ -105,20 +106,21 @@ internal sealed class SchemaImporter
     {
         foreach ((string uri, string pointer) in documents)
         {
-            // The URI a document was given names it, whatever $id it has.
+            // The URI a document was given names it, whatever it says about itself.
             if (!_resources.TryAdd(uri, pointer))
             {
                 throw Error(JsonSchemaImportCodes.InvalidSchema, string.Empty, $"The document URI \"{uri}\" is declared twice.");
             }
 
             _bases[pointer] = uri;
+            _documents[pointer] = uri;
         }
 
         _root = root;
         _usesDynamicScope = dialect switch
         {
-            JsonSchemaImportDialect.Draft202012 => root.GetRawText().Contains("$dynamic", StringComparison.Ordinal),
-            JsonSchemaImportDialect.Draft201909 => root.GetRawText().Contains("$recursive", StringComparison.Ordinal),
+            JsonSchemaImportDialect.Draft202012 => HasName(root, "$dynamicRef", "$dynamicAnchor"),
+            JsonSchemaImportDialect.Draft201909 => HasName(root, "$recursiveRef", "$recursiveAnchor"),
             _ => false,
         };
         _options = options;
@@ -179,7 +181,6 @@ internal sealed class SchemaImporter
         }
 
         string container = dialect is JsonSchemaImportDialect.Draft202012 or JsonSchemaImportDialect.Draft201909 ? "$defs" : "definitions";
-        string idKeyword = dialect == JsonSchemaImportDialect.Draft04 ? "id" : "$id";
         List<string> members = [];
         List<string> definitions = [];
         HashSet<string> names = new(StringComparer.Ordinal);
@@ -225,7 +226,7 @@ internal sealed class SchemaImporter
 
             string name = $"document-{number}";
             documents.Add((target.Uri, $"/{container}/{name}"));
-            definitions.Add($"{JsonSerializedText(name)}:{WithBase(document, idKeyword, target.Uri)}");
+            definitions.Add($"{JsonSerializedText(name)}:{WithoutDialect(document, dialect)}");
         }
 
         members.Add($"{JsonSerializedText(container)}:{{{string.Join(',', definitions)}}}");
@@ -237,17 +238,51 @@ internal sealed class SchemaImporter
 
     private static string JsonSerializedText(string text) => $"\"{JsonEncodedText.Encode(text).ToString()}\"";
 
-    /// <summary>A document with no id of its own has the URI it was given as its base.</summary>
-    private static string WithBase(JsonElement document, string idKeyword, string uri)
+    /// <summary>A document has the dialect of the schema, so its <c>$schema</c> has done its work and doesn't go along.</summary>
+    private static string WithoutDialect(JsonElement document, JsonSchemaImportDialect dialect)
     {
-        if (document.ValueKind != JsonValueKind.Object || document.TryGetProperty(idKeyword, out _))
+        if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty("$schema", out JsonElement declared))
         {
             return document.GetRawText();
         }
 
-        List<string> members = [$"{JsonSerializedText(idKeyword)}:{JsonSerializedText(uri)}"];
-        members.AddRange(document.EnumerateObject().Select(property => property.ToString()));
-        return $"{{{string.Join(',', members)}}}";
+        if (declared.ValueKind != JsonValueKind.String || ToDialect(JsonText.GetString(declared)) != dialect)
+        {
+            throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", "A document has to use the dialect of the schema.");
+        }
+
+        return $"{{{string.Join(',', document.EnumerateObject().Where(property => !property.NameEquals("$schema")).Select(property => property.ToString()))}}}";
+    }
+
+    /// <summary>True when a name occurs anywhere in the document, however it is escaped.</summary>
+    private static bool HasName(JsonElement root, string first, string second)
+    {
+        Stack<JsonElement> pending = new([root]);
+
+        while (pending.TryPop(out JsonElement element))
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (property.NameEquals(first) || property.NameEquals(second))
+                    {
+                        return true;
+                    }
+
+                    pending.Push(property.Value);
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    pending.Push(item);
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The name <c>$recursiveAnchor</c> goes by, in the spelling of 2020-12.</summary>
@@ -342,7 +377,7 @@ internal sealed class SchemaImporter
         string dialect = Text(declared, "/$schema");
 
         return ToDialect(dialect)
-            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{dialect}\" can't be imported. Use Draft 2020-12, draft-07, draft-06 or draft-04.");
+            ?? throw Error(JsonSchemaImportCodes.UnsupportedDialect, "/$schema", $"The dialect \"{dialect}\" can't be imported. Use Draft 2020-12, 2019-09, draft-07, draft-06 or draft-04.");
     }
 
     private static JsonSchemaImportDialect? ToDialect(string uri) => uri.TrimEnd('#') switch
@@ -393,10 +428,9 @@ internal sealed class SchemaImporter
 
     private static string DecodeToken(string token) => Unescape(Uri.UnescapeDataString(token));
 
-    private static bool IsAnchorName(string name) =>
-        name.Length > 0
-        && (char.IsAsciiLetter(name[0]) || name[0] == '_')
-        && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+    private bool IsAnchorName(string name) => IsDraft201909
+        ? name.Length > 0 && char.IsAsciiLetter(name[0]) && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' or ':')
+        : name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
 
     /// <summary>Draft-04 calls an integer a number without a fraction or exponent part, so <c>1.0</c> isn't one.</summary>
     private static bool IsDraft04Integer(string number) => number.AsSpan().IndexOfAny('.', 'e', 'E') < 0;
@@ -444,14 +478,13 @@ internal sealed class SchemaImporter
         return names.MoveToImmutable();
     }
 
-    private static void RejectUnsupported(Dictionary<string, JsonElement> values, Scope at)
+    private void RejectUnsupported(Dictionary<string, JsonElement> values, Scope at)
     {
-        foreach (string keyword in (ReadOnlySpan<string>)["$dynamicRef", "$recursiveRef"])
+        string keyword = IsDraft201909 ? "$recursiveRef" : "$dynamicRef";
+
+        if (values.ContainsKey(keyword) && values.ContainsKey("$ref"))
         {
-            if (values.ContainsKey(keyword) && values.ContainsKey("$ref"))
-            {
-                throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} beside $ref isn't supported. Put one of them in an allOf.");
-            }
+            throw Error(JsonSchemaImportCodes.UnsupportedKeyword, at.Keyword(keyword), $"{keyword} beside $ref isn't supported. Put one of them in an allOf.");
         }
     }
 
@@ -635,7 +668,7 @@ internal sealed class SchemaImporter
                 throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword("$dynamicAnchor"), $"\"{dynamicAnchor}\" isn't a valid anchor name.");
             }
 
-            if (at.IsWalked && !_anchors.TryAdd((scope.Resource, dynamicAnchor), at.Pointer))
+            if (!_anchors.TryAdd((scope.Resource, dynamicAnchor), at.Pointer) && at.IsWalked)
             {
                 throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, $"The anchor \"{dynamicAnchor}\" is declared twice.");
             }
@@ -744,6 +777,14 @@ internal sealed class SchemaImporter
 
     private (string? Id, string? Anchor, Scope Scope) ReadIdentity(Keywords keywords, Scope at)
     {
+        // A document is a resource with the URI it was given, whatever keywords it holds, and in any dialect.
+        string? given = _documents.GetValueOrDefault(at.Pointer);
+
+        if (given is not null)
+        {
+            at = at with { Resource = at.Pointer, Base = given };
+        }
+
         string keyword = IsDraft04 ? "id" : "$id";
         string? id = keywords.String(keyword);
         string? anchor = keywords.String("$anchor");
@@ -816,7 +857,8 @@ internal sealed class SchemaImporter
             throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, $"The anchor \"{anchor}\" is declared twice.");
         }
 
-        return (id, anchor, scope);
+        // Written with its whole URI, because what surrounds it in the bundle isn't its base.
+        return (given is null ? id : scope.Base, anchor, scope);
     }
 
     private void CheckFormat(string format, Scope at)

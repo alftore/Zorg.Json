@@ -1307,6 +1307,7 @@ internal sealed class ValidationPlan
             return false;
         }
 
+        bool entered = _resource is not null && context.EnterResource(_resource);
         bool finished = context.Spend(value.GetPropertyCount() + 1);
 
         if (finished)
@@ -1332,6 +1333,11 @@ internal sealed class ValidationPlan
             }
         }
 
+        if (entered)
+        {
+            context.LeaveResource();
+        }
+
         context.Leave();
         return finished && !context.Halted;
     }
@@ -1349,6 +1355,7 @@ internal sealed class ValidationPlan
             return false;
         }
 
+        bool entered = _resource is not null && context.EnterResource(_resource);
         bool all = _node.Items is not null || (_node.UnevaluatedItems is not null && !isOwner);
         bool finished = context.Spend(evaluated.Length + 1);
 
@@ -1372,6 +1379,11 @@ internal sealed class ValidationPlan
                     break;
                 }
             }
+        }
+
+        if (entered)
+        {
+            context.LeaveResource();
         }
 
         context.Leave();

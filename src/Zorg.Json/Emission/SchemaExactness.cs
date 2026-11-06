@@ -58,7 +58,7 @@ internal static class SchemaExactness
     /// Remembers what it has judged. Whether a subschema is exact doesn't depend on where it's used, and a schema used a
     /// thousand times would otherwise be walked a thousand times.
     /// </summary>
-    internal sealed class Checker(JsonSchemaDialect dialect, bool leavesOutDynamic = false)
+    internal sealed class Checker(JsonSchemaDialect dialect)
     {
         private readonly Dictionary<SchemaNode, bool> _known = new(ReferenceEqualityComparer.Instance);
 
@@ -122,7 +122,7 @@ internal static class SchemaExactness
                     return new Cause(fallbackKeyword, null);
                 }
 
-                if ((leavesOutDynamic && item.Node.DynamicRef is not null ? "$dynamicRef" : Inexact(item.Node, dialect)) is { } keyword)
+                if (Inexact(item.Node, dialect) is { } keyword)
                 {
                     _located += visited.Count;
                     return new Cause(keyword, PathOf(trail, item.Index));
@@ -202,7 +202,7 @@ internal static class SchemaExactness
                     throw TooLarge();
                 }
 
-                if ((leavesOutDynamic && node.DynamicRef is not null ? "$dynamicRef" : Inexact(node, dialect)) is { } keyword)
+                if (Inexact(node, dialect) is { } keyword)
                 {
                     return Fail(trail, index, keyword);
                 }
@@ -290,10 +290,16 @@ internal static class SchemaExactness
             return node.MinProperties is not null ? "minProperties" : "maxProperties";
         }
 
-        // 2020-12 lets contains evaluate items, so the written schema can be looser here.
-        if (behavior.ContainsEvaluatesNothing && node.Contains is not null && node.UnevaluatedItems is not null)
+        // What it lands on depends on the dynamic scope, so nothing can be said from its static target.
+        if (node.DynamicRef is not null)
         {
-            return "contains";
+            return "$dynamicRef";
+        }
+
+        // 2020-12 lets contains evaluate items, here or in anything beside it, so the written schema can be looser.
+        if (behavior.ContainsEvaluatesNothing && node.UnevaluatedItems is not null)
+        {
+            return "unevaluatedItems";
         }
 
         if (HasUnwritableValue(node))

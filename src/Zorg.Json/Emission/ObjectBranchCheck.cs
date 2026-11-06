@@ -97,7 +97,7 @@ internal sealed class ObjectBranchCheck(bool isOpenApi30)
         for (int hops = 0; ; hops++)
         {
             // These run before const and enum, which are then left out of an input schema.
-            if (hops > MaxHops || !node.Behavior.Normalizers.IsEmpty || node.Behavior.Coercion != SchemaCoercion.None)
+            if (hops > MaxHops || !node.Behavior.Normalizers.IsEmpty || node.Behavior.Coercion != SchemaCoercion.None || node.DynamicRef is not null)
             {
                 return null;
             }
@@ -167,6 +167,11 @@ internal sealed class ObjectBranchCheck(bool isOpenApi30)
 
         for (int hops = 0; hops <= MaxHops; hops++)
         {
+            if (current.DynamicRef is not null)
+            {
+                return null;
+            }
+
             if (current.Behavior.Target is not { } target)
             {
                 return current;
