@@ -74,7 +74,7 @@ internal sealed class SchemaImporter
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>The base of a document without an <c>$id</c>, which only lets relative references resolve against each other.</summary>
-    private const string DocumentBase = "https://zorg.invalid/";
+    internal const string DocumentBase = "https://zorg.invalid/";
 
     private readonly JsonElement _root;
     private readonly JsonSchemaImportOptions _options;
@@ -564,7 +564,14 @@ internal sealed class SchemaImporter
             }
 
             // Before 2019-09 a fragment names the schema, and the rest is its base. 2020-12 spells the two separately.
-            if (hasFragment)
+            if (hasFragment && id[fragment + 1] == '/')
+            {
+                // Generators write the place of a schema as its id, as in #/definitions/a. It names what a pointer already names.
+                id = fragment == 0 ? null : id[..fragment];
+                hasFragment = false;
+                fragment = id is null ? 0 : -1;
+            }
+            else if (hasFragment)
             {
                 anchor = id[(fragment + 1)..];
 
@@ -579,17 +586,19 @@ internal sealed class SchemaImporter
                 scope = at with { Resource = at.Pointer };
             }
 
-            id = fragment == 0 && hasFragment ? null : hasFragment ? id[..fragment] : id;
+            id = fragment == 0 && hasFragment ? null : hasFragment ? id![..fragment] : id;
 
             if (id is not null && SplitUri(at.Base, id) is { } own)
             {
                 scope = scope with { Base = own.Uri };
 
-                if (at.IsWalked)
+                // 11: two resources can't share a URI, and a target outside the walked tree can only add to what's known.
+                if (!_resources.TryAdd(own.Uri, scope.Resource) && _resources[own.Uri] != scope.Resource && at.IsWalked)
                 {
-                    _resources.TryAdd(own.Uri, scope.Resource);
-                    _bases[scope.Resource] = own.Uri;
+                    throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(keyword), $"The $id \"{id}\" is declared twice.");
                 }
+
+                _bases[scope.Resource] = own.Uri;
             }
         }
 
@@ -892,9 +901,19 @@ internal sealed class SchemaImporter
     }
 
     /// <summary>A URI resolved against a base, split into the URI of a resource and its fragment with the <c>#</c>. Null when it can't be read.</summary>
-    private static (string Uri, string Fragment)? SplitUri(string baseUri, string reference)
+    internal static (string Uri, string Fragment)? SplitUri(string baseUri, string reference)
     {
-        if (!Uri.TryCreate(new Uri(baseUri), reference, out Uri? resolved))
+        Uri? resolved;
+
+        // TryCreate throws for some bases, such as a scheme of its own with a path.
+        try
+        {
+            if (!Uri.TryCreate(baseUri, UriKind.Absolute, out Uri? parent) || !Uri.TryCreate(parent, reference, out resolved))
+            {
+                return null;
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidOperationException)
         {
             return null;
         }
@@ -912,7 +931,8 @@ internal sealed class SchemaImporter
 
         if (!text.StartsWith('#'))
         {
-            if (SplitUri(reference.At.Base, text) is not { } resolved || !_resources.TryGetValue(resolved.Uri, out string? named))
+            if (text.StartsWith(DocumentBase, StringComparison.OrdinalIgnoreCase)
+                || SplitUri(reference.At.Base, text) is not { } resolved || !_resources.TryGetValue(resolved.Uri, out string? named))
             {
                 throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{text}\" isn't in this document. A reference can reach #, a JSON Pointer, an $anchor and any $id in the document, and nothing is fetched.");
             }

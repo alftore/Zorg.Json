@@ -202,6 +202,34 @@ internal sealed class ValidationContext
 
     public void Push(string name) => _path.Add(new PathSegment(name, 0));
 
+    /// <summary>A property by its place among the properties, which tells apart two that share a name.</summary>
+    public void Push(string name, int ordinal) => _path.Add(new PathSegment(name, ordinal));
+
+    /// <summary>
+    /// Whether a subschema passed at this place, from an earlier look. Finding what was evaluated would otherwise run each branch
+    /// again at every level of a recursive schema, which doubles with the depth.
+    /// </summary>
+    public bool TryRecall(object plan, out bool passed, out string place)
+    {
+        StringBuilder key = new();
+
+        foreach (PathSegment segment in _path)
+        {
+            key.Append(segment.Index).Append('/');
+        }
+
+        place = key.ToString();
+        return (_limits.Passed ??= []).TryGetValue((plan, place), out passed);
+    }
+
+    public void Remember(object plan, string place, bool passed)
+    {
+        if (!Halted)
+        {
+            _limits.Passed![(plan, place)] = passed;
+        }
+    }
+
     public void Push(int index) => _path.Add(new PathSegment(null, index));
 
     public void Pop() => _path.RemoveAt(_path.Count - 1);
@@ -538,6 +566,9 @@ internal sealed class ValidationContext
         public long SpeculativeSteps { get; set; }
 
         public long TotalSteps { get; set; }
+
+        /// <summary>Whether a subschema passed at a place. A place is the same value in one parse, because nothing that rewrites a value sits under <c>unevaluated*</c>.</summary>
+        public Dictionary<(object Plan, string Place), bool>? Passed { get; set; }
 
         public bool Exceeded { get; set; }
 

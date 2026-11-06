@@ -768,6 +768,7 @@ internal sealed class ValidationPlan
     private void CheckContains(JsonElement value, ValidationContext context)
     {
         int matches = 0;
+        int index = 0;
 
         foreach (JsonElement item in value.EnumerateArray())
         {
@@ -777,7 +778,9 @@ internal sealed class ValidationPlan
             }
 
             ValidationContext fork = context.Fork();
+            context.Push(index++);
             _contains!.Run(item, fork);
+            context.Pop();
 
             if (!fork.HasIssues)
             {
@@ -834,7 +837,7 @@ internal sealed class ValidationPlan
             JsonElement result = original;
             bool covered = false;
 
-            context.Push(name);
+            context.Push(name, count);
 
             if (_properties.TryGetValue(name, out ValidationPlan? plan))
             {
@@ -918,6 +921,12 @@ internal sealed class ValidationPlan
             {
                 rewritten?.Add(KeyValuePair.Create(name, result));
             }
+        }
+
+        // Each name took work, which a shared subschema repeats. Without this a wide object costs far more than its steps say.
+        if (!context.Spend(count))
+        {
+            return value;
         }
 
         if (unknown is not null)
@@ -1132,6 +1141,7 @@ internal sealed class ValidationPlan
         }
 
         List<string>? unknown = null;
+        int count = 0;
 
         foreach (JsonProperty property in value.EnumerateObject())
         {
@@ -1141,6 +1151,7 @@ internal sealed class ValidationPlan
             }
 
             string name = JsonText.GetName(property);
+            count++;
 
             if (evaluated.Contains(name))
             {
@@ -1153,7 +1164,7 @@ internal sealed class ValidationPlan
                 continue;
             }
 
-            context.Push(name);
+            context.Push(name, count);
             context.Walk("unevaluatedProperties");
             _unevaluatedProperties.Run(property.Value, context);
             context.Unwalk();
@@ -1201,9 +1212,16 @@ internal sealed class ValidationPlan
     /// <summary>Runs a subschema to see whether it passes, which decides whether what it evaluated counts.</summary>
     private static bool Passes(ValidationPlan plan, JsonElement value, ValidationContext context)
     {
+        if (context.TryRecall(plan, out bool passed, out string place))
+        {
+            return passed;
+        }
+
         ValidationContext fork = context.Fork();
         plan.Run(value, fork);
-        return !fork.HasIssues;
+        passed = !fork.HasIssues;
+        context.Remember(plan, place, passed);
+        return passed;
     }
 
     /// <summary>
@@ -1273,7 +1291,7 @@ internal sealed class ValidationPlan
             return false;
         }
 
-        bool finished = context.Spend((value.GetPropertyCount() / 16) + 1);
+        bool finished = context.Spend(value.GetPropertyCount() + 1);
 
         if (finished)
         {
@@ -1316,7 +1334,7 @@ internal sealed class ValidationPlan
         }
 
         bool all = _node.Items is not null || (_node.UnevaluatedItems is not null && !isOwner);
-        bool finished = context.Spend((evaluated.Length / 16) + 1);
+        bool finished = context.Spend(evaluated.Length + 1);
 
         if (finished)
         {
@@ -1324,7 +1342,9 @@ internal sealed class ValidationPlan
 
             foreach (JsonElement item in value.EnumerateArray())
             {
+                context.Push(index);
                 evaluated[index] |= all || index < _prefixItems.Length || (_contains is not null && Passes(_contains, item, context));
+                context.Pop();
                 index++;
             }
 

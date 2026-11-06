@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text;
 using System.Text.Json.Nodes;
 using Zorg.Json.Model;
+using Zorg.Json.Import;
 using Zorg.Json.Validation;
 
 namespace Zorg.Json.Emission;
@@ -57,6 +58,13 @@ internal sealed class JsonSchemaEmitter
     private readonly List<Site> _sites = [];
     private readonly List<LeavingDefinition> _leaving = [];
     private Dictionary<JsonObject, SchemaNode>? _resources;
+    private const string DocumentBase = SchemaImporter.DocumentBase;
+
+    private readonly Dictionary<JsonObject, string> _writtenBases = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The base URI of what is being written.</summary>
+    private string _base = DocumentBase;
+
     private HashSet<string>? _ids;
     private List<(JsonObject Schema, string Anchor)>? _anchors;
     private Pointing? _pointing;
@@ -397,12 +405,9 @@ internal sealed class JsonSchemaEmitter
             return null;
         }
 
-        // A reference by URI reads another resource, which stays where it is, so only the fragment can have changed.
-        if (!site.Text.StartsWith('#') && _options.ReferencePrefix is null && !IsOpenApi30 && Pointer(found, Owner(found)) is { } within)
+        if (!site.Text.StartsWith('#') && _options.ReferencePrefix is null && !IsOpenApi30 && UriReference(site, found) is { } spelled)
         {
-            int fragment = site.Text.IndexOf('#', StringComparison.Ordinal);
-            string uri = fragment < 0 ? site.Text : site.Text[..fragment];
-            site.Pointer = within == "#" ? uri : uri + within;
+            site.Pointer = spelled;
             return found;
         }
 
@@ -415,6 +420,66 @@ internal sealed class JsonSchemaEmitter
 
         site.Pointer = pointer;
         return place;
+    }
+
+    /// <summary>The base URI a written resource ended up with, or that of the document.</summary>
+    private string BaseOf(JsonObject? owner) =>
+        owner is not null && _writtenBases.TryGetValue(owner, out string? written) ? written : DocumentBase;
+
+    /// <summary>A URI resolved against a base, or null when it can't be read.</summary>
+    private static string? Resolve(string baseUri, string reference) =>
+        SchemaImporter.SplitUri(baseUri, reference) is { } resolved ? resolved.Uri : null;
+
+    /// <summary>
+    /// Spells a reference from the resource its target ended up in, which may have another <c>$id</c> than the document had, and
+    /// the pointer from there. The text of the document stays when it still reads the same. Null when the place can't be reached by URI.
+    /// </summary>
+    private string? UriReference(Site site, JsonNode place)
+    {
+        JsonObject? holder = Owner(place);
+        string target = BaseOf(holder);
+        string from = BaseOf(site.Owner);
+
+        if (Pointer(place, holder) is not { } within)
+        {
+            return null;
+        }
+
+        if (SchemaImporter.SplitUri(from, site.Text) is { } text && text.Uri == target
+            && (Decoded(text.Fragment) == Decoded(within) || (place is JsonObject schema && _pointing!.Anchors.TryGetValue(schema, out string? anchor) && text.Fragment == "#" + anchor)))
+        {
+            return site.Text;
+        }
+
+        if (target == from)
+        {
+            return within;
+        }
+
+        string? uri = target;
+
+        if (target.StartsWith(DocumentBase, StringComparison.Ordinal))
+        {
+            // The document has no base of its own, so only a relative reference can reach this.
+            uri = from.StartsWith(DocumentBase, StringComparison.Ordinal) ? Relative(from, target) : null;
+        }
+
+        return uri is null ? null : within == "#" ? uri : uri + within;
+    }
+
+    private static string? Relative(string from, string target)
+    {
+        string relative = new Uri(from).MakeRelativeUri(new Uri(target)).OriginalString;
+
+        foreach (string candidate in new[] { relative, "./" })
+        {
+            if (candidate.Length > 0 && Resolve(from, candidate) == target)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>The pointer to a place, from a resource or the document. Null when it can't be reached from there.</summary>
@@ -475,6 +540,7 @@ internal sealed class JsonSchemaEmitter
         _import = site.Scope;
         _isUnread = false;
         _definitions[name] = new JsonObject();
+        _base = BaseOf(site.Owner);
         _writingHome = true;
         JsonNode definition = EmitNode(Rewrite(target, isRoot: false) with { Defs = [] }, $"/{_profile.DefinitionsKeyword}/{Escape(name)}");
         _writingHome = false;
@@ -834,6 +900,7 @@ internal sealed class JsonSchemaEmitter
             source = source with { Id = keepsId ? source.Id : null, Anchor = null };
         }
 
+        string outerBase = _base;
         bool isResource = source.Id is { } id && !id.StartsWith('#');
         bool isImportRoot = source.Behavior.Location is { Length: 0 } && !isHome;
 
@@ -863,6 +930,7 @@ internal sealed class JsonSchemaEmitter
         {
             _fragments = outer;
             _import = outerImport;
+            _base = outerBase;
         }
     }
 
@@ -937,7 +1005,8 @@ internal sealed class JsonSchemaEmitter
     {
         string id = requested;
 
-        for (int suffix = 2; !(_ids ??= new(StringComparer.Ordinal)).Add(id.TrimEnd('#')); suffix++)
+        // Ids are compared as URIs: two nested ones with the same text are different under different bases.
+        for (int suffix = 2; !(_ids ??= new(StringComparer.Ordinal)).Add(Resolve(_base, id) ?? id.TrimEnd('#')); suffix++)
         {
             id = requested.TrimEnd('#') + "-" + suffix.ToString(CultureInfo.InvariantCulture);
         }
@@ -963,10 +1032,16 @@ internal sealed class JsonSchemaEmitter
         string? id = node.Id is null ? null : UniqueId(node.Id);
         Add(schema, "$id", id);
 
+        if (id is not null && !id.StartsWith('#') && Resolve(_base, id) is { } resolved)
+        {
+            _base = resolved;
+            _writtenBases[schema] = resolved;
+        }
+
         if (IsDraft07 && anchor is not null)
         {
             // Draft-07 spells the base and the anchor as one: http://x/y#anchor.
-            schema["$id"] = id + "#" + anchor;
+            schema["$id"] = id?.TrimEnd('#') + "#" + anchor;
         }
         else
         {
@@ -1336,7 +1411,16 @@ internal sealed class JsonSchemaEmitter
         Add(schema, "minLength", node.MinLength);
         Add(schema, "maxLength", node.MaxLength);
         Add(schema, "pattern", CoercionPattern(node) ?? node.Pattern);
-        Add(schema, "format", node.Format ?? NumberFormat(node));
+        if (node.Format is { } format && node.Behavior.FormatIsAnnotation && (IsDraft07 || IsOpenApi30) && StringFormats.IsKnown(format))
+        {
+            // Validators of these dialects may check format, and parsing doesn't, so writing it could reject what parsing accepts.
+            Unrepresentable("format", "Parsing doesn't check this format and a validator of this dialect may, so it's kept as x-inert-format. Import with Formats = FormatHandling.AssertKnown to state it.", location);
+            schema["x-inert-format"] = format;
+        }
+        else
+        {
+            Add(schema, "format", node.Format ?? NumberFormat(node));
+        }
         Add(schema, "contentEncoding", node.ContentEncoding);
         Add(schema, "contentMediaType", node.ContentMediaType);
 
@@ -1715,7 +1799,12 @@ internal sealed class JsonSchemaEmitter
         return true;
     }
 
-    /// <summary>True when a subschema that applies to the same value has an <c>if</c> that isn't written, so what it evaluates is lost.</summary>
+    /// <summary>True when a <c>oneOf</c> has to relax, and <c>anyOf</c> is taken, so <see cref="WriteOneOf"/> leaves it out.</summary>
+    private bool OneOfIsLeftOut(SchemaNode node) =>
+        !node.OneOf.IsEmpty && !node.AnyOf.IsEmpty && node.OneOf.Any(branch => !_exactness.IsExact(branch))
+        && !DiscriminatorKeys.TryBuild(node, out _) && !CannotOverlap(node.OneOf);
+
+    /// <summary>True when a subschema that applies to the same value has an <c>if</c> or a <c>oneOf</c> that isn't written, so what it evaluates is lost.</summary>
     private bool LosesEvaluations(SchemaNode root)
     {
         HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
@@ -1735,6 +1824,11 @@ internal sealed class JsonSchemaEmitter
             }
 
             if (node.If is { } condition && !_exactness.IsExact(condition, out _))
+            {
+                return true;
+            }
+
+            if (OneOfIsLeftOut(node))
             {
                 return true;
             }

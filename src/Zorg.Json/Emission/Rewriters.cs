@@ -58,7 +58,7 @@ public static class Rewriters
         Count("minItems", node => node.MinItems, node => node with { MinItems = null }),
         Count("maxItems", node => node.MaxItems, node => node with { MaxItems = null }),
         Flag("uniqueItems", node => node.UniqueItems, node => node with { UniqueItems = null }),
-        Named("patternProperties", node => node.PatternProperties, node => node with { PatternProperties = [] }),
+        Named("patternProperties", node => node.PatternProperties, ClearPatternProperties),
         Single("propertyNames", node => node.PropertyNames, node => node with { PropertyNames = null }),
         new("dependentRequired", DependentRequiredText, node => node with { DependentRequired = [] }),
         Named("dependentSchemas", node => node.DependentSchemas, node => node with { DependentSchemas = [] }),
@@ -245,8 +245,16 @@ public static class Rewriters
         ? null
         : string.Join(", ", node.DependentRequired.Select(rule => $"{rule.Key} needs {ListText(rule.Value)}"));
 
-    private static SchemaNode ClearPrefixItems(SchemaNode node) =>
-        node with { PrefixItems = [], Items = node.Items?.BooleanValue == false ? null : node.Items };
+    /// <summary>Without <c>prefixItems</c>, <c>items</c> would also apply to the items those covered.</summary>
+    private static SchemaNode ClearPrefixItems(SchemaNode node) => node with { PrefixItems = [], Items = null };
+
+    /// <summary>Without <c>patternProperties</c>, what closes the object would also apply to the properties those covered.</summary>
+    private static SchemaNode ClearPatternProperties(SchemaNode node) => node with
+    {
+        PatternProperties = [],
+        AdditionalProperties = null,
+        Behavior = node.Behavior.UnknownProperties == UnknownProperties.Reject ? node.Behavior with { UnknownProperties = UnknownProperties.Allow } : node.Behavior,
+    };
 
     private static Relocation Text(string keyword, Func<SchemaNode, string?> read, Func<SchemaNode, SchemaNode> clear) => new(keyword, read, clear);
 
@@ -394,13 +402,30 @@ public static class Rewriters
             }
 
             SchemaNode expanded = Walk(target with { Defs = [] });
+            SchemaNode beside = (node with
+            {
+                Ref = null,
+                Defs = [],
+                Description = null,
+                Behavior = SchemaBehavior.Empty with { UnknownProperties = node.Behavior.UnknownProperties },
+            }).MapChildren(Walk);
             _active.Remove(target);
 
-            return expanded with
+            SchemaNode inlined = expanded with
             {
                 Description = node.Description ?? expanded.Description,
                 Behavior = expanded.Behavior with { DefinitionName = null, Target = null, IsOptional = node.Behavior.IsOptional },
             };
+
+            // What sits beside a $ref applies as well, so both have to stay.
+            return beside == (SchemaNode.True with { BooleanValue = null, Behavior = beside.Behavior })
+                ? inlined
+                : beside with
+                {
+                    AllOf = [.. beside.AllOf, inlined with { Description = null, Behavior = inlined.Behavior with { IsOptional = false } }],
+                    Description = node.Description,
+                    Behavior = beside.Behavior with { IsOptional = node.Behavior.IsOptional },
+                };
         }
 
         private SchemaNode? Resolve(SchemaNode node)
@@ -560,6 +585,24 @@ public static class Rewriters
             foreach ((string keyword, JsonElement value) in node.Extensions.Where(extension => keywords.Contains(extension.Key)))
             {
                 Move(keyword, value.GetRawText());
+            }
+
+            // What these evaluate no longer counts, so anything that depends on it would reject what it allowed.
+            bool lostEvaluations = result.If != node.If || result.OneOf.Length != node.OneOf.Length || result.AnyOf.Length != node.AnyOf.Length
+                || result.AllOf.Length != node.AllOf.Length || result.DependentSchemas.Length != node.DependentSchemas.Length
+                || result.PatternProperties.Length != node.PatternProperties.Length || result.Contains != node.Contains
+                || result.PrefixItems.Length != node.PrefixItems.Length || result.Properties.Length != node.Properties.Length;
+
+            if (lostEvaluations && result.UnevaluatedProperties is { } properties)
+            {
+                Move("unevaluatedProperties", SchemaText(properties));
+                result = result with { UnevaluatedProperties = null };
+            }
+
+            if (lostEvaluations && result.UnevaluatedItems is { } items)
+            {
+                Move("unevaluatedItems", SchemaText(items));
+                result = result with { UnevaluatedItems = null };
             }
 
             if (moved.Count == 0)

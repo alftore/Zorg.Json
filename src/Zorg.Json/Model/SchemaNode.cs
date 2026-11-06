@@ -179,10 +179,10 @@ public sealed record SchemaNode
     /// <summary>The <c>else</c> keyword.</summary>
     public SchemaNode? Else { get; init; }
 
-    /// <summary>The <c>unevaluatedItems</c> keyword. Only honoured with no in-place applicators beside it.</summary>
+    /// <summary>The <c>unevaluatedItems</c> keyword.</summary>
     public SchemaNode? UnevaluatedItems { get; init; }
 
-    /// <summary>The <c>unevaluatedProperties</c> keyword. Only honoured with no in-place applicators beside it.</summary>
+    /// <summary>The <c>unevaluatedProperties</c> keyword.</summary>
     public SchemaNode? UnevaluatedProperties { get; init; }
 
     /// <summary>Unknown and <c>x-*</c> keywords, kept for emission. Empty when there are none.</summary>

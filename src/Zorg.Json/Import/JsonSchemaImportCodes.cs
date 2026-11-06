@@ -12,8 +12,8 @@ namespace Zorg.Json.Import;
 public static class JsonSchemaImportCodes
 {
     /// <summary>
-    /// A known keyword that Zorg can't honour, such as <c>$dynamicRef</c>, or <c>unevaluatedProperties</c> beside an
-    /// in-place applicator. Importing it anyway would silently loosen the schema.
+    /// A known keyword that Zorg can't honour, such as <c>$dynamicRef</c>.
+    /// Importing it anyway would silently loosen the schema.
     /// </summary>
     public const string UnsupportedKeyword = "unsupported_keyword";
 

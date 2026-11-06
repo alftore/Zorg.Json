@@ -98,7 +98,7 @@ public sealed class ImportEmitTests
     public void An_id_with_a_fragment_that_is_not_a_plain_name_is_refused()
     {
         JsonSchemaImportException exception = Assert.Throws<JsonSchemaImportException>(
-            () => Z.FromJsonSchema($$"""{ {{Draft07}}, "$id": "http://example.test/y#/a/b" }"""));
+            () => Z.FromJsonSchema($$"""{ {{Draft07}}, "$id": "http://example.test/y#a b" }"""));
 
         Assert.Equal(JsonSchemaImportCodes.InvalidSchema, exception.Code);
         Assert.Equal("/$id", exception.SchemaLocation);
