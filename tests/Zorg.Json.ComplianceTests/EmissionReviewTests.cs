@@ -633,16 +633,15 @@ public sealed class EmissionReviewTests
             """[{"p":1}]""");
 
     [Fact]
-    public void A_root_with_an_id_keeps_its_definitions_beside_a_reference_prefix()
+    public void A_root_with_an_id_gives_it_up_beside_a_reference_prefix()
     {
         JsonValueSchema schema = Import("""{"$id":"http://e.com/a","$defs":{"a":{"type":"string"}},"type":"array","items":{"$ref":"#/$defs/a"}}""");
         EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
         string text = result.Schema.ToJsonString();
 
-        Assert.Empty(result.Definitions);
-        Assert.Contains("\"$ref\":\"#/$defs/a\"", text, StringComparison.Ordinal);
-        Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, "[\"x\"]"), text);
-        Assert.False(Accepts(text, JsonSchemaProfile.Draft202012, "[1]"), text);
+        Assert.Single(result.Definitions);
+        Assert.DoesNotContain("$id", text, StringComparison.Ordinal);
+        Assert.Contains("\"$ref\":\"#/components/schemas/a-", text, StringComparison.Ordinal);
     }
 
     [Fact]

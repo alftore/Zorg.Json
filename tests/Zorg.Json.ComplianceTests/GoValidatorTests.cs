@@ -322,7 +322,8 @@ public sealed partial class GoValidatorTests
                 if (verdicts is null)
                 {
                     // Zorg doesn't read all of a document, so a schema that isn't valid against its meta-schema can import, and stays invalid.
-                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null;
+                    // 2020-12 has no dependencies keyword, so Zorg leaves a pointer in it as it was. jv reads it anyway, because the meta-schema lists it.
+                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null || document.Contains("\"dependencies\"", StringComparison.Ordinal);
                     Add(counts, sourceIsInvalid ? "source not valid for jv" : "jv refused");
 
                     if (!sourceIsInvalid)

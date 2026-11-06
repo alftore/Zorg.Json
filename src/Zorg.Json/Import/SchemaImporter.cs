@@ -73,12 +73,21 @@ internal sealed class SchemaImporter
         "propertyNames", "minProperties", "maxProperties", "allOf", "anyOf", "oneOf", "not",
     }.ToFrozenSet(StringComparer.Ordinal);
 
+    /// <summary>The base of a document without an <c>$id</c>, which only lets relative references resolve against each other.</summary>
+    private const string DocumentBase = "https://zorg.invalid/";
+
     private readonly JsonElement _root;
     private readonly JsonSchemaImportOptions _options;
     private readonly JsonSchemaImportDialect _dialect;
     private readonly Dictionary<string, SchemaNode> _nodes = new(StringComparer.Ordinal);
     private readonly Dictionary<SchemaNode, string> _locations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<(string Resource, string Name), string> _anchors = [];
+
+    /// <summary>Each base URI in the document, with the pointer of its resource. Nothing outside the document is read.</summary>
+    private readonly Dictionary<string, string> _resources = new(StringComparer.Ordinal) { [DocumentBase] = string.Empty };
+
+    /// <summary>The base URI of each resource, by its pointer.</summary>
+    private readonly Dictionary<string, string> _bases = new(StringComparer.Ordinal) { [string.Empty] = DocumentBase };
     private readonly List<PendingReference> _references = [];
     private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
@@ -129,7 +138,7 @@ internal sealed class SchemaImporter
 
     private SchemaNode Run()
     {
-        SchemaNode node = Build(_root, new Scope(string.Empty, string.Empty, 0, IsWalked: true));
+        SchemaNode node = Build(_root, new Scope(string.Empty, string.Empty, DocumentBase, 0, IsWalked: true));
         ResolveReferences();
         CheckInPlaceGraph();
         return node;
@@ -571,6 +580,17 @@ internal sealed class SchemaImporter
             }
 
             id = fragment == 0 && hasFragment ? null : hasFragment ? id[..fragment] : id;
+
+            if (id is not null && SplitUri(at.Base, id) is { } own)
+            {
+                scope = scope with { Base = own.Uri };
+
+                if (at.IsWalked)
+                {
+                    _resources.TryAdd(own.Uri, scope.Resource);
+                    _bases[scope.Resource] = own.Uri;
+                }
+            }
         }
 
         // Only the walked tree has anchors to refer to, and a second one of the same name would clash when read again.
@@ -871,21 +891,41 @@ internal sealed class SchemaImporter
         }
     }
 
+    /// <summary>A URI resolved against a base, split into the URI of a resource and its fragment with the <c>#</c>. Null when it can't be read.</summary>
+    private static (string Uri, string Fragment)? SplitUri(string baseUri, string reference)
+    {
+        if (!Uri.TryCreate(new Uri(baseUri), reference, out Uri? resolved))
+        {
+            return null;
+        }
+
+        string text = resolved.AbsoluteUri;
+        int fragment = text.IndexOf('#', StringComparison.Ordinal);
+        return fragment < 0 ? (text, "#") : (text[..fragment], text[fragment..]);
+    }
+
     private SchemaNode Find(PendingReference reference)
     {
         string location = reference.At.Keyword("$ref");
+        string resource = reference.At.Resource;
+        string text = reference.Text;
 
-        if (!reference.Text.StartsWith('#'))
+        if (!text.StartsWith('#'))
         {
-            throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{reference.Text}\" isn't local. Only #, JSON Pointers and $anchor names can be resolved, and nothing is fetched.");
+            if (SplitUri(reference.At.Base, text) is not { } resolved || !_resources.TryGetValue(resolved.Uri, out string? named))
+            {
+                throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{text}\" isn't in this document. A reference can reach #, a JSON Pointer, an $anchor and any $id in the document, and nothing is fetched.");
+            }
+
+            resource = named;
+            text = resolved.Fragment;
         }
 
-        string resource = reference.At.Resource;
-        string? pointer = PointerOf(reference.Text, resource);
+        string? pointer = PointerOf(text, resource);
 
         if (pointer is null)
         {
-            string name = Uri.UnescapeDataString(reference.Text[1..]);
+            string name = Uri.UnescapeDataString(text[1..]);
 
             pointer = _anchors.GetValueOrDefault((resource, name))
                 ?? throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"No $anchor is named \"{name}\".");
@@ -898,7 +938,7 @@ internal sealed class SchemaImporter
 
         if (Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False } target)
         {
-            return Build(target, new Scope(pointer, resource, 0, IsWalked: false));
+            return Build(target, new Scope(pointer, resource, _bases.GetValueOrDefault(resource, DocumentBase), 0, IsWalked: false));
         }
 
         string hint = IsOpenApi30 && reference.Text.StartsWith("#/components/", StringComparison.Ordinal)
@@ -1013,8 +1053,8 @@ internal sealed class SchemaImporter
         }
     }
 
-    /// <summary>Where a subschema is: its pointer, the root of its <c>$id</c> resource, and its depth.</summary>
-    private readonly record struct Scope(string Pointer, string Resource, int Depth, bool IsWalked)
+    /// <summary>Where a subschema is: its pointer, the root of its <c>$id</c> resource, its base URI, and its depth.</summary>
+    private readonly record struct Scope(string Pointer, string Resource, string Base, int Depth, bool IsWalked)
     {
         public string Keyword(string keyword) => $"{Pointer}/{Escape(keyword)}";
 

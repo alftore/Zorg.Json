@@ -40,11 +40,6 @@
       "code": "unresolved_ref",
       "reason": "$ref is local only in v1: #, JSON Pointer and $anchor. Remote, URN, absolute and relative-URI targets are refused, and nothing is fetched (note 05 A.4).",
       "cases": {
-        "draft2020-12/anchor.json": [
-          "Location-independent identifier with absolute URI",
-          "Location-independent identifier with base URI change in subschema",
-          "same $anchor with different base uri"
-        ],
         "draft2020-12/defs.json": [
           "validate definition against metaschema"
         ],
@@ -52,21 +47,7 @@
           "$ref to $dynamicRef finds detached $dynamicAnchor"
         ],
         "draft2020-12/ref.json": [
-          "remote ref, containing refs itself",
-          "Recursive references between schemas",
-          "refs with relative uris and defs",
-          "relative refs with absolute uris and defs",
-          "$id must be resolved against nearest parent, not just immediate parent",
-          "order of evaluation: $id and $ref",
-          "order of evaluation: $id and $ref on nested schema",
-          "simple URN base URI with $ref via the URN",
-          "URN base URI with URN and JSON pointer ref",
-          "URN base URI with URN and anchor ref",
-          "URN ref with nested pointer ref",
-          "ref to if",
-          "ref to then",
-          "ref to else",
-          "ref with absolute-path-reference"
+          "remote ref, containing refs itself"
         ],
         "draft2020-12/refRemote.json": [
           "remote ref",
@@ -89,21 +70,7 @@
           "validate definition against metaschema"
         ],
         "draft7/ref.json": [
-          "$ref prevents a sibling $id from changing the base uri",
-          "remote ref, containing refs itself",
-          "Recursive references between schemas",
-          "Reference an anchor with a non-relative URI",
-          "Location-independent identifier with base URI change in subschema",
-          "refs with relative uris and defs",
-          "relative refs with absolute uris and defs",
-          "$id must be resolved against nearest parent, not just immediate parent",
-          "simple URN base URI with $ref via the URN",
-          "URN base URI with URN and JSON pointer ref",
-          "URN base URI with URN and anchor ref",
-          "ref to if",
-          "ref to then",
-          "ref to else",
-          "ref with absolute-path-reference"
+          "remote ref, containing refs itself"
         ],
         "draft7/refRemote.json": [
           "remote ref",
@@ -122,17 +89,7 @@
           "validate definition against metaschema"
         ],
         "draft6/ref.json": [
-          "$ref prevents a sibling $id from changing the base uri",
-          "remote ref, containing refs itself",
-          "Recursive references between schemas",
-          "Reference an anchor with a non-relative URI",
-          "Location-independent identifier with base URI change in subschema",
-          "refs with relative uris and defs",
-          "relative refs with absolute uris and defs",
-          "simple URN base URI with $ref via the URN",
-          "URN base URI with URN and JSON pointer ref",
-          "URN base URI with URN and anchor ref",
-          "ref with absolute-path-reference"
+          "remote ref, containing refs itself"
         ],
         "draft6/refRemote.json": [
           "remote ref",
@@ -147,33 +104,11 @@
           "retrieved nested refs resolve relative to their URI not $id",
           "$ref to $ref finds location-independent $id"
         ],
-        "draft2020-12/optional/id.json": [
-          "$id inside an enum is not a real identifier"
-        ],
-        "draft2020-12/optional/unknownKeyword.json": [
-          "$id inside an unknown keyword is not a real identifier"
-        ],
-        "draft7/optional/id.json": [
-          "id inside an enum is not a real identifier"
-        ],
-        "draft7/optional/unknownKeyword.json": [
-          "$id inside an unknown keyword is not a real identifier"
-        ],
-        "draft6/optional/id.json": [
-          "id inside an enum is not a real identifier"
-        ],
-        "draft6/optional/unknownKeyword.json": [
-          "$id inside an unknown keyword is not a real identifier"
-        ],
         "draft4/definitions.json": [
           "validate definition against metaschema"
         ],
         "draft4/ref.json": [
-          "$ref prevents a sibling id from changing the base uri",
-          "remote ref, containing refs itself",
-          "Recursive references between schemas",
-          "Location-independent identifier with base URI change in subschema",
-          "id must be resolved against nearest parent, not just immediate parent"
+          "remote ref, containing refs itself"
         ],
         "draft4/refRemote.json": [
           "remote ref",
@@ -184,9 +119,6 @@
           "base URI change - change folder in subschema",
           "root ref in remote ref",
           "Location-independent identifier in remote ref"
-        ],
-        "draft4/optional/id.json": [
-          "id inside an enum is not a real identifier"
         ]
       }
     },

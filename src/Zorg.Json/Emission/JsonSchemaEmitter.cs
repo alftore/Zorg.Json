@@ -392,10 +392,26 @@ internal sealed class JsonSchemaEmitter
             return home;
         }
 
-        if (site.Scope.Find(location) is not { } place || Pointer(place, site.Owner) is not { } pointer)
+        if (site.Scope.Find(location) is not { } found)
         {
             return null;
         }
+
+        // A reference by URI reads another resource, which stays where it is, so only the fragment can have changed.
+        if (!site.Text.StartsWith('#') && _options.ReferencePrefix is null && !IsOpenApi30 && Pointer(found, Owner(found)) is { } within)
+        {
+            int fragment = site.Text.IndexOf('#', StringComparison.Ordinal);
+            string uri = fragment < 0 ? site.Text : site.Text[..fragment];
+            site.Pointer = within == "#" ? uri : uri + within;
+            return found;
+        }
+
+        if (Pointer(found, site.Owner) is not { } pointer)
+        {
+            return null;
+        }
+
+        JsonNode place = found;
 
         site.Pointer = pointer;
         return place;
@@ -810,8 +826,9 @@ internal sealed class JsonSchemaEmitter
         _writingHome = false;
         _fragments = null;
 
-        // OpenAPI 3.0 reads neither, so an imported node loses them, and a reference is read from the document.
-        if (IsOpenApi30 && source.Behavior.Location is not null)
+        // OpenAPI 3.0 reads neither, and a definition that leaves the document joins others, where a pointer has to read from the
+        // whole document. So an imported node loses them there.
+        if ((IsOpenApi30 || _options.ReferencePrefix is not null) && source.Behavior.Location is not null)
         {
             bool keepsId = location.Length == 0 && _options.ReferencePrefix is null;
             source = source with { Id = keepsId ? source.Id : null, Anchor = null };
