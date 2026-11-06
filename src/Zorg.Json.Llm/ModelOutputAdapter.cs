@@ -168,7 +168,8 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             return false;
         }
 
-        if (node.Behavior.UnknownProperties == UnknownProperties.Reject
+        // The profiles close what strips, so a model that keeps to the schema sends no property such a branch doesn't name.
+        if (node.Behavior.UnknownProperties is UnknownProperties.Reject or UnknownProperties.Strip
             && node.AdditionalProperties is null
             && value.Any(entry => node.Properties.All(property => property.Name != entry.Key)))
         {

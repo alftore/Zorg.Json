@@ -25,7 +25,7 @@ Providers accept only part of JSON Schema. A profile sends a reduced schema to t
 
 ## What a profile changes
 
-- Objects are closed, and for OpenAI every property becomes required, with optional ones turned nullable.
+- Objects are closed, except in `GeminiOpenApi`, and for OpenAI every property becomes required, with optional ones turned nullable. A `Z.AllOf` of plain objects becomes one object first, because closed objects reject each other's properties. Anything else there gets a diagnostic: use `.Extend(other)`.
 - Keywords the provider rejects move into `description`, so the model still sees them.
 - A root that isn't an object is wrapped in `{ "data": ... }` for OpenAI and Anthropic. `ParseModelOutput` unwraps it.
 - Recursion the provider can't take is cut to `{}`, which is looser, and reported. Pass `Unrepresentable = Throw` to fail instead. So is a definition that would be inlined more than a few thousand times, such as definitions that each use the next twice.

@@ -290,6 +290,11 @@ internal static class SchemaExactness
             return node.MinProperties is not null ? "minProperties" : "maxProperties";
         }
 
+        if (node.UniqueItems == true && ItemsCanBecomeEqual(node))
+        {
+            return "uniqueItems";
+        }
+
         // What it lands on depends on the dynamic scope, so nothing can be said from its static target.
         if (node.DynamicRef is not null)
         {
@@ -351,6 +356,43 @@ internal static class SchemaExactness
                 yield return ($"/{keyword}", child);
             }
         }
+    }
+
+    /// <summary><c>uniqueItems</c> compares the items as parsing leaves them, so two items that differ only in what's stripped count as equal.</summary>
+    private static bool ItemsCanBecomeEqual(SchemaNode node)
+    {
+        HashSet<SchemaNode> seen = new(ReferenceEqualityComparer.Instance);
+        Stack<SchemaNode> pending = new(node.PrefixItems);
+
+        if (node.Items is { } items)
+        {
+            pending.Push(items);
+        }
+
+        while (pending.TryPop(out SchemaNode? current))
+        {
+            if (!seen.Add(current))
+            {
+                continue;
+            }
+
+            if (current.Behavior.UnknownProperties == UnknownProperties.Strip || current.Behavior.FillDefault)
+            {
+                return true;
+            }
+
+            foreach (SchemaNode child in current.Children)
+            {
+                pending.Push(child);
+            }
+
+            if (current.Behavior.Target is { } target)
+            {
+                pending.Push(target());
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Property counts apply after Strip and Default, which the input schema can't see, so it leaves them out.</summary>

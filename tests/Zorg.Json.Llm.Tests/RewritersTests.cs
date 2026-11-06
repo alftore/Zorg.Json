@@ -61,6 +61,39 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void CloseAllObjects_makes_one_object_of_an_allOf()
+    {
+        ObjectSchema a = Z.Object().Property("a", Z.Integer());
+        ObjectSchema b = Z.Object().Property("b", Z.String().Optional());
+
+        Assert.Equal(
+            """{"type":"object","properties":{"a":{"type":"integer","format":"int64"},"b":{"type":"string"}},"required":["a"],"additionalProperties":false}""",
+            Json(Z.AllOf(a, b), Rewriters.CloseAllObjects));
+    }
+
+    [Fact]
+    public void CloseAllObjects_reports_an_allOf_it_can_not_make_one_object_of()
+    {
+        ObjectSchema a = Z.Object().Property("a", Z.Integer());
+        ObjectSchema other = Z.Object().Property("a", Z.String());
+
+        Assert.Contains(Z.AllOf(a, other).Emit(With(Rewriters.CloseAllObjects)).Diagnostics, diagnostic => diagnostic.Keyword == "allOf");
+    }
+
+    [Fact]
+    public void Model_output_never_silently_loses_a_property_of_a_branch()
+    {
+        ObjectSchema basic = Z.Object().Property("a", Z.Integer());
+        ObjectSchema extended = Z.Object().Property("a", Z.Integer()).Property("c", Z.String().Optional()).Property("d", Z.String().Optional());
+        ObjectSchema open = Z.Object().Property("r", Z.OneOf(basic, extended));
+        ObjectSchema strict = Z.Object().Property("r", Z.OneOf(basic.Strict(), extended.Strict()));
+        const string Text = """{"r":{"a":1,"c":"x","d":null}}""";
+
+        Assert.False(open.ParseModelOutput(open.Emit(LlmProfiles.OpenAIStrict), Text).IsSuccess);
+        Assert.Equal("""{"r":{"a":1,"c":"x"}}""", strict.ParseModelOutput(strict.Emit(LlmProfiles.OpenAIStrict), Text).Value.GetRawText());
+    }
+
+    [Fact]
     public void RequireAllAsNullable_leaves_nullable_properties_alone()
     {
         ObjectSchema schema = Z.Object().Strict().Property("a", Z.AnyOf(Z.String(), Z.Null()).Optional());

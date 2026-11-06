@@ -36,8 +36,8 @@ public abstract class ObjectSchemaBase<T, TSelf> : Schema<T, TSelf>
     public TSelf Strict() => WithUnknownProperties(UnknownProperties.Reject);
 
     /// <summary>
-    /// Accepts unknown properties and removes them from the result, which is already the default. The input schema leaves
-    /// <c>additionalProperties</c> out, and the output schema has <c>additionalProperties: false</c>. Zod equivalent: <c>.strip()</c>.
+    /// Accepts unknown properties and removes them from the result, which is already the default. The schema leaves
+    /// <c>additionalProperties</c> out. Zod equivalent: <c>.strip()</c>, except that Zod's output schema closes the object.
     /// </summary>
     /// <returns>A new schema.</returns>
     /// <example>

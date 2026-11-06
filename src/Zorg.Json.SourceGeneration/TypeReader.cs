@@ -238,13 +238,15 @@ internal static class TypeReader
                 pending.Push(array.ElementType);
             }
 
-            if (current is INamedTypeSymbol { IsGenericType: true } wrapper && wrapper.OriginalDefinition.ToDisplayString() is "System.Nullable<T>" or "Zorg.Json.Optional<T>")
+            if (current is INamedTypeSymbol { IsGenericType: true } wrapper && wrapper.OriginalDefinition.ToDisplayString() is "System.Nullable<T>" or "Zorg.Json.Optional<T>" or "System.Memory<T>" or "System.ReadOnlyMemory<T>")
             {
                 pending.Push(((INamedTypeSymbol)current).TypeArguments[0]);
             }
 
             // Only the items of a collection count. A type argument says nothing by itself: IComparable<T> or Func<T> gets no metadata.
-            INamedTypeSymbol? items = SelfAndInterfaces(current).FirstOrDefault(candidate => candidate.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T);
+            INamedTypeSymbol? items = SelfAndInterfaces(current).FirstOrDefault(candidate =>
+                candidate.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T
+                || candidate.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.IAsyncEnumerable<T>");
 
             if (items is not null)
             {

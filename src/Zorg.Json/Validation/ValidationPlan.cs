@@ -35,6 +35,9 @@ internal sealed class ValidationPlan
     private readonly ValidationPlan? _contains;
     private readonly FrozenDictionary<string, ValidationPlan> _properties;
     private readonly FrozenSet<string>? _namesIgnoringCase;
+
+    /// <summary>Names a rule asks for without declaring them. Stripping one would leave a result that breaks the rule it passed.</summary>
+    private readonly FrozenSet<string> _namedByRules;
     private readonly ImmutableArray<(string Name, Regex Pattern, ValidationPlan Plan)> _patternProperties;
     private readonly ValidationPlan? _additionalProperties;
     private readonly string _itemsKeyword;
@@ -100,6 +103,7 @@ internal sealed class ValidationPlan
         _namesIgnoringCase = node.Behavior.IgnoresNameCase
             ? node.Properties.Select(property => property.Name).ToFrozenSet(StringComparer.OrdinalIgnoreCase)
             : null;
+        _namedByRules = node.Required.Concat(node.DependentRequired.SelectMany(rule => rule.Value.Prepend(rule.Key))).ToFrozenSet(StringComparer.Ordinal);
         _patternProperties = [.. node.PatternProperties.Select(property => (property.Name, PatternCompiler.Compile(property.Name), Get(property.Schema, plans)))];
         _additionalProperties = Single(node.AdditionalProperties ?? (_unevaluatedProperties is null ? node.UnevaluatedProperties : null));
         _additionalKeyword = node.AdditionalProperties is null ? "unevaluatedProperties" : "additionalProperties";
@@ -857,7 +861,10 @@ internal sealed class ValidationPlan
                 covered = true;
             }
 
-            foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in _patternProperties)
+            // The serializer would bind it to the property past its rules, whatever else would have taken it.
+            bool isVariant = !covered && _namesIgnoringCase?.Contains(name) == true;
+
+            foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in isVariant ? [] : _patternProperties)
             {
                 // Only the match is guarded: an exception from the plan below is a caller's, and passes through.
                 bool matched;
@@ -886,13 +893,18 @@ internal sealed class ValidationPlan
 
             bool keep = true;
 
-            if (!covered)
+            if (isVariant && _node.Behavior.UnknownProperties == UnknownProperties.Strip)
             {
-                if (_namesIgnoringCase?.Contains(name) == true && _node.Behavior.UnknownProperties != UnknownProperties.Strip)
-                {
-                    (unknown ??= []).Add(name);
-                }
-                else if (_closedBy is not null)
+                keep = false;
+                context.Rewritten();
+            }
+            else if (isVariant)
+            {
+                (unknown ??= []).Add(name);
+            }
+            else if (!covered)
+            {
+                if (_closedBy is not null)
                 {
                     (unknown ??= []).Add(name);
                 }
@@ -906,7 +918,7 @@ internal sealed class ValidationPlan
                 {
                     (unknown ??= []).Add(name);
                 }
-                else if (_node.Behavior.UnknownProperties == UnknownProperties.Strip)
+                else if (_node.Behavior.UnknownProperties == UnknownProperties.Strip && !_namedByRules.Contains(name))
                 {
                     keep = false;
                     context.Rewritten();
@@ -1030,12 +1042,15 @@ internal sealed class ValidationPlan
                 return right;
             }
 
-            bool aligned = original.ValueKind == JsonValueKind.Array && original.GetArrayLength() == count;
+            // An index into an element walks it from the start, so each array is read once.
+            JsonElement[] lefts = [.. left.EnumerateArray()];
+            JsonElement[] rights = [.. right.EnumerateArray()];
+            JsonElement[]? before = original.ValueKind == JsonValueKind.Array && original.GetArrayLength() == count ? [.. original.EnumerateArray()] : null;
             List<JsonElement> items = new(count);
 
             for (int index = 0; index < count; index++)
             {
-                items.Add(Merge(aligned ? original[index] : default, left[index], right[index], context, depth + 1));
+                items.Add(Merge(before is null ? default : before[index], lefts[index], rights[index], context, depth + 1));
             }
 
             return JsonStrings.ToArray(items);
@@ -1071,9 +1086,9 @@ internal sealed class ValidationPlan
 
     private bool Kept(string name, ValidationContext context) =>
         _node.Behavior.UnknownProperties != UnknownProperties.Strip
-        || _additionalProperties is not null
         || _properties.ContainsKey(name)
-        || _patternProperties.Any(entry => Matches(entry.Pattern, name, context));
+        || (_namesIgnoringCase?.Contains(name) != true
+            && (_additionalProperties is not null || _namedByRules.Contains(name) || _patternProperties.Any(entry => Matches(entry.Pattern, name, context))));
 
     private static bool Matches(Regex pattern, string name, ValidationContext context)
     {
@@ -1135,6 +1150,7 @@ internal sealed class ValidationPlan
         JsonElement result = value;
         int rewrites = context.RewriteCount;
         bool rewritten = false;
+        bool unchanged = false;
 
         void Keep(JsonElement candidate)
         {
@@ -1143,6 +1159,10 @@ internal sealed class ValidationPlan
                 result = rewritten ? Merge(value, result, candidate, context, 0) : candidate;
                 rewritten = true;
                 rewrites = context.RewriteCount;
+            }
+            else
+            {
+                unchanged = true;
             }
         }
 
@@ -1196,7 +1216,8 @@ internal sealed class ValidationPlan
             }
         }
 
-        return result;
+        // A branch that left the value alone kept all of it, which counts like any other branch.
+        return rewritten && unchanged ? Merge(value, result, value, context, 0) : result;
     }
 
     /// <summary>

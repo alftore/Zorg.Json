@@ -162,7 +162,7 @@ public static class Z
     /// <summary>
     /// Creates a schema for JSON objects. Unknown properties are accepted and removed from the result until told otherwise:
     /// use <see cref="ObjectSchemaBase{T, TSelf}.Strict"/> to reject them. JSON Schema: <c>type: object</c>, with no
-    /// <c>additionalProperties</c> in the input schema. Zod equivalent: <c>z.object()</c>.
+    /// <c>additionalProperties</c>. Zod equivalent: <c>z.object()</c>.
     /// </summary>
     /// <returns>A new schema.</returns>
     /// <example>

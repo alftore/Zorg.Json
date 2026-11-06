@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Zorg.Json.Model;
 
@@ -24,6 +25,14 @@ internal sealed class ContractSeeder
     private readonly HashSet<Type> _inProgress = [];
 
     private ContractSeeder(JsonSerializerOptions options) => _options = options;
+
+    /// <summary>
+    /// The contract says no to unknown properties itself, or gives them a meaning: under <see cref="ReferenceHandler.Preserve"/>
+    /// the serializer reads <c>$id</c> and <c>$ref</c>, and removing them would change what it builds.
+    /// </summary>
+    private bool IsClosed(JsonTypeInfo typeInfo) =>
+        (typeInfo.UnmappedMemberHandling ?? _options.UnmappedMemberHandling) == JsonUnmappedMemberHandling.Disallow
+        || _options.ReferenceHandler == ReferenceHandler.Preserve;
 
     public static SchemaNode Seed(JsonTypeInfo typeInfo)
     {
@@ -204,7 +213,7 @@ internal sealed class ContractSeeder
             Required = required.ToImmutable(),
             Behavior = new SchemaBehavior
             {
-                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : UnknownProperties.Strip,
+                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : IsClosed(typeInfo) ? UnknownProperties.Reject : UnknownProperties.Strip,
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };

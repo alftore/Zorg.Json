@@ -356,12 +356,12 @@ public sealed class UntypedSchemaTests
     }
 
     [Fact]
-    public void Strip_is_open_on_input_and_closed_on_output()
+    public void Strip_is_open_in_both_directions()
     {
         ObjectSchema schema = Z.Object().Strip();
 
         Assert.False(schema.ToJsonSchema().ContainsKey("additionalProperties"));
-        Assert.False(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]!.GetValue<bool>());
+        Assert.False(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output }).ContainsKey("additionalProperties"));
         Assert.False(Z.Object().Passthrough().ToJsonSchema().ContainsKey("additionalProperties"));
     }
 

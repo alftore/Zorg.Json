@@ -192,7 +192,7 @@ A schema that Zorg emits and that Zod reads back is therefore stricter for `uuid
 
 ### Objects inside AllOf
 
-Every branch of `Z.AllOf` sees the original value and rewrites it on its own, and the results are merged, as in Zod. A property stays if any branch keeps it, so with one branch for `a` and another for `b`, `{"a":1,"b":"y","x":2}` comes back as `{"a":1,"b":"y"}`. When two branches change one value to different results, the later branch wins, where Zod reports an error. Past 256 levels of nesting the later result stands as it is. In the output schema, objects under `allOf` aren't closed, because each branch only knows its own properties.
+Every branch of `Z.AllOf` sees the original value and rewrites it on its own, and the results are merged, as in Zod. A property stays if any branch keeps it, so with one branch for `a` and another for `b`, `{"a":1,"b":"y","x":2}` comes back as `{"a":1,"b":"y"}`. When two branches change one value to different results, the later branch wins, where Zod reports an error. A branch that changes nothing keeps all of it, so `Z.AllOf(a, Z.Any())` keeps everything. Past 256 levels of nesting the later result stands as it is.
 
 ## Not in Zorg.Json
 

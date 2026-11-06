@@ -2,9 +2,14 @@
 
 ## Unreleased
 
-**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input schema no longer writes `additionalProperties: false`, and the output schema still does. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. Imported schemas are unchanged, and the LLM profiles still close every object. `oneOf` of objects with no property to tell them apart can now be written as `anyOf` when a branch isn't exact, because open objects don't exclude each other.
+**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
 
-- `Z.AllOf` now merges what its branches rewrite, as Zod does. It used to keep the last rewrite, so objects that strip lost each other's properties. In the output schema, objects under `allOf` are no longer closed, which could accept nothing.
+Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject what it accepted: two branches with only optional properties both match `{"a":1}`, which is `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches. For the same reason such a `oneOf` can be written as `anyOf` when a branch isn't exact, and a `Z.AnyOf` returns what its first matching branch keeps.
+
+- `Z.AllOf` now merges what its branches rewrite, as Zod does, and a property stays if any branch keeps it. It used to keep the last rewrite, so objects that strip lost each other's properties.
+- The LLM profiles turn a `Z.AllOf` of plain objects into one object before closing it. Anything else there gets a diagnostic, because closed objects reject each other's properties.
+- `.Strip()` no longer writes `additionalProperties: false` to the output schema, and keeps a name that `DependentRequired` asks for.
+- A case variant of a property is no longer taken by `AdditionalProperties` or `PatternProperty`, which let it bind past the rules of the property.
 - A deep instance is no longer rejected under `$dynamicRef` or `$recursiveRef` beside `anyOf`, `oneOf` and `unevaluated*`. Finding what was evaluated doubled with the depth there and ran out of steps at about 13 levels.
 - A reference copied out of its resource no longer keeps a `#name` that can't be found where it landed. A `$ref` is written as a pointer, and a `$dynamicRef` is left out with a diagnostic.
 - An embedded `$schema` that isn't the target's is written as `x-inert-$schema`, so a bundled 2020-12 resource can be loaded as draft-07.

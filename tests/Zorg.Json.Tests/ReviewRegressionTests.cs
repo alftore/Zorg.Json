@@ -266,6 +266,34 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void A_case_variant_goes_past_nothing_that_would_take_it()
+    {
+        ObjectSchema<Plain> schema = Schema.Object<Plain>().Property(p => p.Age, s => s.Maximum(5));
+
+        Assert.Equal(1, schema.AdditionalProperties(Z.Any()).Parse("""{ "age": 1, "AGE": 999 }""").Age);
+        Assert.Equal(1, schema.PatternProperty("^A", Z.Any()).Parse("""{ "age": 1, "AGE": 999 }""").Age);
+    }
+
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    private sealed record Closed(int A);
+
+    [Fact]
+    public void A_contract_that_disallows_unknown_properties_is_closed()
+    {
+        Assert.False(Schema.Object<Closed>().SafeParse("""{ "A": 1, "other": 5 }""").IsSuccess);
+        Assert.False(Schema.Object<Closed>().ToJsonSchema()["additionalProperties"]!.GetValue<bool>());
+        Assert.False(Schema.Object<Plain>(new JsonSerializerOptions(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow }).SafeParse("""{ "age": 1, "other": 5 }""").IsSuccess);
+    }
+
+    [Fact]
+    public void Metadata_of_preserved_references_is_not_stripped()
+    {
+        JsonSerializerOptions options = new(JsonSerializerDefaults.Web) { ReferenceHandler = ReferenceHandler.Preserve };
+
+        Assert.False(Schema.Object<Plain>(options).SafeParse("""{ "$id": "1", "age": 1 }""").IsSuccess);
+    }
+
+    [Fact]
     public void Case_variants_of_a_property_cannot_bypass_its_rules()
     {
         ObjectSchema<Plain> schema = Schema.Object<Plain>().Passthrough().Property(p => p.Age, s => s.Maximum(5));

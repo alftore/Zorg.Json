@@ -285,6 +285,8 @@ public static class Rewriters
     {
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
         {
+            node = Flatten(node, context);
+
             if (!node.Types.HasFlag(JsonTypes.Object) && node.Properties.IsEmpty)
             {
                 return node;
@@ -304,6 +306,47 @@ public static class Rewriters
             context.Report(new EmitDiagnostic("additionalProperties", $"{context.Options.Target.Name} needs closed objects, so additionalProperties can't be stated."));
             return Annotate(closed, $"Must also satisfy: additionalProperties {SchemaText(node.AdditionalProperties)}.", context);
         }
+
+        /// <summary>Closed objects in an <c>allOf</c> reject each other's properties, so objects that only list properties become one object.</summary>
+        private static SchemaNode Flatten(SchemaNode node, RewriteContext context)
+        {
+            bool nodeIsObject = !node.Properties.IsEmpty;
+
+            if (node.AllOf.Count(IsObject) + (nodeIsObject ? 1 : 0) < 2)
+            {
+                return node;
+            }
+
+            Dictionary<string, SchemaProperty> properties = new(StringComparer.Ordinal);
+            bool canFlatten = node.AllOf.All(IsPlainObject);
+
+            foreach (SchemaProperty property in node.AllOf.SelectMany(branch => branch.Properties).Concat(node.Properties))
+            {
+                canFlatten &= !properties.TryGetValue(property.Name, out SchemaProperty? other) || other == property;
+                properties[property.Name] = property;
+            }
+
+            if (!canFlatten)
+            {
+                context.Report(new EmitDiagnostic("allOf", $"{context.Options.Target.Name} needs closed objects, and closed objects in an allOf reject each other's properties, so no value can pass. Use Extend."));
+                return node;
+            }
+
+            return node with
+            {
+                Types = node.Types == JsonTypes.None ? JsonTypes.Object : node.Types,
+                AllOf = [],
+                Properties = [.. properties.Values],
+                Required = [.. node.Required.Concat(node.AllOf.SelectMany(branch => branch.Required)).Distinct(StringComparer.Ordinal)],
+            };
+        }
+
+        private static bool IsObject(SchemaNode node) => !node.Properties.IsEmpty || node.Types.HasFlag(JsonTypes.Object);
+
+        private static bool IsPlainObject(SchemaNode node) =>
+            node.Types == JsonTypes.Object
+            && node is { Ref: null, DynamicRef: null, Not: null, If: null, AdditionalProperties: null, PropertyNames: null, MinProperties: null, MaxProperties: null, UnevaluatedProperties: null }
+            && node.AllOf.IsEmpty && node.AnyOf.IsEmpty && node.OneOf.IsEmpty && node.PatternProperties.IsEmpty && node.DependentRequired.IsEmpty && node.DependentSchemas.IsEmpty;
     }
 
     private sealed class RequireAllRewriter : ISchemaRewriter

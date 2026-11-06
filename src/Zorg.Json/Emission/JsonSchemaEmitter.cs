@@ -76,8 +76,6 @@ internal sealed class JsonSchemaEmitter
     private Pointing? _pointing;
     private bool _writingHome;
 
-    private int _underAllOf;
-
     /// <summary>The home being written sits in another resource than what it copies, where a dynamic name would read differently.</summary>
     private bool _homeIsAway;
     private bool _isUnread;
@@ -1105,8 +1103,8 @@ internal sealed class JsonSchemaEmitter
             _writtenBases[schema] = resolved;
         }
 
-        // 2019-09 allows more in a name than 2020-12 does. A reference to it is written as a pointer.
-        if (!IsDraft07 && anchor is not null && !IsPlainAnchor(anchor))
+        // 2019-09 allows more in a name than 2020-12 does, and than reading it back here does. A reference to it is written as a pointer.
+        if (anchor is not null && !IsPlainAnchor(anchor))
         {
             anchor = null;
         }
@@ -1658,8 +1656,7 @@ internal sealed class JsonSchemaEmitter
         {
             schema["additionalProperties"] = EmitNode(node.AdditionalProperties, $"{location}/additionalProperties");
         }
-        else if (node.Behavior.UnknownProperties == UnknownProperties.Reject
-            || (node.Behavior.UnknownProperties == UnknownProperties.Strip && !IsInput && _underAllOf == 0))
+        else if (node.Behavior.UnknownProperties == UnknownProperties.Reject)
         {
             schema["additionalProperties"] = false;
         }
@@ -1737,10 +1734,7 @@ internal sealed class JsonSchemaEmitter
 
     private void WriteApplicators(JsonObject schema, SchemaNode node, List<string> notes, string location)
     {
-        // The branches of an allOf merge in the result, so a branch that strips can't say the others' properties aren't there.
-        _underAllOf++;
         WriteList(schema, "allOf", node.AllOf, location);
-        _underAllOf--;
         WriteList(schema, "anyOf", node.AnyOf, location);
         WriteOneOf(schema, node, notes, location);
 

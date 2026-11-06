@@ -15,10 +15,10 @@ public sealed class UnknownPropertiesTests
     }
 
     [Fact]
-    public void The_input_schema_leaves_the_keyword_out_and_the_output_schema_closes()
+    public void Both_schemas_leave_the_keyword_out()
     {
         Assert.Null(A.ToJsonSchema()["additionalProperties"]);
-        Assert.False(A.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]!.GetValue<bool>());
+        Assert.Null(A.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]);
     }
 
     [Fact]
@@ -80,12 +80,60 @@ public sealed class UnknownPropertiesTests
         Assert.False(Z.AllOf(A.Strict(), B.Strict()).SafeParse("""{"a":1,"b":"y"}""").IsSuccess);
     }
 
-    [Fact]
-    public void The_output_schema_of_an_allOf_does_not_contradict_itself()
+    [Theory]
+    [InlineData("""{"a":1,"x":2}""")]
+    public void A_branch_that_changes_nothing_keeps_what_it_saw(string json)
     {
-        string text = Z.AllOf(A, B).ToJsonSchema(new() { Direction = SchemaDirection.Output }).ToJsonString();
+        Assert.Equal(json, Z.AllOf(A, Z.Object().Passthrough()).Parse(json).GetRawText());
+        Assert.Equal(json, Z.AllOf(Z.Object().Passthrough(), A).Parse(json).GetRawText());
+        Assert.Equal(json, Z.AllOf(A, Z.Any()).Parse(json).GetRawText());
+    }
 
-        Assert.DoesNotContain("additionalProperties", text, System.StringComparison.Ordinal);
+    [Fact]
+    public void A_long_array_under_allOf_stays_cheap()
+    {
+        string json = "[" + string.Join(',', System.Linq.Enumerable.Repeat("""{"a":1,"b":"y","x":2}""", 100_000)) + "]";
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+
+        ParseResult<System.Text.Json.JsonElement> result = Z.AllOf(Z.Array(A), Z.Array(B)).SafeParse(json);
+
+        Assert.True(clock.Elapsed < System.TimeSpan.FromSeconds(30), clock.Elapsed.ToString());
+        Assert.True(result.IsSuccess || result.Issues.Length > 0);
+    }
+
+    [Fact]
+    public void The_output_schema_does_not_close_what_parsing_leaves_open()
+    {
+        SchemaOptionsCheck(Z.If(Z.Object().Property("k", Z.String().Const("x")), Z.Object().Passthrough().Property("b", Z.Integer()), Z.Never()));
+        SchemaOptionsCheck(Z.Array().Contains(Z.Object().Property("a", Z.String())));
+        SchemaOptionsCheck(Z.AllOf(A, B));
+
+        static void SchemaOptionsCheck<T>(Schema<T> schema) =>
+            Assert.DoesNotContain("additionalProperties", schema.ToJsonSchema(new() { Direction = SchemaDirection.Output }).ToJsonString(), System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_name_a_rule_asks_for_stays()
+    {
+        ObjectSchema schema = Z.Object().Property("a", Z.Integer().Optional()).DependentRequired("a", "b");
+
+        Assert.Equal("""{"a":1,"b":2}""", schema.Parse("""{"a":1,"b":2}""").GetRawText());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Items_that_differ_only_in_what_is_stripped_are_equal_to_uniqueItems(bool negated)
+    {
+        ArraySchema<System.Text.Json.JsonElement> unique = Z.Array(Z.Object().Property("a", Z.String())).UniqueItems();
+        const string Json = """[{"a":"1","x":1},{"a":"1","x":2}]""";
+
+        Assert.False(unique.SafeParse(Json).IsSuccess);
+
+        if (negated)
+        {
+            Assert.DoesNotContain("uniqueItems", Z.Not(unique).ToJsonSchema().ToJsonString(), System.StringComparison.Ordinal);
+        }
     }
 
     [Fact]

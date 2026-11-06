@@ -110,7 +110,7 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Unknown properties** are removed, unless the type has `[JsonExtensionData]`, which keeps them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is removed, and rejected with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
-- **Computed properties** with no setter aren't accepted as input, but appear in the output schema.
+- **Computed properties** with no setter count as unknown on input, so they're removed, or rejected with `.Strict()`. They appear in the output schema.
 - **`[JsonPolymorphic]` hierarchies** become a discriminated union. System.Text.Json expects the discriminator first unless `AllowOutOfOrderMetadataProperties` is set.
 
 A `required` member can't be made optional with `.Optional` or `.Omit`, because System.Text.Json would then fail on it. `DateTime` and `TimeOnly` have no `format`, because System.Text.Json writes them without an offset.
@@ -258,18 +258,27 @@ Search.Parse("""{ "query": "a", "extra": 1 }""");            // { "query": "a" }
 Search.Strict().SafeParse("""{ "query": "a", "extra": 1 }"""); // fails with unrecognized_keys
 ```
 
-| Method | Unknown properties | Input schema | Output schema |
-|---|---|---|---|
-| `.Strip()` (default) | Accepted and removed from the result | `additionalProperties` left out | `additionalProperties: false` |
-| `.Strict()` | Fail with `unrecognized_keys` | `additionalProperties: false` | `additionalProperties: false` |
-| `.Passthrough()` | Accepted and kept | `additionalProperties` left out | `additionalProperties` left out |
-| `.AdditionalProperties(schema)` | Validated against `schema` | That schema | That schema |
+| Method | Unknown properties | Schema |
+|---|---|---|
+| `.Strip()` (default) | Accepted and removed from the result | `additionalProperties` left out |
+| `.Strict()` | Fail with `unrecognized_keys` | `additionalProperties: false` |
+| `.Passthrough()` | Accepted and kept | `additionalProperties` left out |
+| `.AdditionalProperties(schema)` | Validated against `schema` | That schema |
+
+The input and output schemas say the same here.
 
 Turn on `.Strict()` when an unknown property is more likely a mistake than a newer client. Without it, a misspelled optional property such as `"limt": 5` is dropped with no error, and the default value applies. A misspelled required property still fails, as `required`.
 
-`.Strict()` applies to that one object. Each object inside it has its own setting.
+`.Strict()` applies to that one object. Each object inside it has its own setting. A typed schema is also closed when its contract says so: `JsonUnmappedMemberHandling.Disallow`, on the type or in the options, works like `.Strict()` for every type it covers. So does `ReferenceHandler.Preserve`, whose `$id` and `$ref` mean something to the serializer.
 
-The output schema is closed by default because the result can't hold anything else. Imported schemas don't use this default: they follow the document, so a missing `additionalProperties` keeps unknown properties. The LLM profiles close every object themselves, because providers ask for it. See [the LLM guide](llm.md).
+A name that `DependentRequired` asks for stays in the result, even if no property declares it.
+
+Open objects don't exclude each other, which matters in a union:
+
+- `Z.OneOf` needs exactly one branch to match. Two open objects with only optional properties both match `{"a":1}`, so it fails with `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches.
+- `Z.AnyOf` takes the first branch that matches, and that branch removes what it doesn't know. Put the branch with the most properties first, as in Zod.
+
+Imported schemas don't use this default: they follow the document, so a missing `additionalProperties` keeps unknown properties. The LLM profiles for OpenAI, Anthropic and Gemini's JSON Schema close every object, because providers ask for it, and turn objects in `Z.AllOf` into one object first. See [the LLM guide](llm.md).
 
 ## Refinements
 
@@ -455,7 +464,7 @@ Following the JSON Schema 2020-12 output format, `EvaluationPath` lists the keyw
 
 ### Size bounds stop early
 
-An array longer than `maxItems`, or an object with more than `maxProperties` properties, reports `too_big` and its items or properties are not validated, so a huge document can't make the parser do work for a result that is already invalid. `contains`, `uniqueItems` and refinements are skipped for it too, so its issue list holds only the size issue. `maxProperties` counts the final object after `Strip` and `Default`, so a schema that strips unknown properties still checks them.
+An array longer than `maxItems`, or an object that doesn't strip with more than `maxProperties` properties, reports `too_big` and its items or properties are not validated, so a huge document can't make the parser do work for a result that is already invalid. `contains`, `uniqueItems` and refinements are skipped for it too, so its issue list holds only the size issue. `maxProperties` counts the final object after `Strip` and `Default`, so a schema that strips unknown properties still checks them.
 
 ## Evaluation limits
 

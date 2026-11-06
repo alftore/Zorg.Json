@@ -99,7 +99,7 @@ public sealed class TypedObjectSchemaTests
     {
         Assert.True(PersonSchema.SafeParse(Change("unknown", "1")).IsSuccess);
         Assert.Null(PersonSchema.ToJsonSchema()["additionalProperties"]);
-        Assert.False(PersonSchema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]!.GetValue<bool>());
+        Assert.Null(PersonSchema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]);
     }
 
     [Fact]
