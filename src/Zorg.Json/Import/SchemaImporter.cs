@@ -74,7 +74,10 @@ internal sealed class SchemaImporter
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>The base of a document without an <c>$id</c>, which only lets relative references resolve against each other.</summary>
-    internal const string DocumentBase = "https://zorg.invalid/";
+    internal const string DocumentBase = DocumentOrigin + "document.json";
+
+    /// <summary>Where the invented base lives. A real document doesn't refer here, and a resource under it has no base of its own.</summary>
+    internal const string DocumentOrigin = "https://zorg.invalid/";
 
     private readonly JsonElement _root;
     private readonly JsonSchemaImportOptions _options;
@@ -564,6 +567,8 @@ internal sealed class SchemaImporter
             }
 
             // Before 2019-09 a fragment names the schema, and the rest is its base. 2020-12 spells the two separately.
+            bool namesOnly = hasFragment;
+
             if (hasFragment && id[fragment + 1] == '/')
             {
                 // Generators write the place of a schema as its id, as in #/definitions/a. It names what a pointer already names.
@@ -581,7 +586,10 @@ internal sealed class SchemaImporter
                 }
             }
 
-            if (fragment != 0 && at.Pointer.Length > 0)
+            // A fragment on the URI of the resource around it names a schema in that resource, and starts no new one.
+            bool sameResource = fragment > 0 && SplitUri(at.Base, id![..fragment]) is { } named && named.Uri == at.Base;
+
+            if (fragment != 0 && at.Pointer.Length > 0 && !sameResource)
             {
                 scope = at with { Resource = at.Pointer };
             }
@@ -593,7 +601,7 @@ internal sealed class SchemaImporter
                 scope = scope with { Base = own.Uri };
 
                 // 11: two resources can't share a URI, and a target outside the walked tree can only add to what's known.
-                if (!_resources.TryAdd(own.Uri, scope.Resource) && _resources[own.Uri] != scope.Resource && at.IsWalked)
+                if (!_resources.TryAdd(own.Uri, scope.Resource) && _resources[own.Uri] != scope.Resource && at.IsWalked && !namesOnly)
                 {
                     throw Error(JsonSchemaImportCodes.InvalidSchema, at.Keyword(keyword), $"The $id \"{id}\" is declared twice.");
                 }
@@ -892,13 +900,38 @@ internal sealed class SchemaImporter
 
     private void ResolveReferences()
     {
-        // The list grows when a target outside the walked tree has references of its own.
+        // The list grows when a target outside the walked tree has references of its own, and such a target can add an $id that
+        // an earlier reference names, so a reference that names no known resource waits until nothing else can add one.
+        List<PendingReference> waiting = [];
+
         for (int index = 0; index < _references.Count; index++)
         {
             PendingReference reference = _references[index];
+
+            if (NamesKnownResource(reference))
+            {
+                reference.Target.Node = Find(reference);
+            }
+            else
+            {
+                waiting.Add(reference);
+            }
+
+            if (index == _references.Count - 1 && waiting.Find(NamesKnownResource) is { } ready)
+            {
+                waiting.Remove(ready);
+                _references.Add(ready);
+            }
+        }
+
+        foreach (PendingReference reference in waiting)
+        {
             reference.Target.Node = Find(reference);
         }
     }
+
+    private bool NamesKnownResource(PendingReference reference) =>
+        reference.Text.StartsWith('#') || (SplitUri(reference.At.Base, reference.Text) is { } resolved && _resources.ContainsKey(resolved.Uri));
 
     /// <summary>A URI resolved against a base, split into the URI of a resource and its fragment with the <c>#</c>. Null when it can't be read.</summary>
     internal static (string Uri, string Fragment)? SplitUri(string baseUri, string reference)
@@ -931,7 +964,7 @@ internal sealed class SchemaImporter
 
         if (!text.StartsWith('#'))
         {
-            if (text.StartsWith(DocumentBase, StringComparison.OrdinalIgnoreCase)
+            if (text.StartsWith(DocumentOrigin, StringComparison.OrdinalIgnoreCase)
                 || SplitUri(reference.At.Base, text) is not { } resolved || !_resources.TryGetValue(resolved.Uri, out string? named))
             {
                 throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"\"{text}\" isn't in this document. A reference can reach #, a JSON Pointer, an $anchor and any $id in the document, and nothing is fetched.");

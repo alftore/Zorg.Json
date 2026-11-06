@@ -53,7 +53,7 @@ public static class Rewriters
         Single("contentSchema", node => node.ContentSchema, node => node with { ContentSchema = null }),
         List("prefixItems", node => node.PrefixItems, ClearPrefixItems),
         Single("contains", node => node.Contains, node => node with { Contains = null }),
-        Count("minContains", node => node.MinContains, node => node with { MinContains = null }),
+        Count("minContains", node => node.MinContains, node => node with { MinContains = null, Contains = node.MinContains == 0 ? null : node.Contains }),
         Count("maxContains", node => node.MaxContains, node => node with { MaxContains = null }),
         Count("minItems", node => node.MinItems, node => node with { MinItems = null }),
         Count("maxItems", node => node.MaxItems, node => node with { MaxItems = null }),
@@ -370,6 +370,7 @@ public static class Rewriters
         private readonly HashSet<SchemaNode> _active = new(ReferenceEqualityComparer.Instance) { root };
 
         private int _expansions;
+        private int _rejected;
 
         public SchemaNode Run() => Walk(root with { Defs = [] });
 
@@ -379,7 +380,7 @@ public static class Rewriters
 
             if (node.Ref is null)
             {
-                return node.MapChildren(Walk);
+                return WalkChildren(node);
             }
 
             SchemaNode? target = Resolve(node);
@@ -402,14 +403,14 @@ public static class Rewriters
             }
 
             SchemaNode expanded = Walk(target with { Defs = [] });
-            SchemaNode beside = (node with
+            _active.Remove(target);
+            SchemaNode beside = WalkChildren(node with
             {
                 Ref = null,
                 Defs = [],
                 Description = null,
-                Behavior = SchemaBehavior.Empty with { UnknownProperties = node.Behavior.UnknownProperties },
-            }).MapChildren(Walk);
-            _active.Remove(target);
+                Behavior = node.Behavior with { Target = null, DefinitionName = null, IsOptional = false, FillDefault = false },
+            });
 
             SchemaNode inlined = expanded with
             {
@@ -418,7 +419,10 @@ public static class Rewriters
             };
 
             // What sits beside a $ref applies as well, so both have to stay.
-            return beside == (SchemaNode.True with { BooleanValue = null, Behavior = beside.Behavior })
+            bool isPlain = (beside with { Behavior = SchemaBehavior.Empty }) == (SchemaNode.True with { BooleanValue = null, Behavior = SchemaBehavior.Empty })
+                && beside.Behavior.Refinements.IsEmpty && beside.Behavior.Normalizers.IsEmpty;
+
+            return isPlain
                 ? inlined
                 : beside with
                 {
@@ -426,6 +430,75 @@ public static class Rewriters
                     Description = node.Description,
                     Behavior = beside.Behavior with { IsOptional = node.Behavior.IsOptional },
                 };
+        }
+
+        /// <summary>
+        /// A reference that can't be inlined becomes an open schema, which is looser. Where a looser subschema makes the document
+        /// stricter, the keyword goes with it. An open schema evaluates nothing, so <c>unevaluated*</c> goes too.
+        /// </summary>
+        private SchemaNode WalkChildren(SchemaNode node)
+        {
+            int start = _rejected;
+            HashSet<SchemaNode> tainted = new(ReferenceEqualityComparer.Instance);
+
+            SchemaNode mapped = node.MapChildren((child, negative) =>
+            {
+                int before = _rejected;
+                SchemaNode walked = Walk(child);
+
+                if (negative && _rejected != before)
+                {
+                    tainted.Add(walked);
+                }
+
+                return walked;
+            });
+
+            if (_rejected == start)
+            {
+                return mapped;
+            }
+
+            void Drop(string keyword) =>
+                context.Report(new EmitDiagnostic(keyword, $"{context.Options.Target.Name} can't state {keyword}, because a reference inside it can't be inlined."));
+
+            if (mapped.Not is { } negated && tainted.Contains(negated))
+            {
+                Drop("not");
+                mapped = mapped with { Not = null };
+            }
+
+            if (mapped.If is { } condition && tainted.Contains(condition))
+            {
+                Drop("if");
+                mapped = mapped with { If = null, Then = null, Else = null };
+            }
+
+            if (mapped.OneOf.Any(tainted.Contains))
+            {
+                Drop("oneOf");
+                mapped = mapped with { OneOf = [] };
+            }
+
+            if (mapped.Contains is { } contained && tainted.Contains(contained))
+            {
+                Drop("contains");
+                mapped = mapped with { Contains = null, MinContains = null, MaxContains = null };
+            }
+
+            if (mapped.UnevaluatedProperties is not null)
+            {
+                Drop("unevaluatedProperties");
+                mapped = mapped with { UnevaluatedProperties = null };
+            }
+
+            if (mapped.UnevaluatedItems is not null)
+            {
+                Drop("unevaluatedItems");
+                mapped = mapped with { UnevaluatedItems = null };
+            }
+
+            return mapped;
         }
 
         private SchemaNode? Resolve(SchemaNode node)
@@ -452,6 +525,7 @@ public static class Rewriters
 
         private SchemaNode Reject(SchemaNode node, bool tooLarge)
         {
+            _rejected++;
             context.Report(new EmitDiagnostic(
                 "$ref",
                 tooLarge
@@ -521,6 +595,21 @@ public static class Rewriters
 
     private sealed class RelocateRewriter(ImmutableHashSet<string> keywords) : ISchemaRewriter
     {
+        private static readonly ImmutableHashSet<string> Evaluating =
+        [
+            "properties", "patternProperties", "additionalProperties", "prefixItems", "items", "contains", "minContains",
+            "allOf", "anyOf", "oneOf", "if", "then", "else", "dependentSchemas",
+        ];
+
+        /// <summary>
+        /// True when what evaluates may move away. Subschemas are rewritten before the schema around them, so what moved from a
+        /// subschema can't be seen here, and anything that applies to the same value counts as lost. That can only make the result looser.
+        /// </summary>
+        private bool LosesEvaluations(SchemaNode node) =>
+            !node.AllOf.IsEmpty || !node.AnyOf.IsEmpty || !node.OneOf.IsEmpty || node.If is not null || !node.DependentSchemas.IsEmpty
+            || node.Behavior.Target is not null
+            || Relocations.Any(relocation => keywords.Contains(relocation.Keyword) && Evaluating.Contains(relocation.Keyword) && relocation.Read(node) is not null);
+
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
         {
             // Where a looser subschema makes the schema stricter, the keyword stays, and the schema around it decides what to do.
@@ -587,19 +676,17 @@ public static class Rewriters
                 Move(keyword, value.GetRawText());
             }
 
-            // What these evaluate no longer counts, so anything that depends on it would reject what it allowed.
-            bool lostEvaluations = result.If != node.If || result.OneOf.Length != node.OneOf.Length || result.AnyOf.Length != node.AnyOf.Length
-                || result.AllOf.Length != node.AllOf.Length || result.DependentSchemas.Length != node.DependentSchemas.Length
-                || result.PatternProperties.Length != node.PatternProperties.Length || result.Contains != node.Contains
-                || result.PrefixItems.Length != node.PrefixItems.Length || result.Properties.Length != node.Properties.Length;
+            // What goes no longer evaluates, here or in anything that applies to the same value, so what depends on it would
+            // reject what it allowed. And a looser subschema under these keywords makes them stricter.
+            bool lostEvaluations = (result.UnevaluatedProperties is not null || result.UnevaluatedItems is not null) && LosesEvaluations(node);
 
-            if (lostEvaluations && result.UnevaluatedProperties is { } properties)
+            if (result.UnevaluatedProperties is { } properties && (lostEvaluations || Holds(properties)))
             {
                 Move("unevaluatedProperties", SchemaText(properties));
                 result = result with { UnevaluatedProperties = null };
             }
 
-            if (lostEvaluations && result.UnevaluatedItems is { } items)
+            if (result.UnevaluatedItems is { } items && (lostEvaluations || Holds(items)))
             {
                 Move("unevaluatedItems", SchemaText(items));
                 result = result with { UnevaluatedItems = null };

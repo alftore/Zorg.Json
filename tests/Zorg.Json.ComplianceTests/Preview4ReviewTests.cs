@@ -270,15 +270,140 @@ public sealed class Preview4ReviewTests
     }
 
     [Fact]
-    public void A_relative_reference_back_to_a_document_without_an_id_stays_relative()
+    public void A_relative_reference_between_resources_of_a_document_without_an_id_stays_relative()
     {
-        const string Document = """{"$defs":{"a":{"$id":"a/b.json","properties":{"up":{"$ref":"../"}}}},"properties":{"down":{"$ref":"a/b.json"},"v":{"type":"string"}}}""";
+        const string Document = """{"$defs":{"a":{"$id":"a/b.json","properties":{"up":{"$ref":"../c.json"}}},"c":{"$id":"c.json","type":"string"}},"properties":{"down":{"$ref":"a/b.json"}}}""";
         JsonValueSchema schema = Z.FromJsonSchema(Document);
 
-        Assert.False(schema.SafeParse("""{"down":{"up":{"v":1}}}""").IsSuccess);
+        Assert.False(schema.SafeParse("""{"down":{"up":1}}""").IsSuccess);
 
         JsonValueSchema again = Z.FromJsonSchema(schema.ToJsonSchema().ToJsonString());
-        Assert.False(again.SafeParse("""{"down":{"up":{"v":1}}}""").IsSuccess);
-        Assert.True(again.SafeParse("""{"down":{"up":{"v":"s"}}}""").IsSuccess);
+        Assert.False(again.SafeParse("""{"down":{"up":1}}""").IsSuccess);
+        Assert.True(again.SafeParse("""{"down":{"up":"s"}}""").IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("""{"if":true,"then":{"properties":{"x":{}}},"unevaluatedProperties":false}""", "then", """{"x":1}""")]
+    [InlineData("""{"if":false,"else":{"prefixItems":[{}]},"unevaluatedItems":false}""", "else", "[1]")]
+    [InlineData("""{"allOf":[{"patternProperties":{"^x":{}}}],"unevaluatedProperties":false}""", "patternProperties", """{"x1":1}""")]
+    [InlineData("""{"allOf":[{"anyOf":[{"properties":{"x":{}}}]}],"unevaluatedProperties":false}""", "anyOf", """{"x":1}""")]
+    [InlineData("""{"allOf":[{"contains":{"const":1}}],"unevaluatedItems":false}""", "contains", "[1]")]
+    [InlineData("""{"$defs":{"a":{"properties":{"k":{}},"if":{"required":["k"]},"then":{"properties":{"x":{}}}}},"$ref":"#/$defs/a","unevaluatedProperties":false}""", "if", """{"k":1,"x":1}""")]
+    [InlineData("""{"contains":{"const":1},"minContains":0}""", "minContains", "[2]")]
+    [InlineData("""{"$defs":{"d":{"not":{}}},"unevaluatedProperties":{"not":{"$ref":"#/$defs/d"}}}""", "not", """{"b":{}}""")]
+    [InlineData("""{"$defs":{"d":{"const":1}},"unevaluatedItems":{"not":{"$ref":"#/$defs/d"}}}""", "const", "[2]")]
+    public void Moving_anything_that_evaluates_takes_unevaluated_with_it(string document, string keyword, string instance)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+        string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = Relocating(keyword) }).ToJsonString();
+
+        Assert.True(schema.SafeParse(instance).IsSuccess);
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, instance), text);
+    }
+
+    [Theory]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"properties":{"a":{"not":{"$ref":"#/$defs/t"}}}}}}""", """{"a":{"a":1}}""")]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"properties":{"a":{"if":{"$ref":"#/$defs/t"},"then":false}}}}}""", """{"a":{"a":1}}""")]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"type":"object","properties":{"a":{"oneOf":[{"$ref":"#/$defs/t"},{"type":"object"}]}}}}}""", """{"a":{"a":1}}""")]
+    [InlineData("""{"$ref":"#/$defs/t","$defs":{"t":{"type":"array","contains":{"$ref":"#/$defs/t"},"minContains":0,"maxContains":1}}}""", "[1,[]]")]
+    public void A_reference_that_can_not_be_inlined_takes_the_negative_keyword_with_it(string document, string instance)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document);
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.InlineOrRejectRecursion);
+        string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+        Assert.True(schema.SafeParse(instance).IsSuccess);
+        Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, instance), text);
+    }
+
+    [Fact]
+    public void Inlining_keeps_a_format_that_is_only_an_annotation()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$defs":{"a":{}},"$ref":"#/$defs/a","format":"date"}""");
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft07.With(Rewriters.InlineOrRejectRecursion);
+
+        Assert.DoesNotContain("\"format\"", schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reference_used_beside_its_own_target_is_not_recursive()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$defs":{"a":{"type":"object"}},"$ref":"#/$defs/a","properties":{"x":{"$ref":"#/$defs/a"}}}""");
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.InlineOrRejectRecursion);
+
+        Assert.DoesNotContain(schema.Emit(new JsonSchemaOptions { Target = profile }).Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
+    }
+
+    [Fact]
+    public void An_id_of_only_a_hash_stays_as_it_is()
+    {
+        const string Document = """{"$id":"http://x.test/r","$defs":{"a":{"$id":"#","$ref":"#/$defs/b"},"b":{"type":"string"}},"properties":{"p":{"$ref":"#/$defs/a"}}}""";
+        string text = Z.FromJsonSchema(Document).ToJsonSchema().ToJsonString();
+
+        Assert.DoesNotContain("-2", text, StringComparison.Ordinal);
+        Assert.False(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"p":1}"""), text);
+    }
+
+    [Fact]
+    public void Remembered_verdicts_have_a_limit()
+    {
+        string branches = string.Join(",", Enumerable.Range(0, 20).Select(index => $"{{\"title\":\"t{index}\"}}"));
+        JsonValueSchema schema = Z.FromJsonSchema("{\"anyOf\":[" + branches + "],\"allOf\":[{\"items\":{\"$ref\":\"#\"}}],\"unevaluatedItems\":false}");
+        string document = "[]";
+
+        for (int depth = 0; depth < 40; depth++)
+        {
+            document = "[" + document + "]";
+        }
+
+        document = "[" + string.Join(",", Enumerable.Repeat(document, 300)) + "]";
+        long before = GC.GetTotalAllocatedBytes(precise: false);
+
+        _ = schema.SafeParse(document);
+
+        Assert.True(GC.GetTotalAllocatedBytes(precise: false) - before < 2_000_000_000);
+    }
+
+    [Theory]
+    [InlineData("./")]
+    [InlineData("x/../")]
+    public void An_id_that_resolves_to_the_directory_of_the_document_is_no_clash(string id)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("{\"$defs\":{\"a\":{\"$id\":\"" + id + "\",\"type\":\"string\"}},\"properties\":{\"p\":{\"$ref\":\"./\"}}}");
+
+        Assert.False(schema.SafeParse("""{"p":1}""").IsSuccess);
+    }
+
+    [Theory]
+    [InlineData("""{"properties":{"a":{"$ref":"#/x-a"},"b":{"$ref":"http://x.test/c"}},"x-a":{"$id":"http://x.test/c","type":"string"}}""")]
+    [InlineData("""{"properties":{"b":{"$ref":"http://x.test/c"},"a":{"$ref":"#/x-a"}},"x-a":{"$id":"http://x.test/c","type":"string"}}""")]
+    public void The_order_of_properties_does_not_decide_what_a_reference_finds(string document) =>
+        Assert.False(Z.FromJsonSchema(document).SafeParse("""{"b":1}""").IsSuccess);
+
+    [Fact]
+    public void A_fragment_on_the_base_around_it_starts_no_resource()
+    {
+        const string Document = """{"$schema":"http://json-schema.org/draft-07/schema#","$id":"http://x.test/root","definitions":{"a":{"$id":"http://x.test/root#foo","type":"string"}},"properties":{"p":{"$ref":"#foo"}}}""";
+
+        Assert.False(Z.FromJsonSchema(Document).SafeParse("""{"p":1}""").IsSuccess);
+    }
+
+    [Fact]
+    public void A_small_stack_fails_the_parse_and_keeps_the_process()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"items":{"$ref":"#"}}""");
+        System.Text.Json.JsonElement deep = System.Text.Json.JsonDocument.Parse(new string('[', 170) + new string(']', 170), new System.Text.Json.JsonDocumentOptions { MaxDepth = 400 }).RootElement;
+        bool finished = false;
+
+        System.Threading.Thread thread = new(() =>
+        {
+            _ = schema.SafeParse(deep);
+            finished = true;
+        }, 256 * 1024);
+
+        thread.Start();
+        thread.Join();
+
+        Assert.True(finished);
     }
 }

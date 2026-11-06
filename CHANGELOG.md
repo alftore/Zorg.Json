@@ -12,8 +12,10 @@
 - A draft-07 `$id` that spells its place, such as `#/definitions/a`, is now read. It used to be refused.
 - Fixed `"$id":"http://x/y#"` beside an anchor being written to draft-07 as `http://x/y##a`.
 - Ids are compared as URIs when they're written, so two nested ids with the same text under different bases keep it. When two imports in one fluent schema share an id, the second id changes and references to it follow.
-- `RelocateToDescription` takes `unevaluated*` along with what it depends on, `additionalProperties` along with `patternProperties`, and `items` along with `prefixItems`, which could make the written schema stricter than parsing.
-- `InlineOrRejectRecursion` keeps what sits beside a `$ref`, in an `allOf`.
+- `RelocateToDescription` takes `unevaluated*` along when anything beside it applies to the same value, `additionalProperties` along with `patternProperties`, `items` along with `prefixItems`, and `contains` along with `minContains: 0`, which could make the written schema stricter than parsing.
+- `InlineOrRejectRecursion` keeps what sits beside a `$ref`, in an `allOf`. A reference it can't inline now takes `not`, `if`, `oneOf`, `contains` with `maxContains`, and `unevaluated*` with it where it sits under them, because an open schema there is stricter, not looser.
+- A thread with a small stack now fails the parse instead of ending the process.
+- A draft-07 `$id` with a fragment on the URI around it names a schema, and starts no new resource.
 - Each property now counts towards the evaluation limits, so a wide object under shared subschemas stops within them. It used to take minutes.
 - The tests now also compare Zorg with a second independent validator, santhosh-tekuri/jsonschema, on generated documents. Set `ZORG_JV` to the path of its `jv` tool to run them. CI does.
 - Fixed an imported `oneOf` of objects being written as `anyOf` when a branch held a `format`, though the branches exclude each other, as in a discriminated union or closed objects with different required properties. It now stays `oneOf` when each pair of branches shares no type, or shares only `object` and one requires a property the other forbids or limits to other values. These schemas round trip, and `UnrepresentablePolicy.Throw` doesn't throw on them. Only `required`, `properties`, `additionalProperties`, `const` and `enum` count, because every validator applies those. Branches without a `type` still become `anyOf`, since a string would match both.

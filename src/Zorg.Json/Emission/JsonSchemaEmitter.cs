@@ -60,10 +60,14 @@ internal sealed class JsonSchemaEmitter
     private Dictionary<JsonObject, SchemaNode>? _resources;
     private const string DocumentBase = SchemaImporter.DocumentBase;
 
+    private const string DocumentOrigin = SchemaImporter.DocumentOrigin;
+
     private readonly Dictionary<JsonObject, string> _writtenBases = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The base URI of what is being written.</summary>
     private string _base = DocumentBase;
+
+    private readonly Dictionary<ImmutableArray<SchemaNode>, bool> _overlapAnswers = [];
 
     private HashSet<string>? _ids;
     private HashSet<string>? _idTexts;
@@ -460,10 +464,10 @@ internal sealed class JsonSchemaEmitter
 
         string? uri = target;
 
-        if (target.StartsWith(DocumentBase, StringComparison.Ordinal))
+        if (target.StartsWith(DocumentOrigin, StringComparison.Ordinal))
         {
             // The document has no base of its own, so only a relative reference can reach this.
-            uri = from.StartsWith(DocumentBase, StringComparison.Ordinal) ? Relative(from, target) : null;
+            uri = from.StartsWith(DocumentOrigin, StringComparison.Ordinal) ? Relative(from, target) : null;
         }
 
         return uri is null ? null : within == "#" ? uri : uri + within;
@@ -1021,7 +1025,7 @@ internal sealed class JsonSchemaEmitter
     {
         string text = id.TrimEnd('#');
         string uri = Resolve(_base, id) ?? text;
-        bool floats = uri.StartsWith(DocumentBase, StringComparison.Ordinal);
+        bool floats = uri.StartsWith(DocumentOrigin, StringComparison.Ordinal);
         _ids ??= new(StringComparer.Ordinal);
         _floatingIds ??= new(StringComparer.Ordinal);
         _idTexts ??= new(StringComparer.Ordinal);
@@ -1057,7 +1061,7 @@ internal sealed class JsonSchemaEmitter
         JsonObject schema = [];
 
         string? anchor = node.Anchor;
-        string? id = node.Id is null ? null : UniqueId(node.Id);
+        string? id = node.Id is null ? null : node.Id.StartsWith('#') ? node.Id : UniqueId(node.Id);
         Add(schema, "$id", id);
 
         if (id is not null && !id.StartsWith('#') && Resolve(_base, id) is { } resolved)
@@ -1439,7 +1443,7 @@ internal sealed class JsonSchemaEmitter
         Add(schema, "minLength", node.MinLength);
         Add(schema, "maxLength", node.MaxLength);
         Add(schema, "pattern", CoercionPattern(node) ?? node.Pattern);
-        if (node.Format is { } format && node.Behavior.FormatIsAnnotation && (IsDraft07 || IsOpenApi30) && StringFormats.IsKnown(format))
+        if (IsInput && node.Format is { } format && node.Behavior.FormatIsAnnotation && (IsDraft07 || IsOpenApi30) && StringFormats.IsKnown(format))
         {
             // Validators of these dialects may check format, and parsing doesn't, so writing it could reject what parsing accepts.
             Unrepresentable("format", "Parsing doesn't check this format and a validator of this dialect may, so it's kept as x-inert-format. Import with Formats = FormatHandling.AssertKnown to state it.", location);
@@ -1781,6 +1785,17 @@ internal sealed class JsonSchemaEmitter
     /// This judges what is written, so anything that could change it answers false.
     /// </summary>
     private bool CannotOverlap(ImmutableArray<SchemaNode> branches)
+    {
+        // One answer for each list: the comparisons are budgeted, and what is judged early must agree with what is written later.
+        if (!_overlapAnswers.TryGetValue(branches, out bool answer))
+        {
+            _overlapAnswers[branches] = answer = JudgeOverlap(branches);
+        }
+
+        return answer;
+    }
+
+    private bool JudgeOverlap(ImmutableArray<SchemaNode> branches)
     {
         // A rewriter can replace a branch or a definition after this is judged.
         if (!_profile.Rewriters.IsEmpty)

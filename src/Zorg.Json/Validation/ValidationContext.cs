@@ -39,6 +39,9 @@ internal sealed class ValidationContext
     private const long BaseTotalSteps = 500_000;
     private const long TotalStepsPerByte = 48;
 
+    /// <summary>The most verdicts one parse remembers for <c>unevaluated*</c>.</summary>
+    private const int MaxRemembered = 100_000;
+
     private readonly List<PathSegment> _path;
     private readonly List<Step> _steps;
     private readonly Limits _limits;
@@ -128,6 +131,13 @@ internal sealed class ValidationContext
             return false;
         }
 
+        // A stack overflow ends the process, and a caller's thread can have a small stack.
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+        {
+            Exceed(IssueCodes.InvalidValue, "$ref", "invalid_value.depth", "maximum", MaxDepth);
+            return false;
+        }
+
         if (++Depth > MaxDepth)
         {
             Depth--;
@@ -211,6 +221,15 @@ internal sealed class ValidationContext
     /// </summary>
     public bool TryRecall(object plan, out bool passed, out string place)
     {
+        place = string.Empty;
+        passed = false;
+
+        // Building the key costs as much as the path is long.
+        if (!Spend(_path.Count + 1))
+        {
+            return false;
+        }
+
         StringBuilder key = new();
 
         foreach (PathSegment segment in _path)
@@ -224,9 +243,10 @@ internal sealed class ValidationContext
 
     public void Remember(object plan, string place, bool passed)
     {
-        if (!Halted)
+        // Past the limit a branch is run again, which the steps pay for, so the memory stays bounded.
+        if (!Halted && _limits.Passed is { Count: < MaxRemembered } passes)
         {
-            _limits.Passed![(plan, place)] = passed;
+            passes[(plan, place)] = passed;
         }
     }
 
