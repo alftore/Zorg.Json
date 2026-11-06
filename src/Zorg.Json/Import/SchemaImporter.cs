@@ -643,6 +643,13 @@ internal sealed class SchemaImporter
             }
         }
 
+        // Only a plain name can be dynamic. Anything else is a $ref in all but spelling, and everything after this treats it as one.
+        if (dynamicRef is not null && (dynamicRef.IndexOf('#', StringComparison.Ordinal) is var hash && (hash < 0 || hash == dynamicRef.Length - 1 || dynamicRef[hash + 1] == '/')))
+        {
+            reference = dynamicRef;
+            dynamicRef = null;
+        }
+
         if (dynamicRef is not null)
         {
             ReferenceTarget target = new();

@@ -72,6 +72,11 @@ internal static class TypeReader
             }
         }
 
+        if (type.AllInterfaces.Any(candidate => candidate.ToDisplayString() == Annotations + "IValidatableObject"))
+        {
+            findings.Add(new Finding(Descriptors.NotApplied.Id, $"IValidatableObject on '{type.Name}' can't be stated in the schema", location));
+        }
+
         ReportConstructorAttributes(type, findings);
         HashSet<string> seen = new(StringComparer.Ordinal);
 
@@ -113,7 +118,13 @@ internal static class TypeReader
 
         for (INamedTypeSymbol? parent = type.BaseType; parent is not null; parent = parent.BaseType)
         {
-            hides |= parent.GetMembers("Schema").Any() || Has(parent.GetAttributes(), Attribute);
+            hides |= parent.GetMembers("Schema").Any(member => member.DeclaredAccessibility != Accessibility.Private) || Has(parent.GetAttributes(), Attribute);
+
+            // The generated property would hide it, and a rule on it couldn't be written.
+            if (parent.GetMembers("Schema").Any(member => !member.IsStatic && member.DeclaredAccessibility != Accessibility.Private))
+            {
+                Stop(Descriptors.NameTaken, type.Name);
+            }
         }
 
         return new TypeModel(
@@ -183,13 +194,62 @@ internal static class TypeReader
         {
             stop(Descriptors.BadContext, $"'{context.Name}' isn't a JsonSerializerContext");
         }
-        else if (!context.GetAttributes().Any(candidate => NameOf(candidate) == Serialization + "JsonSerializableAttribute"
-            && candidate.ConstructorArguments is [{ Value: ITypeSymbol listed }] && SymbolEqualityComparer.Default.Equals(listed, type)))
+        else if (!IsReachable(context, type))
         {
             stop(Descriptors.BadContext, $"'{context.Name}' has no [JsonSerializable(typeof({type.Name}))]");
         }
 
         return context.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    }
+
+    /// <summary>True when the context holds the type, listed or through the properties of what it lists.</summary>
+    private static bool IsReachable(INamedTypeSymbol context, INamedTypeSymbol type)
+    {
+        HashSet<ITypeSymbol> seen = new(SymbolEqualityComparer.Default);
+        Stack<ITypeSymbol> pending = new();
+
+        foreach (AttributeData attribute in context.GetAttributes())
+        {
+            if (NameOf(attribute) == Serialization + "JsonSerializableAttribute" && attribute.ConstructorArguments is [{ Value: ITypeSymbol listed }, ..])
+            {
+                pending.Push(listed);
+            }
+        }
+
+        while (pending.Count > 0)
+        {
+            ITypeSymbol current = pending.Pop();
+
+            if (SymbolEqualityComparer.Default.Equals(current, type))
+            {
+                return true;
+            }
+
+            if (!seen.Add(current) || seen.Count > 10_000)
+            {
+                continue;
+            }
+
+            if (current is IArrayTypeSymbol array)
+            {
+                pending.Push(array.ElementType);
+            }
+
+            if (current is INamedTypeSymbol named)
+            {
+                foreach (ITypeSymbol argument in named.TypeArguments)
+                {
+                    pending.Push(argument);
+                }
+            }
+
+            foreach (IPropertySymbol property in current.GetMembers().OfType<IPropertySymbol>())
+            {
+                pending.Push(property.Type);
+            }
+        }
+
+        return false;
     }
 
     private static INamedTypeSymbol? ContextOf(AttributeData attribute) =>
@@ -204,6 +264,12 @@ internal static class TypeReader
         if (chosen.Length == 1)
         {
             return chosen[0];
+        }
+
+        // A struct always has a default constructor, and that's the one used unless another is marked.
+        if (type.IsValueType)
+        {
+            return null;
         }
 
         // The copy constructor of a record is never the one.
@@ -426,7 +492,7 @@ internal static class TypeReader
 
             case "MaxLengthAttribute":
                 // -1 is what the constructor without a length means: as much as the store allows.
-                return hasLength && (first == -1 || (first >= 0 && rules.AddLength(null, first)));
+                return hasLength && (first is null or -1 || (first >= 0 && rules.AddLength(null, first)));
 
             case "LengthAttribute":
                 return hasLength && first >= 0 && attribute.ConstructorArguments is [_, { Value: int top }] && top >= first && rules.AddLength(first, top);
@@ -438,22 +504,24 @@ internal static class TypeReader
                 return isText && attribute.ConstructorArguments is [{ Value: string pattern }] && IsPortable(pattern) && rules.AddPattern($"^$|^(?:{pattern})$");
 
             case "EmailAddressAttribute":
-                if (isText)
+                if (isText && rules.Format is null or ".Email()")
                 {
                     rules.Format = ".Email()";
+                    return true;
                 }
 
-                return isText;
+                return false;
 
             case "UrlAttribute":
                 // .NET takes only these three, and format: uri alone would let javascript: through.
-                if (isText)
+                if (isText && rules.Format is null or ".Uri()")
                 {
                     rules.Format = ".Uri()";
                     rules.AddPattern("^(?:[Hh][Tt][Tt][Pp][Ss]?|[Ff][Tt][Pp]):\\/\\/");
+                    return true;
                 }
 
-                return isText;
+                return false;
 
             case "RangeAttribute":
                 return shape.Kind == "number" && ReadRange(attribute, shape.Number!, rules);
@@ -462,7 +530,7 @@ internal static class TypeReader
                 if (isText && Named("AllowEmptyStrings") is not true)
                 {
                     rules.AddLength(1, null);
-                    rules.AddPattern("\\S");
+                    rules.NotBlank = true;
                 }
 
                 if (shape.IsNullable || !IsPresent(property, owner))
@@ -484,8 +552,8 @@ internal static class TypeReader
         || (ConstructorOf(owner)?.Parameters.Any(parameter => !parameter.HasExplicitDefaultValue && string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)) ?? false);
 
     /// <summary>
-    /// True when the text means the same as ECMA-262, which every Zorg pattern is. A pattern that isn't fails when the schema is first built,
-    /// so what can be told from here is told at compile time.
+    /// True when the text reads as ECMA-262, which every Zorg pattern is. A pattern that doesn't fails when the schema is first built, so what
+    /// can be told from here is told at compile time. Classes such as <c>\d</c> read, and mean less than in .NET, as the guide says.
     /// </summary>
     private static bool IsPortable(string pattern)
     {
@@ -559,6 +627,12 @@ internal static class TypeReader
             _ => (double.MinValue, double.MaxValue),
         };
 
+        // Nothing in the type can pass, which a bound of that type can't say.
+        if (minimum >= highest || maximum <= lowest)
+        {
+            return false;
+        }
+
         if (minimum > lowest && !double.IsInfinity(minimum) && minimum < highest)
         {
             rules.Minimum = $".{(minimumIsExclusive ? "ExclusiveMinimum" : "Minimum")}({cast}{Real(minimum)})";
@@ -603,6 +677,9 @@ internal static class TypeReader
 
         public string? Format { get; set; }
 
+        /// <summary>Set by <c>[Required]</c>. Beside another pattern it's left out: a schema has one pattern, and combining them costs the linear engine.</summary>
+        public bool NotBlank { get; set; }
+
         public string? Description { get; set; }
 
         public string? Minimum { get; set; }
@@ -635,6 +712,11 @@ internal static class TypeReader
             {
                 calls += _minimumLength is { } low ? $".MinLength({low})" : string.Empty;
                 calls += _maximumLength is { } high ? $".MaxLength({high})" : string.Empty;
+            }
+
+            if (NotBlank && _patterns.Count == 0)
+            {
+                _patterns.Add("\\S");
             }
 
             // Several patterns all apply, and a schema has one.

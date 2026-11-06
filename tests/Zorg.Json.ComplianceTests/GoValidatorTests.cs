@@ -344,8 +344,8 @@ public sealed partial class GoValidatorTests
                 if (verdicts is null)
                 {
                     // Zorg doesn't read all of a document, so a schema that isn't valid against its meta-schema can import, and stays invalid.
-                    // A definitions keyword nested where 2020-12 doesn't read it stays as text, and jv follows the references in it anyway.
-                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null || text.Contains("\"definitions\"", StringComparison.Ordinal);
+                    // definitions and additionalItems mean nothing in 2020-12, so they stay as text, and jv reads what is in them anyway.
+                    bool sourceIsInvalid = validator.Judge(document, [], Draft(dialect), out _) is null || text.Contains("\"definitions\"", StringComparison.Ordinal) || text.Contains("\"additionalItems\"", StringComparison.Ordinal);
                     Add(counts, sourceIsInvalid ? "source not valid for jv" : "jv refused");
 
                     if (!sourceIsInvalid)

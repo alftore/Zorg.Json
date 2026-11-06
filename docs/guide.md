@@ -49,12 +49,12 @@ ParseResult<Person> person = Person.Schema.SafeParse(json);
 
 | Attribute | Rule |
 |---|---|
-| `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, in code points, and `minItems` and `maxItems` on a collection. Not on `byte[]`, which is a base64 string in JSON. When several apply, the tightest wins |
+| `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, in code points where the attributes count UTF-16 units, and `minItems` and `maxItems` on a collection. Not on `byte[]`, which is a base64 string in JSON. When several apply, the tightest wins |
 | `[Range]` with numbers | `minimum` and `maximum`, or the exclusive ones with `MinimumIsExclusive` and `MaximumIsExclusive`. Whole numbers get exact whole bounds |
 | `[RegularExpression]` | `pattern`, as a whole match, and an empty string passes, as with the attribute. It's read as ECMA-262, as every Zorg pattern is, so `\\d` is ASCII only. A pattern only .NET reads, such as `\\A` or `(?i)`, gets a warning |
 | `[EmailAddress]` | `format: email`, which is stricter than the attribute, which only looks for an `@` |
-| `[Url]` | `format: uri`, and it must start with `http://`, `https://` or `ftp://` |
-| `[Required]` on text | `minLength: 1` and not only whitespace, unless `AllowEmptyStrings` is set |
+| `[Url]` | `format: uri`, and it must start with `http://`, `https://` or `ftp://`. Stricter than the attribute, which only looks at the start |
+| `[Required]` on text | `minLength: 1` and not only whitespace, unless `AllowEmptyStrings` is set. Beside a pattern, only `minLength: 1` |
 | `[Description]` | `description`, on the type, or on a property of text, numbers, a collection or a type with a generated schema |
 
 A property whose type also has `[GenerateSchema]` with the same context uses that schema, directly, as `Optional<T>`, or as the items of a list or array, and a recursive type goes through a named definition. Nothing else is followed: not dictionary values, jagged arrays or types without the attribute.
@@ -62,7 +62,8 @@ A property whose type also has `[GenerateSchema]` with the same context uses tha
 - The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. A polymorphic type, or one with a custom converter, has JSON its properties don't describe. All of these are compile errors.
 - **Presence and null** come from the contract, as in every typed schema: `required`, `[JsonRequired]`, or a constructor parameter with no default. `[Required]` on anything else, or on something nullable, gets a warning, `ZORG0006`.
 - An attribute that can't be stated gets a warning, `ZORG0005`, and isn't checked. That covers `[CreditCard]`, `[Range]` on a date or one nothing can meet, a rule on a field, on a parameter of a class, on a property with a converter, and on a shape the fluent API has no overload for, such as `bool?`. Add it with `.Property(...)` or `.Refine(...)`.
-- Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too.
+- Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too, though `Validator` wouldn't.
+- The schema checks JSON, so it differs from `Validator` in a few ways by design. It checks nested types with their own schemas, a `[Range]` on an absent property isn't checked, and a `[Range(int, int)]` on a `double` is exact where `Validator` rounds.
 - Under Native AOT, .NET marks `[MinLength]`, `[MaxLength]` and `[Length]` themselves as needing reflection, so using them gives a trim warning, whatever reads them. For text, `[StringLength]` says the same without it.
 
 ## Parsing

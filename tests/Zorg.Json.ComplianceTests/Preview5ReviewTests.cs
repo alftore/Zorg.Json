@@ -130,6 +130,31 @@ public sealed class Preview5ReviewTests
     }
 
     [Fact]
+    public void A_plain_dynamic_reference_meets_a_rewriter_as_a_reference()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"$ref":"#/$defs/t","$defs":{"t":{"type":"object","properties":{"c":{"$dynamicRef":"#/$defs/t"}}}}}""");
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.InlineOrRejectRecursion);
+
+        Assert.Contains(schema.Emit(new JsonSchemaOptions { Target = profile }).Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
+    }
+
+    [Theory]
+    [InlineData("""{"type":"object","properties":{"c":{"$ref":"http://e.com/a"}},"required":["c"],"additionalProperties":false}""", """{"type":"string"}""")]
+    [InlineData("""{"type":"object","properties":{"c":{"$ref":"http://e.com/a#/$defs/s"}},"required":["c"],"additionalProperties":false}""", """{"$defs":{"s":{"type":"string"}}}""")]
+    public void A_reference_by_uri_reaches_a_provider_as_a_pointer(string document, string other)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema(document, With("http://e.com/a", other));
+
+        foreach (JsonSchemaProfile profile in new[] { Zorg.Json.Llm.LlmProfiles.OpenAIStrict, Zorg.Json.Llm.LlmProfiles.GeminiJsonSchema })
+        {
+            string text = schema.ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+            Assert.DoesNotContain("\"$ref\":\"http", text, StringComparison.Ordinal);
+            Assert.True(EmissionReviewTests.Accepts(text, JsonSchemaProfile.Draft202012, """{"c":"s"}"""), text);
+        }
+    }
+
+    [Fact]
     public void A_dynamic_reference_follows_the_id_of_a_document()
     {
         JsonValueSchema schema = Z.FromJsonSchema(

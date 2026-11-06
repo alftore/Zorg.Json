@@ -127,12 +127,14 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
     private static void FlattenReferences(JsonObject schema, bool keepsIds)
     {
         HashSet<string> resources = new(StringComparer.Ordinal) { string.Empty };
+        Dictionary<string, string> bases = new(StringComparer.Ordinal) { [string.Empty] = NoBase };
         Dictionary<(string Resource, string Name), string> anchors = [];
 
         JsonSchemaWalker.Walk(schema, (node, location, _) =>
         {
-            if (location.Length > 0 && LocalReferences.AsString(node["$id"]) is { } id && !id.StartsWith('#'))
+            if (LocalReferences.AsString(node["$id"]) is { } id && !id.StartsWith('#'))
             {
+                bases[location] = Split(bases[Resource(location)], id)?.Uri ?? id;
                 resources.Add(location);
             }
         });
@@ -159,12 +161,25 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
 
         JsonSchemaWalker.Walk(schema, (node, location, _) =>
         {
-            if (LocalReferences.AsString(node["$ref"]) is not { } reference || !reference.StartsWith('#'))
+            if (LocalReferences.AsString(node["$ref"]) is not { } reference)
             {
                 return;
             }
 
             string resource = Resource(location);
+
+            // A reference by URI names a resource, and without $id only a pointer from the document can reach it.
+            if (!reference.StartsWith('#'))
+            {
+                if (keepsIds || Split(bases[resource], reference) is not { } target || !bases.Any(entry => entry.Value == target.Uri))
+                {
+                    return;
+                }
+
+                resource = bases.First(entry => entry.Value == target.Uri).Key;
+                reference = target.Fragment;
+                node["$ref"] = "#" + Fragment(resource) + (reference.StartsWith("#/", StringComparison.Ordinal) ? reference[1..] : string.Empty);
+            }
 
             if (reference.Length > 1 && reference[1] != '/')
             {
@@ -178,6 +193,28 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
                 node["$ref"] = "#" + Fragment(resource) + reference[1..];
             }
         });
+    }
+
+    /// <summary>The base of a document with no <c>$id</c>, which only lets relative references resolve against each other.</summary>
+    private const string NoBase = "https://zorg.invalid/llm-document";
+
+    private static (string Uri, string Fragment)? Split(string baseUri, string reference)
+    {
+        try
+        {
+            if (!Uri.TryCreate(new Uri(baseUri), reference, out Uri? resolved))
+            {
+                return null;
+            }
+
+            string text = resolved.AbsoluteUri;
+            int fragment = text.IndexOf('#', StringComparison.Ordinal);
+            return fragment < 0 ? (text, "#") : (text[..fragment], text[fragment..]);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static string Fragment(string pointer) =>

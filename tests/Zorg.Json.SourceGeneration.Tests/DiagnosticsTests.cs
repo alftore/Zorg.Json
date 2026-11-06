@@ -111,11 +111,51 @@ public sealed class DiagnosticsTests
     [InlineData("public partial class P { [JsonConstructor] public P() { } public P(string a) { } [Required] public string A { get; set; } = \"\"; }", true)]
     [InlineData("public partial class P { [Required, JsonRequired] public string A { get; set; } = \"\"; }", false)]
     [InlineData("public partial record P([property: Required] string A);", false)]
+    [InlineData("public partial record struct P([property: Required] string A);", true)]
+    [InlineData("public partial struct P { public P(string a) { A = a; } [Required] public string A { get; } }", true)]
     public void Required_that_can_not_hold_is_reported(string source, bool reported)
     {
         (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] " + source + Context);
 
         Assert.Equal(reported, found.Any(diagnostic => diagnostic.Id == "ZORG0006"));
+    }
+
+    [Theory]
+    [InlineData("public class B { [MaxLength(3)] public string Schema { get; set; } = \"\"; } [GenerateSchema(typeof(C))] public partial class P : B;", "ZORG0003")]
+    [InlineData("[GenerateSchema(typeof(C))] public partial class P : IValidatableObject { public System.Collections.Generic.IEnumerable<ValidationResult> Validate(ValidationContext c) => []; }", "ZORG0005")]
+    [InlineData("[GenerateSchema(typeof(C))] public partial record P([property: EmailAddress, Url] string A);", "ZORG0005")]
+    [InlineData("[GenerateSchema(typeof(C))] public partial record P([property: Range(1e300, 1e301)] float A);", "ZORG0005")]
+    public void More_mistakes_are_reported(string source, string id)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run(source + Context);
+
+        Assert.Contains(found, diagnostic => diagnostic.Id == id);
+    }
+
+    [Fact]
+    public void A_private_schema_on_a_base_needs_no_new_and_no_length_means_no_warning()
+    {
+        (ImmutableArray<Diagnostic> found, ImmutableArray<Diagnostic> errors) = Run("public class B { private static int Schema = 0; public static int Get() => Schema; } [GenerateSchema(typeof(C))] public partial record P2([property: MaxLength] string A);" + """
+
+            [JsonSerializable(typeof(P2))]
+            public partial class C : JsonSerializerContext;
+            """);
+
+        Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "ZORG0005");
+        Assert.Empty(errors.Where(error => error.Id is not ("CS0117" or "CS0534" or "CS7036")));
+    }
+
+    [Fact]
+    public void A_type_the_context_reaches_through_a_property_is_known()
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("""
+            [GenerateSchema(typeof(C))] public partial record N(string A);
+            public record W(N Inner);
+            [JsonSerializable(typeof(W))]
+            public partial class C : JsonSerializerContext;
+            """);
+
+        Assert.DoesNotContain(found, diagnostic => diagnostic.Id == "ZORG0004");
     }
 
     [Fact]
