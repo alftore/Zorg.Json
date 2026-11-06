@@ -813,4 +813,90 @@ public sealed class EmissionReviewTests
         Assert.True(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":"s"}}"""), text);
         Assert.False(Accepts(text, JsonSchemaProfile.OpenApi30, """{"x":{"p":1}}"""), text);
     }
+
+    // What the reference fuzzer found, and the three limits docs/import.md once listed.
+
+    [Fact]
+    public void A_reference_into_the_allOf_beside_a_wrapped_reference_finds_its_entry() =>
+        AssertAgrees(
+            "wrapped",
+            Import("""{"$defs":{"s":{}},"properties":{"r":{"$ref":"#/$defs/s","allOf":[{"type":"object"}]},"p":{"$ref":"#/properties/r/allOf/0"}}}"""),
+            """{"p":{}}""",
+            """{"p":1}""");
+
+    [Fact]
+    public void A_root_with_an_id_wrapped_in_an_object_keeps_its_references()
+    {
+        const string Document = """{"$id":"http://e.com/r","anyOf":[{"properties":{"a":{"type":"string"},"b":{"$ref":"#/anyOf/0/properties/a"}}}]}""";
+        JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.RequireObjectRoot);
+        string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = profile }).ToJsonString();
+
+        Assert.True(Accepts(text, profile, """{"data":{"b":"s"}}"""), text);
+        Assert.False(Accepts(text, profile, """{"data":{"b":1}}"""), text);
+    }
+
+    [Theory]
+    [InlineData("""{"if":{"type":"string"},"properties":{"a":{"$ref":"#/if"}}}""")]
+    [InlineData("""{"properties":{"a":{"$ref":"#/properties/b"},"b":{"type":"string"}}}""")]
+    public void A_reference_prefix_leaves_a_reference_only_to_what_goes_with_the_definitions(string document)
+    {
+        EmitResult result = Import(document).Emit(new JsonSchemaOptions { Target = JsonSchemaProfile.OpenApi30, ReferencePrefix = "#/components/schemas/" });
+        string reference = result.Schema["properties"]!["a"]!["$ref"]!.GetValue<string>();
+
+        Assert.Equal("""{"type":"string"}""", result.Definitions[reference["#/components/schemas/".Length..]].ToJsonString());
+    }
+
+    [Fact]
+    public void A_reference_prefix_gives_a_recursive_root_a_definition()
+    {
+        EmitResult result = Z.Array(Import("""{"type":"object","properties":{"n":{"$ref":"#"}}}""")).Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+
+        Assert.Equal("""{"type":"object","properties":{"n":{"$ref":"#/components/schemas/target-1"}}}""", result.Definitions["target-1"].ToJsonString());
+    }
+
+    [Fact]
+    public void An_anchor_on_a_schema_that_was_left_out_is_written_again()
+    {
+        const string Document = """{"not":{"format":"date","$anchor":"a"},"properties":{"p":{"$ref":"#a"}}}""";
+        string text = Import(Document).ToJsonSchema().ToJsonString();
+
+        Assert.True(Accepts(text, JsonSchemaProfile.Draft202012, """{"p":"2024-01-02"}"""), text);
+    }
+
+    [Fact]
+    public void An_import_used_twice_repeats_neither_its_id_nor_its_anchor()
+    {
+        JsonValueSchema identified = Import("""{"$defs":{"r":{"$id":"http://e.com/n","type":"string"}},"properties":{"p":{"$ref":"#/$defs/r"}}}""");
+        JsonValueSchema anchored = Import("""{"$defs":{"r":{"$anchor":"a","type":"string"}},"properties":{"p":{"$ref":"#a"}}}""");
+
+        foreach (JsonValueSchema schema in new[] { identified, anchored })
+        {
+            AssertAgrees(
+                "twice",
+                Z.Object().Property("x", schema).Property("y", schema),
+                Profiles,
+                """{"x":{"p":"s"},"y":{"p":"s"}}""",
+                """{"x":{"p":"s"},"y":{"p":1}}""");
+        }
+    }
+
+    [Fact]
+    public void A_reference_inside_unknown_text_keeps_its_meaning_when_the_text_is_reached()
+    {
+        const string Document = """{"x-stash":{"k":{"$ref":"#/allOf/1"}},"allOf":[{},{"maxItems":1}],"properties":{"p":{"$ref":"#/x-stash/k"}}}""";
+
+        AssertAgrees("unknown text", Z.AllOf(Import(Document), Z.Any()), """{"p":[1]}""", """{"p":[1,2]}""");
+    }
+
+    [Fact]
+    public void Open_api_30_reads_no_id_or_anchor_in_an_imported_schema()
+    {
+        const string Document = """{"$defs":{"a":{"$anchor":"n","type":"string"},"b":{"$id":"http://e.com/b","$defs":{"s":{"type":"string"}},"properties":{"q":{"$ref":"#/$defs/s"}}}},"properties":{"p":{"$ref":"#n"},"r":{"$ref":"#/$defs/b"}}}""";
+        string text = Import(Document).ToJsonSchema(new JsonSchemaOptions { Target = JsonSchemaProfile.OpenApi30 }).ToJsonString();
+
+        Assert.DoesNotContain("$anchor", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("$id", text, StringComparison.Ordinal);
+        Assert.Contains("\"$ref\":\"#/$defs/a\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"$ref\":\"#/$defs/b/$defs/s\"", text, StringComparison.Ordinal);
+    }
 }

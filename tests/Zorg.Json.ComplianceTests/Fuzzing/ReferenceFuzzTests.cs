@@ -19,13 +19,14 @@ namespace Zorg.Json.ComplianceTests.Fuzzing;
 /// <summary>
 /// Random reference-heavy documents, embedded in fluent schemas and emitted for every profile, with the judges of
 /// <see cref="ReferenceChecker"/>. The seed is fixed. Set <c>ZORG_FUZZ_MINUTES</c> for a long run, <c>ZORG_FUZZ_SEED</c> for
-/// another seed, and <c>ZORG_FUZZ_REPLAY=reference:42</c> to repeat one iteration. A run always writes
+/// another seed, <c>ZORG_FUZZ_REPLAY=reference:42</c> to repeat one iteration, <c>ZORG_FUZZ_ITERATIONS</c> for a longer fixed run, and
+/// <c>ZORG_FUZZ_DUMP</c> for a file of what each variant emits, to compare two versions of the emitter. A run always writes
 /// <c>zorg-fuzz-reference-report.txt</c> to the temp folder, with every failure by kind, profile and shape.
 /// </summary>
 public sealed class ReferenceFuzzTests
 {
     private const long DefaultSeed = 20261106;
-    private const int Iterations = 200;
+    private static int Iterations => int.TryParse(Environment.GetEnvironmentVariable("ZORG_FUZZ_ITERATIONS"), CultureInfo.InvariantCulture, out int count) ? count : 200;
 
     private static long Seed => long.TryParse(Environment.GetEnvironmentVariable("ZORG_FUZZ_SEED"), CultureInfo.InvariantCulture, out long seed) ? seed : DefaultSeed;
 
@@ -153,12 +154,39 @@ public sealed class ReferenceFuzzTests
         List<JsonElement> instances = Instances(@case, document, second, random);
         report.Counters.Count(instances.Any(instance => @case.Probe.ParseElement(instance)) ? "documents with an accepted value" : "documents with no accepted value");
 
+        if (Environment.GetEnvironmentVariable("ZORG_FUZZ_DUMP") is { } dump)
+        {
+            Dump(dump, iteration, @case, instances);
+        }
+
         foreach (ReferenceVariant variant in ReferenceVariant.All)
         {
             foreach (ReferenceFailure failure in ReferenceChecker.Check(@case, variant, instances, counters: report.Counters).DistinctBy(failure => failure.Kind))
             {
                 report.Add(iteration, @case, variant, failure);
             }
+        }
+    }
+
+    /// <summary>Writes what each variant emits, and whether it was sound, to compare two versions of the emitter.</summary>
+    private static void Dump(string path, int iteration, ReferenceCase @case, List<JsonElement> instances)
+    {
+        foreach (ReferenceVariant variant in ReferenceVariant.All)
+        {
+            string emitted;
+
+            try
+            {
+                Zorg.Json.Emission.EmitResult result = @case.Probe.Emit(variant.Options);
+                emitted = result.Schema.ToJsonString() + " DEFS " + string.Join(",", result.Definitions.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => entry.Key + "=" + entry.Value.ToJsonString()));
+            }
+            catch (InvalidOperationException exception)
+            {
+                emitted = "LIMIT " + exception.Message;
+            }
+
+            bool clean = ReferenceChecker.Check(@case, variant, instances).All(failure => failure.Kind == ReferenceChecker.OracleLimit);
+            File.AppendAllText(path, $"{iteration}\t{variant.Profile}/{variant.Name}\t{@case.Scenario}\t{@case.Dialect}\t{clean}\t{@case.Document}\t{emitted}\n");
         }
     }
 

@@ -81,7 +81,8 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
 
         JsonObject? target = schema["$defs"] as JsonObject;
 
-        if (target is not null && definitions.Any(entry => target.ContainsKey(entry.Key)))
+        // The emitter gives what a reference reaches a home under $defs, so a name in both is only a clash if something still reads this one.
+        if (target is not null && definitions.Any(entry => target.ContainsKey(entry.Key)) && ReadsDefinitions(schema))
         {
             return;
         }
@@ -98,10 +99,17 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
         foreach ((string name, JsonNode? value) in definitions.ToArray())
         {
             definitions.Remove(name);
-            target.Add(name, value);
+            target.TryAdd(name, value);
         }
 
         RewriteReferences(schema, reference => reference.StartsWith(Old, StringComparison.Ordinal) ? string.Concat(New, reference.AsSpan(Old.Length)) : null);
+    }
+
+    private static bool ReadsDefinitions(JsonObject schema)
+    {
+        bool found = false;
+        JsonSchemaWalker.Walk(schema, (node, _, _) => found |= LocalReferences.AsString(node["$ref"])?.StartsWith("#/definitions/", StringComparison.Ordinal) == true);
+        return found;
     }
 
     private static void ResolveAnchors(JsonObject schema)

@@ -85,19 +85,16 @@ internal sealed class SchemaImporter
     private readonly List<PendingReference> _references = [];
     private readonly HashSet<string> _patterns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _walked = new(StringComparer.Ordinal);
-    private readonly HashSet<(string Resource, string Pointer)> _offTree = [];
-    private readonly Dictionary<(string Resource, string Pointer), string>? _homes;
     private readonly bool _isDialectAssumed;
     private int _count;
     private long _patternLength;
 
-    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, bool isDialectAssumed, Dictionary<(string Resource, string Pointer), string>? homes)
+    private SchemaImporter(JsonElement root, JsonSchemaImportOptions options, JsonSchemaImportDialect dialect, bool isDialectAssumed)
     {
         _root = root;
         _options = options;
         _dialect = dialect;
         _isDialectAssumed = isDialectAssumed;
-        _homes = homes;
     }
 
     private enum Position
@@ -129,16 +126,8 @@ internal sealed class SchemaImporter
 
         JsonSchemaImportDialect dialect = DetectDialect(root, effective);
         bool isAssumed = effective.DefaultDialect == JsonSchemaImportDialect.Draft202012 && !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("$schema", out _));
-        SchemaImporter importer = new(root, effective, dialect, isAssumed, homes: null);
-        SchemaNode node = importer.Run();
+        return new SchemaImporter(root, effective, dialect, isAssumed).Run();
 
-        if (importer._offTree.Count == 0)
-        {
-            return node;
-        }
-
-        // A second pass, now that it's known which targets lie outside the walked tree. Each gets a home under $defs.
-        return new SchemaImporter(root, effective, dialect, isAssumed, importer.NameHomes()).Run();
     }
 
     private SchemaNode Run()
@@ -422,11 +411,8 @@ internal sealed class SchemaImporter
             _ => throw Error(JsonSchemaImportCodes.InvalidSchema, at.Pointer, isBooleanLegal ? "A schema must be an object or a boolean." : "A schema must be an object in draft-04."),
         };
 
-        if (node.BooleanValue is null)
-        {
-            node = node with { Behavior = node.Behavior with { Location = at.Pointer } };
-        }
-
+        // A boolean too: a reference to it has to find where it was written.
+        node = node with { Behavior = node.Behavior with { Location = at.Pointer } };
         _nodes.TryAdd(at.Pointer, node);
         _locations.TryAdd(node, at.Pointer);
 
@@ -483,7 +469,7 @@ internal sealed class SchemaImporter
             behavior = _options.Formats == FormatHandling.AnnotateOnly ? behavior with { FormatIsAnnotation = true } : behavior;
         }
 
-        ImmutableArray<SchemaProperty> defs = WithHomes(keywords.Named(IsLegacy ? "definitions" : "$defs", scope), scope, at);
+        ImmutableArray<SchemaProperty> defs = keywords.Named(IsLegacy ? "definitions" : "$defs", scope);
         (ImmutableArray<SchemaNode> prefixItems, SchemaNode? items) = ReadItems(keywords, scope);
         (ImmutableArray<KeyValuePair<string, ImmutableArray<string>>> dependentRequired, ImmutableArray<SchemaProperty> dependentSchemas) = ReadDependencies(keywords, scope);
         bool rejectsEverything = keywords.Peek("enum", out JsonElement declared) && declared.ValueKind == JsonValueKind.Array && declared.GetArrayLength() == 0;
@@ -845,19 +831,13 @@ internal sealed class SchemaImporter
 
     /// <summary>
     /// Before 2019-09 a pointer can spell keywords the model doesn't keep, such as <c>definitions</c>. The node's
-    /// <c>$ref</c> has to name the location the emitter will write, so each token is translated by its position.
-    /// A target that isn't in the walked tree has no such location, so it's named by its home under <c>$defs</c> instead.
+    /// <c>$ref</c> reads as the model does, so each token is translated by its position. The emitter doesn't read it: it follows the target.
     /// </summary>
     private string NormalizeReference(string reference, Scope scope)
     {
         if (!IsLegacy || !reference.StartsWith("#/", StringComparison.Ordinal))
         {
             return reference;
-        }
-
-        if (_homes is not null && _homes.TryGetValue((scope.Resource, PointerOf(reference, scope.Resource)!), out string? home))
-        {
-            return "#/$defs/" + Uri.EscapeDataString(Escape(home));
         }
 
         JsonElement? current = Walk(scope.Resource);
@@ -887,78 +867,6 @@ internal sealed class SchemaImporter
     {
         string fragment = Uri.UnescapeDataString(reference[1..]);
         return fragment.Length == 0 || fragment[0] == '/' ? resource + fragment : null;
-    }
-
-    /// <summary>Adds the homes of the targets that lie outside the walked tree, to the <c>$defs</c> of the resource they were named from.</summary>
-    private ImmutableArray<SchemaProperty> WithHomes(ImmutableArray<SchemaProperty> defs, Scope scope, Scope at)
-    {
-        if (_homes is null || scope.Resource != at.Pointer)
-        {
-            return defs;
-        }
-
-        ImmutableArray<SchemaProperty>.Builder all = defs.ToBuilder();
-
-        foreach (((string resource, string pointer), string name) in _homes.Where(home => home.Key.Resource == at.Pointer).OrderBy(home => home.Key.Pointer, StringComparer.Ordinal))
-        {
-            all.Add(new SchemaProperty(name, Build(Walk(pointer)!.Value, new Scope(pointer, resource, at.Depth + 1, IsWalked: false))));
-        }
-
-        return all.ToImmutable();
-    }
-
-    private Dictionary<(string Resource, string Pointer), string> NameHomes()
-    {
-        Dictionary<(string Resource, string Pointer), string> homes = [];
-
-        foreach (IGrouping<string, string> group in _offTree.GroupBy(target => target.Resource, target => target.Pointer))
-        {
-            HashSet<string> taken = DefinitionNames(group.Key);
-            int number = 0;
-
-            foreach (string pointer in group.Order(StringComparer.Ordinal))
-            {
-                string name = Candidate(group.Key, pointer) ?? $"target-{++number}";
-                string unique = name;
-
-                for (int suffix = 2; !taken.Add(unique); suffix++)
-                {
-                    unique = $"{name}-{suffix.ToString(CultureInfo.InvariantCulture)}";
-                }
-
-                homes[(group.Key, pointer)] = unique;
-            }
-        }
-
-        return homes;
-    }
-
-    /// <summary>A name for <c>/$defs/x</c> or <c>/components/schemas/x</c>, which is where documents usually keep their targets.</summary>
-    private static string? Candidate(string resource, string pointer)
-    {
-        string[] tokens = pointer[resource.Length..].Split('/');
-
-        return tokens switch
-        {
-            ["", "$defs", var name] => Unescape(name),
-            ["", "components", "schemas", var name] => Unescape(name),
-            _ => null,
-        };
-    }
-
-    private HashSet<string> DefinitionNames(string resource)
-    {
-        HashSet<string> names = new(StringComparer.Ordinal);
-
-        if (Walk(resource) is { ValueKind: JsonValueKind.Object } element && element.TryGetProperty("definitions", out JsonElement definitions) && definitions.ValueKind == JsonValueKind.Object)
-        {
-            foreach (JsonProperty property in definitions.EnumerateObject())
-            {
-                names.Add(Name(property, resource));
-            }
-        }
-
-        return names;
     }
 
     private JsonElement? Walk(string pointer)
@@ -1001,13 +909,6 @@ internal sealed class SchemaImporter
 
             pointer = _anchors.GetValueOrDefault((resource, name))
                 ?? throw Error(JsonSchemaImportCodes.UnresolvedRef, location, $"No $anchor is named \"{name}\".");
-        }
-
-        // Not a keyword Zorg walks, but a pointer may still lead there. The text there is written again under $defs.
-        // A resource that isn't walked is its own root, wherever it's written: as a home inside itself it would never stop being built.
-        if (IsLegacy && pointer != resource && !_walked.Contains(pointer) && Walk(pointer) is { ValueKind: JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False })
-        {
-            _offTree.Add((resource, pointer));
         }
 
         if (_nodes.TryGetValue(pointer, out SchemaNode? node))

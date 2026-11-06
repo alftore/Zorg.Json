@@ -149,9 +149,16 @@ internal static class ReferenceChecker
 
     private static readonly TimeSpan EmitTimeout = TimeSpan.FromSeconds(20);
 
-    /// <summary>JsonSchema.Net sees a cycle in a reference to a child of the same schema, and finds no anchor under keywords it builds late, such as <c>dependentSchemas</c>.</summary>
+    /// <summary>
+    /// JsonSchema.Net sees a cycle in a reference to a child of the same schema, finds no anchor under keywords it builds late,
+    /// such as <c>dependentSchemas</c>, and registers an <c>$id</c> or an anchor twice when a reference reaches it before the walk does.
+    /// <c>JsonSchema.Net refuses_a_sound_document</c> holds an example.
+    /// </summary>
     private static bool IsOracleLimit(Exception exception) =>
-        exception is RefResolutionException || exception.Message.Contains("Cycle detected", StringComparison.Ordinal);
+        exception is RefResolutionException
+        || exception.Message.Contains("Cycle detected", StringComparison.Ordinal)
+        || exception.Message.Contains("Overwriting registered schemas", StringComparison.Ordinal)
+        || exception.Message.Contains("same key has already been added", StringComparison.Ordinal);
 
     /// <summary>Every failure of one case under one variant. <paramref name="emit"/> stands in for the emitter, to prove that a judge can fail.</summary>
     public static List<ReferenceFailure> Check(ReferenceCase @case, ReferenceVariant variant, IReadOnlyList<JsonElement> instances, Func<JsonSchemaOptions, EmitResult>? emit = null, ReferenceCounters? counters = null, TimeSpan? timeout = null)
@@ -373,35 +380,7 @@ internal static class ReferenceBaseline
     /// What each kind may reach in the fixed run: the documents, out of those judged, that failed that way when the kind was
     /// last accepted. A kind or profile that isn't listed fails the run, and so does a count above what's listed. Lower the numbers as defects are fixed.
     /// </summary>
-    public static readonly Dictionary<(string Kind, string Profile), int> Accepted = new()
-    {
-        [("a-dangling", "Draft 2020-12")] = 54,
-        [("a-dangling", "Draft-07")] = 59,
-        [("a-dangling", "OpenAPI 3.0")] = 55,
-        [("a-dangling", "OpenAPI 3.1")] = 54,
-        [("a-duplicate-anchor", "Draft 2020-12")] = 22,
-        [("a-duplicate-anchor", "Draft-07")] = 22,
-        [("a-duplicate-anchor", "OpenAPI 3.1")] = 22,
-        [("a-duplicate-id", "Draft 2020-12")] = 21,
-        [("a-duplicate-id", "Draft-07")] = 21,
-        [("a-duplicate-id", "OpenAPI 3.1")] = 21,
-        [("a-non-schema", "Draft-07")] = 2,
-        [("a-unknown-place", "Draft 2020-12")] = 5,
-        [("a-unknown-place", "Draft-07")] = 3,
-        [("a-unknown-place", "OpenAPI 3.0")] = 2,
-        [("a-unknown-place", "OpenAPI 3.1")] = 5,
-        [("b-cannot-evaluate", "Draft 2020-12")] = 20,
-        [("b-cannot-evaluate", "Draft-07")] = 21,
-        [("b-cannot-evaluate", "OpenAPI 3.0")] = 24,
-        [("b-cannot-evaluate", "OpenAPI 3.1")] = 20,
-        [("b-does-not-load", "Draft 2020-12")] = 35,
-        [("b-does-not-load", "Draft-07")] = 35,
-        [("b-does-not-load", "OpenAPI 3.1")] = 35,
-        [("c-stricter-than-parsing", "Draft 2020-12")] = 1,
-        [("c-stricter-than-parsing", "Draft-07")] = 1,
-        [("c-stricter-than-parsing", "OpenAPI 3.0")] = 2,
-        [("c-stricter-than-parsing", "OpenAPI 3.1")] = 1,
-    };
+    public static readonly Dictionary<(string Kind, string Profile), int> Accepted = [];
 }
 
 /// <summary>Counts that aren't failures, such as refused documents, shown in the report so that nothing is filtered silently.</summary>
@@ -604,10 +583,10 @@ internal static class ReferenceShrinker
     private const int MaxAttempts = 200;
 
     /// <summary>The smallest pair of documents that still fails this way, within the attempts allowed.</summary>
-    public static (string Document, string Second) Shrink(ReferenceFailure failure, ReferenceCase @case, ReferenceVariant variant)
+    public static (string Document, string Second) Shrink(ReferenceFailure failure, ReferenceCase @case, ReferenceVariant variant, Func<ReferenceCase, JsonSchemaOptions, EmitResult>? emit = null)
     {
-        string first = Reduce(@case.Document, text => Fails(failure, @case.Scenario, text, @case.Second, @case.Dialect, variant, failure.Instance));
-        string second = Reduce(@case.Second, text => Fails(failure, @case.Scenario, first, text, @case.Dialect, variant, failure.Instance));
+        string first = Reduce(@case.Document, text => Fails(failure, @case.Scenario, text, @case.Second, @case.Dialect, variant, emit));
+        string second = Reduce(@case.Second, text => Fails(failure, @case.Scenario, first, text, @case.Dialect, variant, emit));
         return (first, second);
     }
 
@@ -640,7 +619,7 @@ internal static class ReferenceShrinker
         return current.ToJsonString();
     }
 
-    private static bool Fails(ReferenceFailure failure, string scenario, string document, string second, JsonSchemaImportDialect dialect, ReferenceVariant variant, string? instance)
+    private static bool Fails(ReferenceFailure failure, string scenario, string document, string second, JsonSchemaImportDialect dialect, ReferenceVariant variant, Func<ReferenceCase, JsonSchemaOptions, EmitResult>? emit)
     {
         ReferenceCase? @case = ReferenceCase.Build(scenario, document, second, dialect);
 
@@ -649,8 +628,8 @@ internal static class ReferenceShrinker
             return false;
         }
 
-        JsonElement[] instances = instance is null ? [] : [JsonElement.Parse(instance)];
-        return ReferenceChecker.Check(@case, variant, instances).Any(found => found.Kind == failure.Kind);
+        JsonElement[] instances = failure.Instance is null ? [] : [JsonElement.Parse(failure.Instance)];
+        return ReferenceChecker.Check(@case, variant, instances, emit is null ? null : options => emit(@case, options)).Any(found => found.Kind == failure.Kind);
     }
 
     /// <summary>Every document with one member or entry taken out, largest parts first.</summary>

@@ -150,15 +150,41 @@ public sealed class ReferenceJudgeTests
     [Fact]
     public void A_failure_shrinks_to_what_causes_it()
     {
-        const string Noisy = """{"title":"t","properties":{"p":{"type":"string"},"q":{"not":{"format":"date","$anchor":"gone"}}},"$defs":{"d":{"$ref":"#gone"}}}""";
-        ReferenceCase @case = Case(Noisy);
-        ReferenceFailure failure = ReferenceChecker.Check(@case, Base, []).First(found => found.Kind == "a-dangling");
+        const string Noisy = """{"title":"t","properties":{"p":{"type":"string"},"q":{"type":"string"}},"$defs":{"gone":{}}}""";
 
-        (string shrunk, string _) = ReferenceShrinker.Shrink(failure, @case, Base);
+        // Broken for as long as the definition is in the document.
+        static EmitResult Broken(ReferenceCase @case, JsonSchemaOptions options)
+        {
+            EmitResult result = @case.Probe.Emit(options);
+
+            if (@case.Document.Contains("gone", StringComparison.Ordinal))
+            {
+                result.Schema["$ref"] = "#/$defs/nowhere";
+            }
+
+            return result;
+        }
+
+        ReferenceCase @case = Case(Noisy);
+        ReferenceFailure failure = ReferenceChecker.Check(@case, Base, [], options => Broken(@case, options)).First(found => found.Kind == "a-dangling");
+
+        (string shrunk, string _) = ReferenceShrinker.Shrink(failure, @case, Base, Broken);
 
         Assert.DoesNotContain("title", shrunk, StringComparison.Ordinal);
         Assert.DoesNotContain("\"p\"", shrunk, StringComparison.Ordinal);
         Assert.Contains("gone", shrunk, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"$schema":"https://json-schema.org/draft/2020-12/schema","items":{"allOf":[{"$ref":"#/items/allOf/1/items"},{"items":{"$anchor":"a"}}]}}""")]
+    [InlineData("""{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"x":{"prefixItems":[{"if":{"$ref":"#/properties/x/not"}}],"not":{"allOf":[{"$id":"a.json"}]}},"z":{"prefixItems":[{"if":{"$ref":"#/properties/z/not"}}],"not":{"allOf":[{"$id":"a.json-2"}]}}}}""")]
+    public void JsonSchema_Net_refuses_a_sound_document(string document)
+    {
+        // Not one word of these is Zorg's, which is why the report keeps its refusals of sound documents apart.
+        Exception? refused = Record.Exception(() => global::Json.Schema.JsonSchema.FromText(document, new global::Json.Schema.BuildOptions { SchemaRegistry = new global::Json.Schema.SchemaRegistry() }));
+
+        Assert.NotNull(refused);
+        Assert.Empty(ReferenceGraph.Check((JsonObject)JsonNode.Parse(document)!, JsonSchemaDialect.Draft202012));
     }
 
     [Fact]

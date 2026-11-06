@@ -4,6 +4,12 @@
 
 - Fixed an imported `oneOf` being written as `anyOf` when a branch held a `format`, though its branches can't overlap, as in a nullable `$ref`. Branches of different types now keep `oneOf`, so these schemas round trip again and `UnrepresentablePolicy.Throw` doesn't throw on them. Branches that can overlap once `format` is ignored still become `anyOf`.
 - The diagnostic for that `anyOf` now says why it's needed.
+- Fixed an import that overflowed the stack and ended the process: a draft-07 document with a reference to the root of a resource outside the keywords Zorg walks.
+- Emitted references are now written last, from where each target ended up, in place of rewriting their text. This closes the three limits `docs/import.md` listed: a `$ref` into an `allOf` beside a wrapped `$ref`, a root with an `$id` under `RequireObjectRoot`, and `ReferencePrefix` leaving references dangling.
+- With `ReferencePrefix`, a target outside the definitions, the root included, now goes to `EmitResult.Definitions`.
+- An import used twice no longer repeats its `$id` or `$anchor`. The second copy gets an `$id` with a suffix.
+- An anchor on a schema the dialect leaves out no longer dangles, and OpenAPI 3.0 output of an imported schema has no `$id` or `$anchor`.
+- A `$ref` into an unknown keyword now gets a home under `$defs` in every dialect, as it did before 2020-12, because references inside that text can't be moved with it. `#/unknown-keyword` becomes `#/$defs/target-1`.
 
 ## 0.1.0-preview.2
 
