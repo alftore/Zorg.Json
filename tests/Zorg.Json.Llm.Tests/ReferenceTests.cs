@@ -78,6 +78,18 @@ public sealed class ReferenceTests
     }
 
     [Fact]
+    public void Text_under_a_nested_definitions_keyword_reads_nothing()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"prefixItems":[{"definitions":{"c":{"$ref":"#/definitions/a"}}}],"definitions":{"a":{"$ref":"#/nowhere"}}}
+            """);
+
+        EmitResult emitted = schema.Emit(LlmProfiles.GeminiJsonSchema);
+
+        Assert.DoesNotContain(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "$ref");
+    }
+
+    [Fact]
     public void An_anchor_is_read_from_the_resource_of_the_reference()
     {
         JsonValueSchema schema = Z.FromJsonSchema("""

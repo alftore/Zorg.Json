@@ -116,7 +116,7 @@ internal sealed class CapabilityEnforcer(SchemaCapabilities capabilities) : IJso
     private static bool ReadsDefinitions(JsonObject schema)
     {
         bool found = false;
-        JsonSchemaWalker.Walk(schema, (node, _, _) => found |= LocalReferences.AsString(node["$ref"])?.StartsWith("#/definitions/", StringComparison.Ordinal) == true);
+        JsonSchemaWalker.Walk(schema, (node, location, _) => found |= !location.Contains("/definitions/", StringComparison.Ordinal) && LocalReferences.AsString(node["$ref"])?.StartsWith("#/definitions/", StringComparison.Ordinal) == true);
         return found;
     }
 
