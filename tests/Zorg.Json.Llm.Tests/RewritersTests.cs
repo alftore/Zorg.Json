@@ -150,6 +150,18 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_coerced_property_sent_as_text_fits_its_branch()
+    {
+        ObjectSchema schema = Z.Object().Property("item", Z.AnyOf(
+            Z.Object().Property("on", Z.Boolean().Coerce()).Property("note", Z.String().Optional()),
+            Z.String()));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"item":{"on":"true","note":null}}""");
+
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
     public void A_long_list_of_unions_is_adapted_to_the_end()
     {
         ObjectSchema schema = Z.Object().Property("rs", Z.Array(Z.AnyOf(Z.Array(Z.String()), Z.Array(Item))));

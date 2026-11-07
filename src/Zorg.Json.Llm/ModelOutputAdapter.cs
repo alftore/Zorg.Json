@@ -229,7 +229,8 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
     {
         JsonElement element = ToElement(value);
 
-        if (!HasAllowedType(element, node.Types))
+        // A coerced number or boolean is also accepted as text, as the emitted schema says.
+        if (!HasAllowedType(element, node.Behavior.Coercion == SchemaCoercion.None ? node.Types : node.Types | JsonTypes.String))
         {
             return false;
         }

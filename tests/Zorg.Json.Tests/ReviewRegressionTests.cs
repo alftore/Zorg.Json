@@ -350,6 +350,30 @@ public sealed class ReviewRegressionTests
         public System.Collections.Immutable.ImmutableList<string> Immutable { get; } = [];
     }
 
+    private sealed class MaybeTags
+    {
+        [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+        public List<string>? Tags { get; }
+    }
+
+    private struct ValueOwner
+    {
+        public ValueOwner()
+        {
+        }
+
+        [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+        public List<int> Items { get; } = [];
+    }
+
+    [Fact]
+    public void A_nullable_getter_or_a_struct_owner_is_not_filled_in_place()
+    {
+        Assert.True(Schema.Object<MaybeTags>().Validate(new MaybeTags()).IsSuccess);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<MaybeTags>().SafeParse("""{ "tags": ["x"] }""")));
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<ValueOwner>().SafeParse("""{ "items": [1] }""")));
+    }
+
     private sealed class WithParameter(int a)
     {
         public int A { get; } = a;

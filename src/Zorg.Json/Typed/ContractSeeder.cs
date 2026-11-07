@@ -53,9 +53,12 @@ internal sealed class ContractSeeder
     /// </summary>
     private static bool IsPopulated(JsonPropertyInfo property, JsonTypeInfo owner)
     {
+        // A getter that may return null would put null in the output, which the input can't take, and a struct owner is filled as a copy.
         if (property.Set is not null
             || property.AssociatedParameter is not null
             || property.Get is null
+            || property.IsGetNullable
+            || owner.Type.IsValueType
             || property.CustomConverter is not null
             || (property.ObjectCreationHandling ?? owner.PreferredPropertyObjectCreationHandling ?? owner.Options.PreferredObjectCreationHandling) != JsonObjectCreationHandling.Populate
             || owner.Properties.Any(other => other.AssociatedParameter is not null)
