@@ -19,6 +19,9 @@ internal interface IProbe
 
     public bool ParseElement(JsonElement json);
 
+    /// <summary>What parsing returned, when the schema returns JSON. Null when parsing fails or returns a .NET type.</summary>
+    public JsonElement? ParsedJson(JsonElement json);
+
     /// <summary>Parses, then validates the parsed value. Null when parsing fails, else whether Validate accepted it.</summary>
     public bool? Revalidate(JsonElement json);
 
@@ -34,6 +37,9 @@ internal sealed class Probe<T>(Schema<T> schema) : IProbe
     public bool ParseUtf8(byte[] json) => schema.SafeParse(json).IsSuccess;
 
     public bool ParseElement(JsonElement json) => schema.SafeParse(json).IsSuccess;
+
+    public JsonElement? ParsedJson(JsonElement json) =>
+        schema.SafeParse(json) is { IsSuccess: true } parsed && parsed.Value is JsonElement value ? value : null;
 
     public bool? Revalidate(JsonElement json)
     {

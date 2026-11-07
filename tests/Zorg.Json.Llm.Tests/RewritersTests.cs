@@ -160,6 +160,17 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void The_range_of_a_small_integer_reaches_the_model()
+    {
+        ObjectSchema schema = Z.Object().Property("b", Z.Number<byte>()).Property("u", Z.Number<uint>());
+        JsonObject properties = schema.Emit(LlmProfiles.OpenAIStrict).Schema["properties"]!.AsObject();
+
+        Assert.Equal(255, properties["b"]!["maximum"]!.GetValue<int>());
+        Assert.Equal(0, properties["u"]!["minimum"]!.GetValue<int>());
+        Assert.NotEmpty(Z.Object().Property("d", Z.Number<decimal>()).Emit(LlmProfiles.OpenAIStrict).Diagnostics);
+    }
+
+    [Fact]
     public void A_coerced_property_sent_as_text_fits_its_branch()
     {
         ObjectSchema schema = Z.Object().Property("item", Z.AnyOf(

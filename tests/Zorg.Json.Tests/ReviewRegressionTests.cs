@@ -448,6 +448,20 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void The_output_schema_leaves_out_negative_rules_that_test_the_value_before_it_changed()
+    {
+        JsonSchemaOptions output = new() { Direction = SchemaDirection.Output };
+        JsonValueSchema not = Z.Not(Z.String().Trim().MinLength(1));
+        JsonValueSchema oneOf = Z.OneOf(Z.If(Z.Object(), Z.String().Trim(), Z.String().Trim()), Z.Array());
+        ArraySchema<JsonElement> contains = Z.Array().Contains(Z.If(Z.Object(), Z.String().Trim()), null, 1);
+
+        Assert.Null(not.ToJsonSchema(output)["not"]);
+        Assert.Null(oneOf.ToJsonSchema(output)["oneOf"]);
+        Assert.Null(contains.ToJsonSchema(output)["maxContains"]);
+        Assert.True(not.SafeParse("\"  \"").IsSuccess);
+    }
+
+    [Fact]
     public void An_unnamed_number_type_is_named_in_its_message()
     {
         string message = Assert.Single(Z.Number<ulong>().SafeParse("1.5").Issues).Message;
@@ -615,7 +629,7 @@ public sealed class ReviewRegressionTests
 
     [Fact]
     public void Output_schemas_keep_the_keywords() =>
-        Assert.True(Z.Not(Z.String().Trim()).ToJsonSchema(new() { Direction = SchemaDirection.Output }).ContainsKey("not"));
+        Assert.True(Z.Not(Z.String().MinLength(3)).ToJsonSchema(new() { Direction = SchemaDirection.Output }).ContainsKey("not"));
 
     [Fact]
     public void Discriminated_unions_stay_oneOf()

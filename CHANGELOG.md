@@ -24,6 +24,9 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - `ValidateBody` passes a whole number past the range of `long`, such as `1e19` for a `ulong`, to the binder as plain digits.
 - The OpenAPI document leaves out a `multipleOf` that a `decimal` can't hold exactly, because Microsoft.OpenApi threw on it or rounded it.
 - The type error for a number names its type for every numeric type, such as `uint64`, where it was empty.
+- `byte`, `sbyte`, `short`, `ushort`, `uint` and `ulong` state their range with `minimum` and `maximum`, so a schema read without the type, such as by a model, keeps it. `decimal` writes `format: decimal` in OpenAPI, which the LLM profiles report.
+- The output schema leaves out `not`, a `oneOf` that could overlap and `maxContains` where their subschemas change the value, as the input schema does, because they test the value as it came.
+- `ValidateBody` no longer rounds a number a `decimal` can't hold exactly, such as `1e-29`, before the binder reads it.
 - The OpenAPI document writes `const` as a one-value `enum` and boolean subschemas as `{}` and `{"not":{}}`, because Microsoft.OpenApi turned `3` into `"3"` and `false` into `null`.
 - `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.
 - The OpenAPI document no longer closes a tuple: Microsoft.OpenApi has no `prefixItems`, so they move to the description. A 3.0 document moves `patternProperties` there too, because the downgrade would otherwise refuse those names.

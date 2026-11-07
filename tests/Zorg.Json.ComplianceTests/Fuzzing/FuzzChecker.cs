@@ -83,7 +83,11 @@ internal sealed class FuzzFindings
     }
 }
 
-internal readonly record struct OracleSchema(string Name, JsonSchema? Schema, bool UsesRegex, bool UsesLength, bool UsesFormat, bool Unevaluated, bool UsesMultipleOf, bool UsesBackreference);
+internal readonly record struct OracleSchema(string Name, JsonSchema? Schema, bool UsesRegex, bool UsesLength, bool UsesFormat, bool Unevaluated, bool UsesMultipleOf, bool UsesBackreference)
+{
+    /// <summary>Describes what parsing returns, so it judges results rather than documents.</summary>
+    public bool IsOutput { get; init; }
+}
 
 /// <summary>Runs every check on one schema against a set of documents.</summary>
 internal sealed partial class FuzzChecker(FuzzFindings findings)
@@ -141,17 +145,21 @@ internal sealed partial class FuzzChecker(FuzzFindings findings)
                         EmitResult result = built.Probe.Emit(new() { Target = profile, Direction = direction, Unrepresentable = policy });
                         string? text = Serialize(result, name, where);
 
-                        if (text is not null && direction == SchemaDirection.Input && policy == UnrepresentablePolicy.Annotate && profile != JsonSchemaProfile.OpenApi30)
+                        bool output = direction == SchemaDirection.Output && profile == JsonSchemaProfile.Draft202012;
+
+                        if (text is not null && (direction == SchemaDirection.Input || output) && policy == UnrepresentablePolicy.Annotate && profile != JsonSchemaProfile.OpenApi30)
                         {
-                            oracles.Add(new(
-                                name,
+                            OracleSchema oracle = new(
+                                output ? name + " output" : name,
                                 Oracle.TryBuild((JsonObject)JsonNode.Parse(text)!),
                                 text.Contains("\"pattern\"", StringComparison.Ordinal) || text.Contains("\"patternProperties\"", StringComparison.Ordinal),
                                 text.Contains("Length\"", StringComparison.Ordinal),
                                 IsImport(built) && text.Contains("\"format\"", StringComparison.Ordinal),
                                 IsImport(built) && built.Code.Contains("unevaluated", StringComparison.Ordinal),
                                 text.Contains("\"multipleOf\"", StringComparison.Ordinal),
-                                Backreference().IsMatch(text)));
+                                Backreference().IsMatch(text));
+
+                            oracles.Add(oracle with { IsOutput = output });
                         }
                     }
                     catch (Exception exception)
@@ -261,7 +269,7 @@ internal sealed partial class FuzzChecker(FuzzFindings findings)
             findings.Fail("SafeParse threw", $"on sample {Truncate(text)}: {exception.GetType().Name}: {exception.Message} | {where}");
         }
 
-        CheckOracles(oracles, sample.Value, "A valid sample is rejected by the emitted schema", text, where);
+        CheckOracles([.. oracles.Where(entry => !entry.IsOutput)], sample.Value, "A valid sample is rejected by the emitted schema", text, where);
     }
 
     private void Parse(Built built, FuzzDocument document, List<OracleSchema> oracles, string where)
@@ -310,7 +318,24 @@ internal sealed partial class FuzzChecker(FuzzFindings findings)
 
         if (viaText == true && document.Text is { Length: < 20_000 } raw && TryElement(raw) is { } parsed)
         {
-            CheckOracles(oracles, parsed, "Emitted schema is stricter than parsing", document.ToString(), where);
+            CheckOracles([.. oracles.Where(entry => !entry.IsOutput)], parsed, "Emitted schema is stricter than parsing", document.ToString(), where);
+
+            // Known limits, such as a OneOf of objects that both match once stripped, make the output schema refuse some
+            // results, so a disagreement is a note to read rather than a failure.
+            if (built.Probe.ParsedJson(parsed) is { } result)
+            {
+                foreach (OracleSchema output in oracles.Where(entry => entry.IsOutput && entry.Schema is not null))
+                {
+                    if (Oracle.Accepts(output.Schema!, result, output.UsesMultipleOf) == false && !Oracle.IsBeyondItsPrecision(result.GetRawText()))
+                    {
+                        findings.Note("Output schema rejects what parsing returned", $"{Truncate(result.GetRawText())} from {document} | {where}");
+                    }
+                    else
+                    {
+                        findings.Count("output schema judged a result");
+                    }
+                }
+            }
         }
     }
 

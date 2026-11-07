@@ -54,6 +54,18 @@ public sealed class ValidateBodyTests
     }
 
     [Fact]
+    public async Task A_number_a_decimal_would_round_reaches_the_binder_as_it_came()
+    {
+        await using TestApp app = await TestApp.StartAsync(a => a
+            .MapPost("/d", ([FromBody] JsonElement body) => body.GetProperty("d").GetRawText())
+            .ValidateBody(Z.Object().Property("d", Z.Number().Positive())));
+
+        HttpResponseMessage response = await app.PostJsonAsync("/d", """{ "d": 1e-29 }""");
+
+        Assert.Equal("1e-29", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task Plain_parameter_sees_normalization_and_defaults()
     {
         await using TestApp app = await PeopleAppAsync();

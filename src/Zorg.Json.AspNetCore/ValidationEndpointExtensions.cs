@@ -216,7 +216,7 @@ public static class ValidationEndpointExtensions
                 {
                     writer.WriteNumberValue(integer);
                 }
-                else if (element.TryGetDecimal(out decimal number) && decimal.Truncate(number) == number && number >= long.MinValue && number <= long.MaxValue)
+                else if (ExactDecimal(element) is { } number && decimal.Truncate(number) == number && number >= long.MinValue && number <= long.MaxValue)
                 {
                     writer.WriteNumberValue((long)number);
                 }
@@ -236,6 +236,21 @@ public static class ValidationEndpointExtensions
                 element.WriteTo(writer);
                 break;
         }
+    }
+
+    /// <summary>The number as a decimal, when a decimal holds it exactly: TryGetDecimal rounds past 28 digits, and to 0 below 1e-28.</summary>
+    private static decimal? ExactDecimal(JsonElement element)
+    {
+        string text = element.GetRawText();
+        int exponentAt = text.IndexOfAny(['e', 'E']);
+        string digits = (exponentAt < 0 ? text : text[..exponentAt]).TrimStart('-').Replace(".", string.Empty, StringComparison.Ordinal).Trim('0');
+
+        if (digits.Length > 28 || !element.TryGetDecimal(out decimal number) || (number == 0 && digits.Length > 0))
+        {
+            return null;
+        }
+
+        return number;
     }
 
     /// <summary>A whole number written with a fraction or an exponent, as plain digits, or null for any other number.</summary>

@@ -175,9 +175,21 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
     {
         NumberStyles styles = strict && IsIntegerType ? NumberStyles.AllowLeadingSign : NumberStyles.Float;
 
+        // The range of a small or unsigned integer is stated, so that a schema read without the type, such as by a model, keeps it.
+        (string Minimum, string Maximum)? range =
+            typeof(TNumber) == typeof(byte) ? ("0", "255")
+            : typeof(TNumber) == typeof(sbyte) ? ("-128", "127")
+            : typeof(TNumber) == typeof(short) ? ("-32768", "32767")
+            : typeof(TNumber) == typeof(ushort) ? ("0", "65535")
+            : typeof(TNumber) == typeof(uint) ? ("0", "4294967295")
+            : typeof(TNumber) == typeof(ulong) ? ("0", "18446744073709551615")
+            : null;
+
         return new SchemaNode
         {
             Types = IsIntegerType ? JsonTypes.Integer : JsonTypes.Number,
+            Minimum = range is { } bounds ? JsonElement.Parse(bounds.Minimum) : null,
+            Maximum = range is { } limits ? JsonElement.Parse(limits.Maximum) : null,
             Behavior = new SchemaBehavior
             {
                 NumberCheck = text => TNumber.TryParse(text, styles, CultureInfo.InvariantCulture, out TNumber number) && TNumber.IsFinite(number) && !Underflows(text, number),

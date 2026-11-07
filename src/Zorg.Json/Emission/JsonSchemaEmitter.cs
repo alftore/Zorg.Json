@@ -1570,9 +1570,12 @@ internal sealed class JsonSchemaEmitter
         }
     }
 
-    /// <summary>int32 and friends are OpenAPI's formats. JSON Schema doesn't define them.</summary>
+    /// <summary>
+    /// int32 and friends are OpenAPI's formats. JSON Schema doesn't define them. decimal is in OpenAPI's format registry, and
+    /// says what a range can't: that the value has to fit a decimal's 28 digits.
+    /// </summary>
     private string? NumberFormat(SchemaNode node) =>
-        _profile.Dialect is JsonSchemaDialect.OpenApi30 or JsonSchemaDialect.OpenApi31 && node.Behavior.NumberType is "int32" or "int64" or "float" or "double"
+        _profile.Dialect is JsonSchemaDialect.OpenApi30 or JsonSchemaDialect.OpenApi31 && node.Behavior.NumberType is "int32" or "int64" or "float" or "double" or "decimal"
             ? node.Behavior.NumberType
             : null;
 
@@ -1633,7 +1636,7 @@ internal sealed class JsonSchemaEmitter
         {
             Add(schema, "minContains", node.MinContains);
 
-            if (node.MaxContains is not null && node.Contains is not null && IsInput && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? cause))
+            if (node.MaxContains is not null && node.Contains is not null && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? cause))
             {
                 UnsupportedBecause("maxContains", cause, $"{location}/contains", notes, location);
             }
@@ -1780,7 +1783,8 @@ internal sealed class JsonSchemaEmitter
 
         if (node.Not is not null)
         {
-            if (IsInput && !_exactness.IsExact(node.Not, out SchemaExactness.Cause? cause))
+            // On output too: not tests the value as it came, which it returns unchanged.
+            if (!_exactness.IsExact(node.Not, out SchemaExactness.Cause? cause))
             {
                 UnsupportedBecause("not", cause, $"{location}/not", notes, location);
             }
@@ -1859,14 +1863,12 @@ internal sealed class JsonSchemaEmitter
         SchemaExactness.Cause? cause = null;
         string where = location;
 
-        if (IsInput)
+        // On output too: a branch tests the value as it came, and the result may have changed since.
+        for (int i = 0; i < node.OneOf.Length && cause is null; i++)
         {
-            for (int i = 0; i < node.OneOf.Length && cause is null; i++)
+            if (!_exactness.IsExact(node.OneOf[i], out cause))
             {
-                if (!_exactness.IsExact(node.OneOf[i], out cause))
-                {
-                    where = $"{location}/oneOf/{i}";
-                }
+                where = $"{location}/oneOf/{i}";
             }
         }
 
