@@ -1829,6 +1829,12 @@ internal sealed class JsonSchemaEmitter
             {
                 UnsupportedBecause("if", cause, $"{location}/else", notes, location);
             }
+
+            // A branch strips names the condition never saw go, so a condition that fails on extra names can pass on the result.
+            else if (!IsInput && node.If is not null && (node.Then is not null || node.Else is not null) && FailsOnExtraNames(node.If))
+            {
+                Unsupported("if", notes, location);
+            }
             else
             {
                 WriteSingle(schema, "if", node.If, location);
@@ -1980,6 +1986,42 @@ internal sealed class JsonSchemaEmitter
         !node.OneOf.IsEmpty && !node.AnyOf.IsEmpty && node.OneOf.Any(branch => !_exactness.IsExact(branch))
         && !DiscriminatorKeys.TryBuild(node, out _) && !CannotOverlap(node.OneOf);
 
+    /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
+    private static bool FailsOnExtraNames(SchemaNode root)
+    {
+        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+        Stack<SchemaNode> pending = new();
+        pending.Push(root);
+
+        while (pending.TryPop(out SchemaNode? node) && visited.Count <= SchemaExactness.MaxWalked)
+        {
+            if (!visited.Add(node))
+            {
+                continue;
+            }
+
+            if (node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
+                || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
+                || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty)
+            {
+                return true;
+            }
+
+            foreach (SchemaNode child in node.Children)
+            {
+                pending.Push(child);
+            }
+
+            if (node.Behavior.Target is { } target)
+            {
+                pending.Push(target());
+            }
+        }
+
+        // Past the walk's bound, assume it could.
+        return visited.Count > SchemaExactness.MaxWalked;
+    }
+
     /// <summary>True when a subschema that applies to the same value has an <c>if</c> or a <c>oneOf</c> that isn't written, so what it evaluates is lost.</summary>
     private bool LosesEvaluations(SchemaNode root)
     {
@@ -2006,7 +2048,8 @@ internal sealed class JsonSchemaEmitter
 
             // On output an if is also left out when a branch changes the value.
             if (!IsInput && node.If is not null
-                && ((node.Then is { } then && !_exactness.IsExact(then, out _)) || (node.Else is { } otherwise && !_exactness.IsExact(otherwise, out _))))
+                && ((node.Then is { } then && !_exactness.IsExact(then, out _)) || (node.Else is { } otherwise && !_exactness.IsExact(otherwise, out _))
+                    || ((node.Then is not null || node.Else is not null) && FailsOnExtraNames(node.If))))
             {
                 return true;
             }

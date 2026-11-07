@@ -481,7 +481,8 @@ public sealed class ReviewRegressionTests
     [Fact]
     public void A_nested_chain_of_merges_stops_on_the_budget()
     {
-        string payload = "\"p\":[" + string.Join(',', Enumerable.Repeat("0", 16_000)) + "]";
+        // Against the budget the cost depends on the depth, not the size, so a small payload is enough.
+        string payload = "\"p\":[" + string.Join(',', Enumerable.Repeat("0", 2_000)) + "]";
         string json = "{}";
 
         for (int level = 0; level < 60; level++)
@@ -494,6 +495,16 @@ public sealed class ReviewRegressionTests
 
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
         Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
+    public void The_output_schema_leaves_out_an_if_whose_condition_fails_on_extra_names()
+    {
+        JsonValueSchema schema = Z.If(Z.Object().Strict(), Z.Null(), Z.Object());
+
+        Assert.Equal("{}", schema.Parse("""{"x":1}""").GetRawText());
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
+        Assert.NotNull(Z.If(Z.Object().Property("k", Z.String()), Z.Object(), Z.Null()).ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
     }
 
     [Fact]

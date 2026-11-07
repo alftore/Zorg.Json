@@ -127,9 +127,12 @@ public static class LlmProfiles
     private sealed class ConstRewriter : ISchemaRewriter
     {
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context) =>
-            node.Const is { ValueKind: JsonValueKind.String or JsonValueKind.Number } constant
-                ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
-                : node;
+            node.Const is not { ValueKind: JsonValueKind.String or JsonValueKind.Number } constant ? node
+            : node.Enum.IsEmpty ? node with { Const = null, Enum = [constant] }
+
+            // Both hold, so only what's in both. With nothing in both, the const stays, and is reported where it can't be written.
+            : System.Linq.Enumerable.Any(node.Enum, value => Validation.JsonEquality.AreEqual(value, constant)) ? node with { Const = null, Enum = [constant] }
+            : node;
     }
 
     private sealed class UpperCaseTypes : IJsonSchemaPostProcessor

@@ -172,6 +172,16 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void Gemini_writes_a_const_beside_an_enum_as_what_both_allow()
+    {
+        EmitResult both = Z.Object().Property("a", Z.String().Enum("a", "b").Const("a")).Emit(LlmProfiles.GeminiJsonSchema);
+        EmitResult neither = Z.Object().Property("a", Z.Number<int>().Enum(5, 10).Const(1)).Emit(LlmProfiles.GeminiJsonSchema);
+
+        Assert.Equal("""["a"]""", both.Schema["properties"]!["a"]!["enum"]!.ToJsonString());
+        Assert.NotEmpty(neither.Diagnostics);
+    }
+
+    [Fact]
     public void Gemini_OpenApi_reports_a_format_it_does_not_name()
     {
         EmitResult emitted = Z.Object().Property("s", Z.String().Format("iri")).Emit(LlmProfiles.GeminiOpenApi);
