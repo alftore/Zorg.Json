@@ -181,7 +181,7 @@ public static class OpenApiOptionsExtensions
                     if (existing != text)
                     {
                         throw new InvalidOperationException(
-                            $"Two different schemas are named '{name}'. Give one a different Named() so the OpenAPI components don't collide.");
+                            $"Two different schemas are named '{name}'. A change after Named(), such as Nullable() or Default(), makes another schema with the same name. Give one a different Named() so the OpenAPI components don't collide.");
                     }
                 }
                 else if (document.Components?.Schemas?.ContainsKey(id) == true)

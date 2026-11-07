@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -1243,37 +1242,22 @@ internal sealed class ValidationPlan
 
     /// <summary>
     /// Puts back, with its value as it came, each member of <paramref name="value"/> that <paramref name="keeper"/> kept and
-    /// <paramref name="result"/> lost, at every depth.
+    /// <paramref name="result"/> lost, at every depth. It copies raw UTF-8, so text JSON allows but .NET can't hold, such as a
+    /// lone surrogate, passes through.
     /// </summary>
-    private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper)
+    private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper, int depth = 0)
     {
-        if (value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+        if (depth > MaxMergeDepth)
         {
             return result;
         }
 
-        ArrayBufferWriter<byte> buffer = new();
-
-        using (Utf8JsonWriter writer = new(buffer, new JsonWriterOptions { SkipValidation = true }))
-        {
-            WriteNamesKept(writer, value, result, keeper, 0);
-        }
-
-        return JsonElement.Parse(buffer.WrittenSpan, new JsonDocumentOptions { MaxDepth = int.MaxValue });
-    }
-
-    private static void WriteNamesKept(Utf8JsonWriter writer, JsonElement value, JsonElement result, JsonElement? keeper, int depth)
-    {
-        if (keeper is not { } kept || depth > MaxMergeDepth)
-        {
-            result.WriteTo(writer);
-        }
-        else if (value.ValueKind == JsonValueKind.Object && result.ValueKind == JsonValueKind.Object && kept.ValueKind == JsonValueKind.Object)
+        if (value.ValueKind == JsonValueKind.Object && result.ValueKind == JsonValueKind.Object && keeper.ValueKind == JsonValueKind.Object)
         {
             Dictionary<string, JsonElement> results = Named(result);
-            Dictionary<string, JsonElement> keepers = Named(kept);
+            Dictionary<string, JsonElement> keepers = Named(keeper);
+            List<KeyValuePair<string, JsonElement>> members = [];
             HashSet<string> written = [];
-            writer.WriteStartObject();
 
             // In the order the value came, then what the result added, such as a default.
             foreach (JsonProperty property in value.EnumerateObject())
@@ -1287,62 +1271,41 @@ internal sealed class ValidationPlan
 
                 if (results.TryGetValue(name, out JsonElement rewritten))
                 {
-                    writer.WritePropertyName(name);
-                    WriteNamesKept(writer, property.Value, rewritten, keepers.TryGetValue(name, out JsonElement inner) ? inner : null, depth + 1);
+                    members.Add(KeyValuePair.Create(name, keepers.TryGetValue(name, out JsonElement inner) ? WithNamesKept(property.Value, rewritten, inner, depth + 1) : rewritten));
                 }
                 else if (keepers.ContainsKey(name))
                 {
-                    writer.WritePropertyName(name);
-                    property.Value.WriteTo(writer);
+                    members.Add(KeyValuePair.Create(name, property.Value));
                 }
             }
 
-            foreach ((string name, JsonElement added) in results)
-            {
-                if (written.Add(name))
-                {
-                    writer.WritePropertyName(name);
-                    added.WriteTo(writer);
-                }
-            }
-
-            writer.WriteEndObject();
+            members.AddRange(results.Where(entry => written.Add(entry.Key)));
+            return JsonStrings.ToObject(members);
         }
-        else if (value.ValueKind == JsonValueKind.Array && result.ValueKind == JsonValueKind.Array && kept.ValueKind == JsonValueKind.Array
-            && value.GetArrayLength() == result.GetArrayLength() && value.GetArrayLength() == kept.GetArrayLength())
+
+        if (value.ValueKind == JsonValueKind.Array && result.ValueKind == JsonValueKind.Array && keeper.ValueKind == JsonValueKind.Array
+            && value.GetArrayLength() == result.GetArrayLength() && value.GetArrayLength() == keeper.GetArrayLength())
         {
-            writer.WriteStartArray();
-
-            using (JsonElement.ArrayEnumerator values = value.EnumerateArray())
-            using (JsonElement.ArrayEnumerator results = result.EnumerateArray())
-            using (JsonElement.ArrayEnumerator keepers = kept.EnumerateArray())
-            {
-                while (values.MoveNext() && results.MoveNext() && keepers.MoveNext())
-                {
-                    WriteNamesKept(writer, values.Current, results.Current, keepers.Current, depth + 1);
-                }
-            }
-
-            writer.WriteEndArray();
+            return JsonStrings.ToArray(value.EnumerateArray()
+                .Zip(result.EnumerateArray(), keeper.EnumerateArray())
+                .Select(items => WithNamesKept(items.First, items.Second, items.Third, depth + 1))
+                .ToList());
         }
-        else
-        {
-            result.WriteTo(writer);
-        }
+
+        return result;
 
         static Dictionary<string, JsonElement> Named(JsonElement element)
         {
-            Dictionary<string, JsonElement> members = [];
+            Dictionary<string, JsonElement> named = [];
 
             foreach (JsonProperty property in element.EnumerateObject())
             {
-                members[JsonText.GetName(property)] = property.Value;
+                named[JsonText.GetName(property)] = property.Value;
             }
 
-            return members;
+            return named;
         }
     }
-
     /// <summary>
     /// Applies <c>unevaluatedProperties</c> and <c>unevaluatedItems</c> to what no subschema evaluated. This only runs on a value
     /// that has passed everything else, because a subschema that failed evaluated nothing, and the verdict is already known.

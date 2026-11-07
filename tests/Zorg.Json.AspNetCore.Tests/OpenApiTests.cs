@@ -86,17 +86,17 @@ public sealed class OpenApiTests
     }
 
     [Fact]
-    public async Task A_named_schema_and_its_nullable_form_share_one_component()
+    public async Task A_named_schema_and_its_nullable_form_on_two_endpoints_say_why_they_clash()
     {
         ObjectSchema named = Z.Object().Property("q", Z.String()).Named("N");
 
-        JsonElement document = await DocumentAsync(a =>
+        Exception exception = await Assert.ThrowsAnyAsync<Exception>(() => DocumentAsync(a =>
         {
             a.MapPost("/a", (JsonElement body) => "a").ValidateBody(Z.Object().Property("p", named));
             a.MapPost("/b", (JsonElement body) => "b").ValidateBody(Z.Object().Property("p", named.Nullable()));
-        });
+        }));
 
-        Assert.True(document.GetProperty("components").GetProperty("schemas").TryGetProperty("N", out _));
+        Assert.Contains("such as Nullable()", exception.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

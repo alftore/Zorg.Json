@@ -421,6 +421,24 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void An_if_that_puts_names_back_copies_text_dotnet_cannot_hold()
+    {
+        JsonValueSchema schema = Z.If(Z.Object().Passthrough(), Z.Object().Property("b", Z.String().Optional()));
+
+        Assert.True(schema.SafeParse("{\"x\":\"\\udc00\",\"y\":[\"\\udc00\"]}").IsSuccess);
+    }
+
+    [Fact]
+    public void Methods_after_Nullable_on_a_named_object_still_act_on_the_object()
+    {
+        ObjectSchema named = Z.Object().Property("a", Z.String()).Named("P");
+
+        Assert.True(named.Nullable().Strict().SafeParse("""{"a":"x"}""").IsSuccess);
+        Assert.Equal("""{"a":"x","b":1}""", named.Nullable().Property("b", Z.Number()).Parse("""{"a":"x","b":1}""").GetRawText());
+        Assert.True(Z.String().Named("S").Nullable().Enum("a", "b").SafeParse("null").IsSuccess);
+    }
+
+    [Fact]
     public void An_if_keeps_a_nested_name_its_condition_knows()
     {
         JsonValueSchema schema = Z.If(
