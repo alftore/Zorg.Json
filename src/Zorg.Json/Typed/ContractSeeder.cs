@@ -26,13 +26,11 @@ internal sealed class ContractSeeder
 
     private ContractSeeder(JsonSerializerOptions options) => _options = options;
 
-    /// <summary>
-    /// The contract says no to unknown properties itself, or gives them a meaning: under <see cref="ReferenceHandler.Preserve"/>
-    /// the serializer reads <c>$id</c> and <c>$ref</c>, and removing them would change what it builds.
-    /// </summary>
+    /// <summary>The serializer reads and writes <c>$id</c> and <c>$ref</c>, so removing them would change what it builds, and rejecting them would refuse what it wrote.</summary>
+    private bool KeepsMetadata => _options.ReferenceHandler is { } handler && handler != ReferenceHandler.IgnoreCycles;
+
     private bool IsClosed(JsonTypeInfo typeInfo) =>
-        (typeInfo.UnmappedMemberHandling ?? _options.UnmappedMemberHandling) == JsonUnmappedMemberHandling.Disallow
-        || _options.ReferenceHandler == ReferenceHandler.Preserve;
+        (typeInfo.UnmappedMemberHandling ?? _options.UnmappedMemberHandling) == JsonUnmappedMemberHandling.Disallow;
 
     public static SchemaNode Seed(JsonTypeInfo typeInfo)
     {
@@ -213,7 +211,7 @@ internal sealed class ContractSeeder
             Required = required.ToImmutable(),
             Behavior = new SchemaBehavior
             {
-                UnknownProperties = hasExtensionData ? UnknownProperties.Allow : IsClosed(typeInfo) ? UnknownProperties.Reject : UnknownProperties.Strip,
+                UnknownProperties = hasExtensionData || KeepsMetadata ? UnknownProperties.Allow : IsClosed(typeInfo) ? UnknownProperties.Reject : UnknownProperties.Strip,
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };

@@ -81,6 +81,51 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void CloseAllObjects_keeps_an_allOf_with_rules_on_a_branch_and_reports_it()
+    {
+        ObjectSchema a = Z.Object().Property("a", Z.Integer());
+        ObjectSchema b = Z.Object().Property("b", Z.String());
+
+        foreach (JsonValueSchema schema in new[] { Z.AllOf(a.Refine(_ => true, "r"), b), Z.AllOf(a.Describe("d"), b) })
+        {
+            Assert.Contains(schema.Emit(With(Rewriters.CloseAllObjects)).Diagnostics, diagnostic => diagnostic.Keyword == "allOf");
+        }
+    }
+
+    [Fact]
+    public void CloseAllObjects_keeps_to_what_every_branch_allows()
+    {
+        const string Document = """{"type":["object","null"],"allOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"string"}}}]}""";
+
+        Assert.DoesNotContain("null", Json(Z.FromJsonSchema(Document), Rewriters.CloseAllObjects), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_branch_left_open_by_patternProperties_is_still_a_match()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(
+            Z.Object().Property("o", Z.String().Optional()).PatternProperty("^x", Z.String()),
+            Z.Object().Property("k", Z.String())));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"o":null,"x1":"v"}}""");
+
+        Assert.Equal("""{"r":{"x1":"v"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void An_allOf_in_a_union_matches_what_its_branches_say_together()
+    {
+        ObjectSchema x = Z.Object().Property("x", Z.String());
+        ObjectSchema y = Z.Object().Property("y", Z.String());
+        ObjectSchema c = Z.Object().Property("c1", Z.String()).Property("c2", Z.String().Optional());
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(Z.AllOf(x, y), c));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"c1":"v","c2":null}}""");
+
+        Assert.Equal("""{"r":{"c1":"v"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
     public void Model_output_never_silently_loses_a_property_of_a_branch()
     {
         ObjectSchema basic = Z.Object().Property("a", Z.Integer());

@@ -90,6 +90,17 @@ public sealed class UnknownPropertiesTests
     }
 
     [Fact]
+    public void A_big_value_that_every_branch_keeps_is_not_rebuilt()
+    {
+        ObjectSchema inner = Z.Object().Property("p", Z.Any());
+        string json = """{"p":[""" + string.Join(',', System.Linq.Enumerable.Repeat("1", 2_000_000)) + """],"x":1}""";
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.True(Z.AllOf(inner, Z.Any()).SafeParse(json).IsSuccess);
+        Assert.True(clock.Elapsed < System.TimeSpan.FromSeconds(20), clock.Elapsed.ToString());
+    }
+
+    [Fact]
     public void A_long_array_under_allOf_stays_cheap()
     {
         string json = "[" + string.Join(',', System.Linq.Enumerable.Repeat("""{"a":1,"b":"y","x":2}""", 100_000)) + "]";

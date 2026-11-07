@@ -107,7 +107,7 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Required:** a property marked `required`, or a constructor parameter with no default. System.Text.Json doesn't enforce the second kind itself, but `record Person(string Name)` says it's needed.
 - **Nullable:** follows the declaration, so `string?` allows `null` and `string` doesn't. Absent and `null` are separate: `string? Nickname` as a constructor parameter must be present, and may be `null`. Use `.Optional(p => p.Nickname)` or give it a default to let it be absent.
 - **Items of a collection** aren't nullable: `List<string?>` rejects a `null` item, because a contract doesn't carry the annotation of a type argument. Give the items a schema with `.Property(p => p.X, s => s.Items(...))` to allow it. The source generator warns about this.
-- **Unknown properties** are removed, unless the type has `[JsonExtensionData]`, which keeps them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is removed, and rejected with `.Passthrough()`, because it would otherwise bind to `age` past its rules.
+- **Unknown properties** are removed, unless the type has `[JsonExtensionData]`, which keeps them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is removed, because it would otherwise bind to `age` past its rules. It's rejected with `.Passthrough()`, or when `.AdditionalProperties(...)` or `.PatternProperty(...)` would apply to it.
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
 - **Computed properties** with no setter count as unknown on input, so they're removed, or rejected with `.Strict()`. They appear in the output schema.
@@ -269,7 +269,7 @@ The input and output schemas say the same here.
 
 Turn on `.Strict()` when an unknown property is more likely a mistake than a newer client. Without it, a misspelled optional property such as `"limt": 5` is dropped with no error, and the default value applies. A misspelled required property still fails, as `required`.
 
-`.Strict()` applies to that one object. Each object inside it has its own setting. A typed schema is also closed when its contract says so: `JsonUnmappedMemberHandling.Disallow`, on the type or in the options, works like `.Strict()` for every type it covers. So does `ReferenceHandler.Preserve`, whose `$id` and `$ref` mean something to the serializer.
+`.Strict()` applies to that one object. Each object inside it has its own setting. A typed schema is also closed when its contract says so: `JsonUnmappedMemberHandling.Disallow`, on the type or in the options, works like `.Strict()` for every type it covers. With `ReferenceHandler.Preserve`, unknown properties are kept instead, as with `.Passthrough()`, because `$id` and `$ref` mean something to the serializer.
 
 A name that `DependentRequired` asks for stays in the result, even if no property declares it.
 

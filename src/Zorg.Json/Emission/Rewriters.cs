@@ -310,7 +310,7 @@ public static class Rewriters
         /// <summary>Closed objects in an <c>allOf</c> reject each other's properties, so objects that only list properties become one object.</summary>
         private static SchemaNode Flatten(SchemaNode node, RewriteContext context)
         {
-            bool nodeIsObject = !node.Properties.IsEmpty;
+            bool nodeIsObject = !node.Properties.IsEmpty || node.Types.HasFlag(JsonTypes.Object);
 
             if (node.AllOf.Count(IsObject) + (nodeIsObject ? 1 : 0) < 2)
             {
@@ -334,7 +334,7 @@ public static class Rewriters
 
             return node with
             {
-                Types = node.Types == JsonTypes.None ? JsonTypes.Object : node.Types,
+                Types = JsonTypes.Object,
                 AllOf = [],
                 Properties = [.. properties.Values],
                 Required = [.. node.Required.Concat(node.AllOf.SelectMany(branch => branch.Required)).Distinct(StringComparer.Ordinal)],
@@ -346,6 +346,8 @@ public static class Rewriters
         private static bool IsPlainObject(SchemaNode node) =>
             node.Types == JsonTypes.Object
             && node is { Ref: null, DynamicRef: null, Not: null, If: null, AdditionalProperties: null, PropertyNames: null, MinProperties: null, MaxProperties: null, UnevaluatedProperties: null }
+            && node is { Title: null, Description: null, Default: null, Const: null }
+            && node.Enum.IsEmpty && node.Behavior.Refinements.IsEmpty && node.Behavior.Normalizers.IsEmpty
             && node.AllOf.IsEmpty && node.AnyOf.IsEmpty && node.OneOf.IsEmpty && node.PatternProperties.IsEmpty && node.DependentRequired.IsEmpty && node.DependentSchemas.IsEmpty;
     }
 

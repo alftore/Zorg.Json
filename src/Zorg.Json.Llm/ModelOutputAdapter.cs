@@ -168,8 +168,8 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             return false;
         }
 
-        // The profiles close what strips, so a model that keeps to the schema sends no property such a branch doesn't name.
-        if (node.Behavior.UnknownProperties is UnknownProperties.Reject or UnknownProperties.Strip
+        // The profiles close what strips, unless patternProperties leave it open, so a model that keeps to the schema sends no property such a branch doesn't name.
+        if ((node.Behavior.UnknownProperties == UnknownProperties.Reject || (node.Behavior.UnknownProperties == UnknownProperties.Strip && node.PatternProperties.IsEmpty))
             && node.AdditionalProperties is null
             && value.Any(entry => node.Properties.All(property => property.Name != entry.Key)))
         {
@@ -274,7 +274,27 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     }
 
     private SchemaNode? Select(JsonNode? value, ImmutableArray<SchemaNode> branches) =>
-        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, resolved));
+        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, Flattened(resolved)));
+
+    /// <summary>An <c>allOf</c> says what its branches say together, as the object the profile made of it does.</summary>
+    private SchemaNode Flattened(SchemaNode node)
+    {
+        if (node.AllOf.IsEmpty)
+        {
+            return node;
+        }
+
+        SchemaNode[] branches = [.. node.AllOf.Select(Resolve).OfType<SchemaNode>()];
+        bool closes = branches.Length == node.AllOf.Length && branches.All(branch => branch.Behavior.UnknownProperties != UnknownProperties.Allow && branch.PatternProperties.IsEmpty);
+
+        return node with
+        {
+            Types = node.Types != JsonTypes.None ? node.Types : branches.FirstOrDefault(branch => branch.Types != JsonTypes.None)?.Types ?? JsonTypes.None,
+            Properties = [.. node.Properties.Concat(branches.SelectMany(branch => branch.Properties)).DistinctBy(property => property.Name)],
+            Required = [.. node.Required.Concat(branches.SelectMany(branch => branch.Required)).Distinct(StringComparer.Ordinal)],
+            Behavior = node.Behavior with { UnknownProperties = closes ? UnknownProperties.Strip : UnknownProperties.Allow },
+        };
+    }
 
     private bool AcceptsNull(SchemaNode schema) => Resolve(schema) is { } node && Rewriters.AcceptsNull(node);
 

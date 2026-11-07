@@ -5,6 +5,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -861,7 +862,7 @@ internal sealed class ValidationPlan
                 covered = true;
             }
 
-            // The serializer would bind it to the property past its rules, whatever else would have taken it.
+            // The serializer would bind it to the property past its rules. What a schema states about the name still stands, so it's only stripped where nothing does.
             bool isVariant = !covered && _namesIgnoringCase?.Contains(name) == true;
 
             foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in isVariant ? [] : _patternProperties)
@@ -893,7 +894,7 @@ internal sealed class ValidationPlan
 
             bool keep = true;
 
-            if (isVariant && _node.Behavior.UnknownProperties == UnknownProperties.Strip)
+            if (isVariant && _node.Behavior.UnknownProperties == UnknownProperties.Strip && _additionalProperties is null && !_patternProperties.Any(entry => Matches(entry.Pattern, name, context)))
             {
                 keep = false;
                 context.Rewritten();
@@ -1001,6 +1002,12 @@ internal sealed class ValidationPlan
     /// </summary>
     private static JsonElement Merge(JsonElement original, JsonElement left, JsonElement right, ValidationContext context, int depth)
     {
+        // Most of a value is the same on both sides, and rebuilding it at every level would cost its size each time.
+        if (JsonMarshal.GetRawUtf8Value(left).SequenceEqual(JsonMarshal.GetRawUtf8Value(right)))
+        {
+            return left;
+        }
+
         if (depth < MaxMergeDepth && left.ValueKind == JsonValueKind.Object && right.ValueKind == JsonValueKind.Object)
         {
             Dictionary<string, JsonElement> later = Named(right);

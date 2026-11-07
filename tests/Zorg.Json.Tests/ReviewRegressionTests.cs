@@ -266,12 +266,12 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
-    public void A_case_variant_goes_past_nothing_that_would_take_it()
+    public void A_case_variant_is_refused_where_a_schema_says_something_about_its_name()
     {
         ObjectSchema<Plain> schema = Schema.Object<Plain>().Property(p => p.Age, s => s.Maximum(5));
 
-        Assert.Equal(1, schema.AdditionalProperties(Z.Any()).Parse("""{ "age": 1, "AGE": 999 }""").Age);
-        Assert.Equal(1, schema.PatternProperty("^A", Z.Any()).Parse("""{ "age": 1, "AGE": 999 }""").Age);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(schema.AdditionalProperties(Z.String()).SafeParse("""{ "age": 1, "AGE": 999 }""")));
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(schema.PatternProperty("^AGE$", Z.String()).SafeParse("""{ "age": 1, "AGE": 999 }""")));
     }
 
     [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -286,11 +286,14 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
-    public void Metadata_of_preserved_references_is_not_stripped()
+    public void Metadata_of_preserved_references_is_kept()
     {
         JsonSerializerOptions options = new(JsonSerializerDefaults.Web) { ReferenceHandler = ReferenceHandler.Preserve };
+        ObjectSchema<Plain> schema = Schema.Object<Plain>(options);
 
-        Assert.False(Schema.Object<Plain>(options).SafeParse("""{ "$id": "1", "age": 1 }""").IsSuccess);
+        Assert.True(schema.SafeParse("""{ "$id": "1", "age": 1 }""").IsSuccess);
+        Assert.True(schema.Validate(new Plain { Age = 1 }).IsSuccess);
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["additionalProperties"]);
     }
 
     [Fact]
