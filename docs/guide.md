@@ -52,7 +52,7 @@ ParseResult<Person> person = Person.Schema.SafeParse(json);
 | `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]` | `minLength` and `maxLength` on text, in code points where the attributes count UTF-16 units, and `minItems` and `maxItems` on a collection. Not on `byte[]`, which is a base64 string in JSON. When several apply, the tightest wins |
 | `[Range]` with numbers | `minimum` and `maximum`, or the exclusive ones with `MinimumIsExclusive` and `MaximumIsExclusive`. Whole numbers get exact whole bounds |
 | `[RegularExpression]` | `pattern`, as a whole match, and an empty string passes, as with the attribute. It's read as ECMA-262, as every Zorg pattern is, so `\\d` is ASCII only. A pattern only .NET reads, such as `\\A` or `(?i)`, gets a warning |
-| `[EmailAddress]` | `format: email`, which is stricter than the attribute, which only looks for an `@` |
+| `[EmailAddress]` | `format: email`, the address syntax of RFC 5321. The attribute looks for one `@` that isn't at either end, so each accepts some text the other refuses, such as `"a@b"@c.com` |
 | `[Url]` | `format: uri`, and it must start with `http://`, `https://` or `ftp://`. Stricter than the attribute, which only looks at the start |
 | `[Required]` on text | `minLength: 1` and not only whitespace, unless `AllowEmptyStrings` is set. Beside a pattern, only `minLength: 1` |
 | `[Description]` | `description`, on the type, or on a property of text, numbers, a collection or a type with a generated schema |

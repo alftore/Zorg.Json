@@ -27,6 +27,29 @@ public sealed class Preview5ReviewTests
     }
 
     [Fact]
+    public void The_output_schema_of_a_large_import_with_many_negations_is_quick()
+    {
+        string big = "{" + string.Join(',', Enumerable.Range(0, 1500).Select(index => $"\"p{index}\":{{\"type\":\"string\"}}")) + "}";
+        string defs = string.Join(',', Enumerable.Range(0, 1000).Select(index => $"\"d{index}\":{{\"oneOf\":[{{\"not\":{{\"$ref\":\"#/$defs/big\"}}}},{{\"type\":\"null\"}}]}}"));
+        string text = $"{{\"$defs\":{{\"big\":{{\"type\":\"object\",\"properties\":{big}}},{defs}}},\"type\":\"object\",\"properties\":{{{string.Join(',', Enumerable.Range(0, 1000).Select(index => $"\"q{index}\":{{\"$ref\":\"#/$defs/d{index}\"}}"))}}}}}";
+        var schema = Z.FromJsonSchema(text);
+
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        _ = schema.ToJsonSchema(new() { Direction = SchemaDirection.Output });
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public void An_if_whose_branch_fills_a_default_is_left_out_of_the_output_schema()
+    {
+        var schema = Z.If(Z.Object().Property("a", Z.Any()).Strict(), Z.Object().Passthrough().Property("b", Z.String().Default("d")), Z.Never());
+
+        Assert.Equal("""{"a":1,"b":"d"}""", schema.Parse("""{"a":1}""").GetRawText());
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
+    }
+
+    [Fact]
     public void An_enum_that_repeats_a_value_is_written_with_each_once()
     {
         var schema = Z.FromJsonSchema("""{"enum":[[1,"a",null],[1.0,"a",null],2,2]}""");

@@ -9,7 +9,7 @@ app.MapPost("/people", (Validated<Person> person) => Results.Ok(person.Value))
     .ValidateBody(PersonSchema);
 ```
 
-`Validated<T>` parses the body once and is the form to prefer. A plain parameter works too:
+`Validated<T>` parses the body once and is the form to prefer. Don't add another body parameter, such as `[FromBody] Person`, beside it: the body is read once, so that one gets nothing and the request fails with an empty 400. A plain parameter instead of `Validated<T>` works too:
 
 ```csharp
 app.MapPost("/people", (Person person) => Results.Ok(person)).ValidateBody(PersonSchema);

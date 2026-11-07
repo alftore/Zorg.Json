@@ -16,7 +16,7 @@ public static class Schema
     /// <summary>
     /// Creates a schema from a type's System.Text.Json contract. It's AOT-safe and is the form to prefer. Every
     /// property is included, and unknown properties are removed, except that a type with <c>[JsonExtensionData]</c> or
-    /// options with a <c>ReferenceHandler</c> keep them, and <c>JsonUnmappedMemberHandling.Disallow</c> rejects them. A
+    /// options with a <c>ReferenceHandler</c> other than <c>IgnoreCycles</c> keep them, and <c>JsonUnmappedMemberHandling.Disallow</c> rejects them. A
     /// name that differs only in case, or a computed property, is rejected when sent. A property is required if it's marked
     /// <see langword="required"/> or is a constructor parameter without a default.
     /// JSON Schema: <c>properties</c> and <c>required</c>.

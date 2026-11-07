@@ -53,6 +53,8 @@ internal sealed class JsonSchemaEmitter
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
     private readonly Dictionary<SchemaNode, bool> _leavesOutIf = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _changesNames = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _failsOnExtraNames = new(ReferenceEqualityComparer.Instance);
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
     private ImportScope? _looseScope;
@@ -2009,9 +2011,30 @@ internal sealed class JsonSchemaEmitter
 
     private bool IsExactHere(SchemaNode node) => IsExactHere(node, out _);
 
-    private bool LeavesOutIfOnOutput(SchemaNode root)
+    private bool LeavesOutIfOnOutput(SchemaNode root) => Reaches(root, IfFailsOnStrippedNames, _leavesOutIf);
+
+    /// <summary>On output an <c>if</c> is left out when a branch changes which names there are and its condition can fail on extra names.</summary>
+    private bool IfFailsOnStrippedNames(SchemaNode node) =>
+        node.If is not null && (ChangesNames(node.Then) || ChangesNames(node.Else)) && FailsOnExtraNames(node.If);
+
+    /// <summary>Whether a subschema can remove a name, by stripping, or add one, by filling a default.</summary>
+    private bool ChangesNames(SchemaNode? root) =>
+        root is not null && Reaches(root, static node => node.Behavior.FillDefault || (node.Behavior.UnknownProperties == UnknownProperties.Strip && (node.Types.HasFlag(JsonTypes.Object) || !node.Properties.IsEmpty)), _changesNames);
+
+    /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
+    private bool FailsOnExtraNames(SchemaNode root) => Reaches(root, static node =>
+        node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
+        || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
+        || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty, _failsOnExtraNames);
+
+    /// <summary>
+    /// Whether <paramref name="found"/> holds for a node reachable from <paramref name="root"/>. A walk that finds nothing clears
+    /// every node it visited, since what they reach it reached too, so each node is walked about once per question. Past the
+    /// walk's bound, it assumes so.
+    /// </summary>
+    private static bool Reaches(SchemaNode root, Func<SchemaNode, bool> found, Dictionary<SchemaNode, bool> memo)
     {
-        if (_leavesOutIf.TryGetValue(root, out bool known))
+        if (memo.TryGetValue(root, out bool known))
         {
             return known;
         }
@@ -2019,23 +2042,21 @@ internal sealed class JsonSchemaEmitter
         HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
         Stack<SchemaNode> pending = new();
         pending.Push(root);
-        bool found = false;
+        bool hit = false;
 
-        while (!found && pending.TryPop(out SchemaNode? node))
+        while (!hit && pending.TryPop(out SchemaNode? node))
         {
-            if (!visited.Add(node))
+            if (!visited.Add(node) || (memo.TryGetValue(node, out bool seen) && !seen))
             {
                 continue;
             }
 
-            if (visited.Count > SchemaExactness.MaxWalked)
+            if (visited.Count > SchemaExactness.MaxWalked || (memo.TryGetValue(node, out bool marked) && marked) || found(node))
             {
-                found = true;
+                hit = true;
                 break;
             }
 
-            found = IfFailsOnStrippedNames(node);
-
             foreach (SchemaNode child in node.Children)
             {
                 pending.Push(child);
@@ -2047,87 +2068,20 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
-        _leavesOutIf[root] = found;
-        return found;
-    }
-
-    /// <summary>On output an <c>if</c> is left out when a branch strips names and its condition can fail on extra names.</summary>
-    private static bool IfFailsOnStrippedNames(SchemaNode node) =>
-        node.If is not null && (Strips(node.Then) || Strips(node.Else)) && FailsOnExtraNames(node.If);
-
-    private static bool Strips(SchemaNode? root)
-    {
-        if (root is null)
+        if (hit)
         {
-            return false;
+            memo[root] = true;
         }
-
-        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
-        Stack<SchemaNode> pending = new();
-        pending.Push(root);
-
-        while (pending.TryPop(out SchemaNode? node) && visited.Count <= SchemaExactness.MaxWalked)
+        else
         {
-            if (!visited.Add(node))
+            foreach (SchemaNode node in visited)
             {
-                continue;
-            }
-
-            if (node.Behavior.UnknownProperties == UnknownProperties.Strip && (node.Types.HasFlag(JsonTypes.Object) || !node.Properties.IsEmpty))
-            {
-                return true;
-            }
-
-            foreach (SchemaNode child in node.Children)
-            {
-                pending.Push(child);
-            }
-
-            if (node.Behavior.Target is { } target)
-            {
-                pending.Push(target());
+                memo[node] = false;
             }
         }
 
-        return visited.Count > SchemaExactness.MaxWalked;
+        return hit;
     }
-
-    /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
-    private static bool FailsOnExtraNames(SchemaNode root)
-    {
-        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
-        Stack<SchemaNode> pending = new();
-        pending.Push(root);
-
-        while (pending.TryPop(out SchemaNode? node) && visited.Count <= SchemaExactness.MaxWalked)
-        {
-            if (!visited.Add(node))
-            {
-                continue;
-            }
-
-            if (node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
-                || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
-                || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty)
-            {
-                return true;
-            }
-
-            foreach (SchemaNode child in node.Children)
-            {
-                pending.Push(child);
-            }
-
-            if (node.Behavior.Target is { } target)
-            {
-                pending.Push(target());
-            }
-        }
-
-        // Past the walk's bound, assume it could.
-        return visited.Count > SchemaExactness.MaxWalked;
-    }
-
     /// <summary>True when a subschema that applies to the same value has an <c>if</c> or a <c>oneOf</c> that isn't written, so what it evaluates is lost.</summary>
     private bool LosesEvaluations(SchemaNode root)
     {
