@@ -1241,35 +1241,39 @@ internal sealed class ValidationPlan
         return rewritten && unchanged ? Merge(value, result, value, context, 0) : result;
     }
 
-    /// <summary>Puts back, with its value as it came, each member of <paramref name="value"/> that <paramref name="keeper"/> kept and <paramref name="result"/> lost.</summary>
+    /// <summary>
+    /// Puts back, with its value as it came, each member of <paramref name="value"/> that <paramref name="keeper"/> kept and
+    /// <paramref name="result"/> lost, at every depth.
+    /// </summary>
     private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper)
     {
-        if (value.ValueKind != JsonValueKind.Object || result.ValueKind != JsonValueKind.Object || keeper.ValueKind != JsonValueKind.Object)
+        if (value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
         {
             return result;
-        }
-
-        HashSet<string> inResult = [.. result.EnumerateObject().Select(JsonText.GetName)];
-        HashSet<string> kept = [.. keeper.EnumerateObject().Select(JsonText.GetName)];
-
-        if (!kept.Any(name => !inResult.Contains(name)))
-        {
-            return result;
-        }
-
-        Dictionary<string, JsonElement> resultValues = [];
-
-        foreach (JsonProperty property in result.EnumerateObject())
-        {
-            resultValues[JsonText.GetName(property)] = property.Value;
         }
 
         ArrayBufferWriter<byte> buffer = new();
 
         using (Utf8JsonWriter writer = new(buffer, new JsonWriterOptions { SkipValidation = true }))
         {
-            writer.WriteStartObject();
+            WriteNamesKept(writer, value, result, keeper, 0);
+        }
+
+        return JsonElement.Parse(buffer.WrittenSpan, new JsonDocumentOptions { MaxDepth = int.MaxValue });
+    }
+
+    private static void WriteNamesKept(Utf8JsonWriter writer, JsonElement value, JsonElement result, JsonElement? keeper, int depth)
+    {
+        if (keeper is not { } kept || depth > MaxMergeDepth)
+        {
+            result.WriteTo(writer);
+        }
+        else if (value.ValueKind == JsonValueKind.Object && result.ValueKind == JsonValueKind.Object && kept.ValueKind == JsonValueKind.Object)
+        {
+            Dictionary<string, JsonElement> results = Named(result);
+            Dictionary<string, JsonElement> keepers = Named(kept);
             HashSet<string> written = [];
+            writer.WriteStartObject();
 
             // In the order the value came, then what the result added, such as a default.
             foreach (JsonProperty property in value.EnumerateObject())
@@ -1281,19 +1285,19 @@ internal sealed class ValidationPlan
                     continue;
                 }
 
-                if (resultValues.TryGetValue(name, out JsonElement rewritten))
+                if (results.TryGetValue(name, out JsonElement rewritten))
                 {
                     writer.WritePropertyName(name);
-                    rewritten.WriteTo(writer);
+                    WriteNamesKept(writer, property.Value, rewritten, keepers.TryGetValue(name, out JsonElement inner) ? inner : null, depth + 1);
                 }
-                else if (kept.Contains(name))
+                else if (keepers.ContainsKey(name))
                 {
                     writer.WritePropertyName(name);
                     property.Value.WriteTo(writer);
                 }
             }
 
-            foreach ((string name, JsonElement added) in resultValues)
+            foreach ((string name, JsonElement added) in results)
             {
                 if (written.Add(name))
                 {
@@ -1304,8 +1308,39 @@ internal sealed class ValidationPlan
 
             writer.WriteEndObject();
         }
+        else if (value.ValueKind == JsonValueKind.Array && result.ValueKind == JsonValueKind.Array && kept.ValueKind == JsonValueKind.Array
+            && value.GetArrayLength() == result.GetArrayLength() && value.GetArrayLength() == kept.GetArrayLength())
+        {
+            writer.WriteStartArray();
 
-        return JsonElement.Parse(buffer.WrittenSpan, new JsonDocumentOptions { MaxDepth = int.MaxValue });
+            using (JsonElement.ArrayEnumerator values = value.EnumerateArray())
+            using (JsonElement.ArrayEnumerator results = result.EnumerateArray())
+            using (JsonElement.ArrayEnumerator keepers = kept.EnumerateArray())
+            {
+                while (values.MoveNext() && results.MoveNext() && keepers.MoveNext())
+                {
+                    WriteNamesKept(writer, values.Current, results.Current, keepers.Current, depth + 1);
+                }
+            }
+
+            writer.WriteEndArray();
+        }
+        else
+        {
+            result.WriteTo(writer);
+        }
+
+        static Dictionary<string, JsonElement> Named(JsonElement element)
+        {
+            Dictionary<string, JsonElement> members = [];
+
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                members[JsonText.GetName(property)] = property.Value;
+            }
+
+            return members;
+        }
     }
 
     /// <summary>

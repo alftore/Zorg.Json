@@ -86,6 +86,44 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task A_named_schema_and_its_nullable_form_share_one_component()
+    {
+        ObjectSchema named = Z.Object().Property("q", Z.String()).Named("N");
+
+        JsonElement document = await DocumentAsync(a =>
+        {
+            a.MapPost("/a", (JsonElement body) => "a").ValidateBody(Z.Object().Property("p", named));
+            a.MapPost("/b", (JsonElement body) => "b").ValidateBody(Z.Object().Property("p", named.Nullable()));
+        });
+
+        Assert.True(document.GetProperty("components").GetProperty("schemas").TryGetProperty("N", out _));
+    }
+
+    [Fact]
+    public async Task A_name_the_framework_already_gave_a_type_is_refused()
+    {
+        ObjectSchema named = Z.Object().Property("name", Z.String()).Named("Person");
+
+        Exception exception = await Assert.ThrowsAnyAsync<Exception>(() => DocumentAsync(a =>
+        {
+            a.MapGet("/p", () => new Person("a", 1));
+            a.MapPost("/t", (JsonElement body) => "t").ValidateBody(Z.Object().Property("lead", named));
+        }));
+
+        Assert.Contains("already has a component named 'Person'", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_number_past_double_does_not_break_the_document()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"n":{"const":1e400},"m":{"enum":[1e400,1]},"d":{"default":1e400}}}""");
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/h", (JsonElement body) => "h").ValidateBody(schema));
+
+        Assert.False(RequestSchema(document, "/h").GetProperty("properties").GetProperty("n").TryGetProperty("enum", out _));
+    }
+
+    [Fact]
     public async Task Pattern_properties_do_not_close_a_3_0_document()
     {
         ObjectSchema schema = Z.Object().Strict().PatternProperty("^x-", Z.String());

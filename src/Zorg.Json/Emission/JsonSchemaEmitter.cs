@@ -1798,7 +1798,8 @@ internal sealed class JsonSchemaEmitter
             {
                 Unsupported("if", notes, location);
             }
-            else if (IsInput && node.If is not null && !_exactness.IsExact(node.If, out cause))
+            // On output too: the result keeps the values the condition tested, before its own Trim or default.
+            else if (node.If is not null && !_exactness.IsExact(node.If, out cause))
             {
                 UnsupportedBecause("if", cause, $"{location}/if", notes, location);
             }

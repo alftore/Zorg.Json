@@ -258,7 +258,8 @@ public sealed record SchemaNode
 
     internal SchemaNode WithNull()
     {
-        if (Types == JsonTypes.None && Const is null && Enum.IsEmpty)
+        // A named node is one definition wherever it's used, so null goes beside it, not into it.
+        if ((Types == JsonTypes.None && Const is null && Enum.IsEmpty) || Behavior.DefinitionName is not null)
         {
             // Presence belongs to the outermost node, because that's the one the parent object reads.
             return new SchemaNode

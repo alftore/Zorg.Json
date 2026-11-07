@@ -18,6 +18,9 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 
 - A property only written, such as a computed one, is refused when sent in, whatever the case options, so one the serializer would fill isn't lost.
 - `Z.If` keeps the properties its condition declares when the condition holds. Only the names: what the condition changed while testing, such as a `Trim`, stays out of the result.
+- `Z.If` keeps nested names its condition knows too, and an `if` whose condition changes the value is left out of the output schema with a diagnostic, as it already was from the input schema.
+- `.Nullable()` on a named schema writes `anyOf` of its reference and `null`, so it shares the one definition instead of becoming a second one with the same name.
+- A `Named` OpenAPI component that would share a name with the framework's component for a .NET type throws, instead of silently using the framework's. Numbers past the range of `double` are left out of `const`, `enum`, `default` and `examples` there, because Microsoft.OpenApi wrote them as `Infinity`.
 - The OpenAPI document writes `const` as a one-value `enum` and boolean subschemas as `{}` and `{"not":{}}`, because Microsoft.OpenApi turned `3` into `"3"` and `false` into `null`.
 - `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.
 - The OpenAPI document no longer closes a tuple: Microsoft.OpenApi has no `prefixItems`, so they move to the description. A 3.0 document moves `patternProperties` there too, because the downgrade would otherwise refuse those names.

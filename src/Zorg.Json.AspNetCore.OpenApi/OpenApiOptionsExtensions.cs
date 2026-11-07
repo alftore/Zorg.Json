@@ -119,10 +119,43 @@ public static class OpenApiOptionsExtensions
 
         private sealed class ConstAsEnum : ISchemaRewriter
         {
-            // Beside an enum, the enum alone is only looser.
-            public SchemaNode Rewrite(SchemaNode node, RewriteContext context) => node.Const is { } constant
-                ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
-                : node;
+            public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
+            {
+                // Microsoft.OpenApi reads a number past the range of double as Infinity, which isn't JSON. Without the
+                // value the schema is only looser, and default and examples only annotate.
+                if (node.Const is { } huge && IsPastDouble(huge))
+                {
+                    node = node with { Const = null };
+                }
+
+                if (node.Enum.Any(IsPastDouble))
+                {
+                    node = node with { Enum = [] };
+                }
+
+                if (node.Default is { } fallback && IsPastDouble(fallback))
+                {
+                    node = node with { Default = null };
+                }
+
+                if (node.Examples.Any(IsPastDouble))
+                {
+                    node = node with { Examples = [] };
+                }
+
+                // Beside an enum, the enum alone is only looser.
+                return node.Const is { } constant
+                    ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
+                    : node;
+            }
+
+            private static bool IsPastDouble(System.Text.Json.JsonElement value) => value.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number => !value.TryGetDouble(out double number) || double.IsInfinity(number),
+                System.Text.Json.JsonValueKind.Array => value.EnumerateArray().Any(IsPastDouble),
+                System.Text.Json.JsonValueKind.Object => value.EnumerateObject().Any(property => IsPastDouble(property.Value)),
+                _ => false,
+            };
         }
 
         private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document, JsonSchemaProfile profile)
@@ -151,7 +184,13 @@ public static class OpenApiOptionsExtensions
                             $"Two different schemas are named '{name}'. Give one a different Named() so the OpenAPI components don't collide.");
                     }
                 }
-                else if (document.Components?.Schemas?.ContainsKey(id) != true)
+                else if (document.Components?.Schemas?.ContainsKey(id) == true)
+                {
+                    // The framework's schema of a type by that name. Sharing it would put its rules where Zorg's apply.
+                    throw new InvalidOperationException(
+                        $"The document already has a component named '{id}', for a .NET type. Give the schema a different Named() so the two don't share it.");
+                }
+                else
                 {
                     known[id] = text;
                     document.AddComponent<IOpenApiSchema>(id, Parse(definition, document));

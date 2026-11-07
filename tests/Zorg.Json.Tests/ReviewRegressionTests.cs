@@ -420,6 +420,17 @@ public sealed class ReviewRegressionTests
         Assert.Equal("""{"x":1}""", defaulted.Parse("""{"x":1,"junk":2}""").GetRawText());
     }
 
+    [Fact]
+    public void An_if_keeps_a_nested_name_its_condition_knows()
+    {
+        JsonValueSchema schema = Z.If(
+            Z.Object().Property("a", Z.Object().Property("x", Z.Number())),
+            Z.Object().Property("a", Z.Object().Property("y", Z.Number())),
+            Z.Object().Property("a", Z.Object().Property("z", Z.Number())));
+
+        Assert.Equal("""{"a":{"x":1,"y":2}}""", schema.Parse("""{"a":{"x":1,"y":2,"junk":3}}""").GetRawText());
+    }
+
     [JsonDerivedType(typeof(Round), "círculo")]
     private abstract class Figure
     {
