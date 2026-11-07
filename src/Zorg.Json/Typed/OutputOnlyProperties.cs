@@ -95,14 +95,15 @@ internal static class OutputOnlyProperties
             return;
         }
 
-        string text = key.ToJsonString();
+        // Compared as JSON, so that "círculo" and "círculo" are the same value.
+        JsonElement written = JsonElement.Parse(key.ToJsonString());
 
         foreach (SchemaNode branch in node.OneOf)
         {
             SchemaNode resolved = branch.Behavior.Target is { } target ? target() : branch;
 
             if (resolved.Properties.FirstOrDefault(property => property.Name == discriminator)?.Schema.Const is { } constant
-                && constant.GetRawText() == text)
+                && Validation.JsonEquality.AreEqual(constant, written))
             {
                 Strip(obj, resolved);
             }

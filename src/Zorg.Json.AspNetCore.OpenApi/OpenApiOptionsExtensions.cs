@@ -12,6 +12,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Reader;
 using Zorg.Json.Emission;
+using Zorg.Json.Model;
 
 namespace Zorg.Json.AspNetCore.OpenApi;
 
@@ -105,11 +106,24 @@ public static class OpenApiOptionsExtensions
             response.Content[JsonContentType] = new OpenApiMediaType { Schema = schema };
         }
 
-        // Microsoft.OpenApi has no prefixItems, and keeps a closing items: false without them, which refuses every tuple.
-        private static readonly JsonSchemaProfile Profile = JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems"));
+        // What Microsoft.OpenApi's model would make stricter:
+        // - It has no prefixItems, and keeps a closing items: false without them, which refuses every tuple.
+        // - It holds const as text, so 3 and true become "3" and "True". A one-value enum stays JSON.
+        // - It reads a boolean schema in properties as null.
+        private static readonly JsonSchemaProfile Profile =
+            JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems"), new ConstAsEnum(), Rewriters.ConvertBooleanSchemas);
 
-        // Writing 3.0, it moves patternProperties to an extension and keeps what closes the object, which then refuses those names.
-        private static readonly JsonSchemaProfile DowngradedProfile = JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems", "patternProperties"));
+        // Writing 3.0, it also moves patternProperties to an extension and keeps what closes the object, which then refuses those names.
+        private static readonly JsonSchemaProfile DowngradedProfile =
+            JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems", "patternProperties"), new ConstAsEnum(), Rewriters.ConvertBooleanSchemas);
+
+        private sealed class ConstAsEnum : ISchemaRewriter
+        {
+            // Beside an enum, the enum alone is only looser.
+            public SchemaNode Rewrite(SchemaNode node, RewriteContext context) => node.Const is { } constant
+                ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
+                : node;
+        }
 
         private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document, JsonSchemaProfile profile)
         {

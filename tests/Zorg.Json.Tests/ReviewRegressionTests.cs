@@ -410,6 +410,38 @@ public sealed class ReviewRegressionTests
         Assert.Equal("""{"kind":"a","x":1}""", schema.Parse("""{"kind":"a","x":1,"junk":2}""").GetRawText());
     }
 
+    [Fact]
+    public void An_if_keeps_the_names_its_condition_knows_but_not_what_it_changed()
+    {
+        JsonValueSchema trimmed = Z.If(Z.Object().Property("name", Z.String().Trim()), Z.Object().Property("x", Z.Number()));
+        JsonValueSchema defaulted = Z.If(Z.Object().Property("kind", Z.String().Default("a")), Z.Object().Property("x", Z.Number()));
+
+        Assert.Equal("""{"name":"  ","x":1}""", trimmed.Parse("""{"name":"  ","x":1,"junk":2}""").GetRawText());
+        Assert.Equal("""{"x":1}""", defaulted.Parse("""{"x":1,"junk":2}""").GetRawText());
+    }
+
+    [JsonDerivedType(typeof(Round), "círculo")]
+    private abstract class Figure
+    {
+        public int X { get; set; }
+    }
+
+    private sealed class Round : Figure
+    {
+        public int R { get; set; }
+
+        public int Twice => R * 2;
+    }
+
+    [Fact]
+    public void An_escaped_discriminator_finds_its_branch_when_an_instance_is_validated()
+    {
+        ObjectSchema<Figure> schema = Schema.Object<Figure>();
+        Figure parsed = schema.Parse("{\"$type\":\"c\\u00edrculo\",\"r\":2,\"x\":1}");
+
+        Assert.True(schema.Validate(parsed).IsSuccess);
+    }
+
     private sealed class WithParameter(int a)
     {
         public int A { get; } = a;

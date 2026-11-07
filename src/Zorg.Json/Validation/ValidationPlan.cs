@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -1227,16 +1228,84 @@ internal sealed class ValidationPlan
                 Keep(branch.Run(value, context));
                 context.Unwalk();
 
-                // A condition that held applies to the value too, so what it knows isn't stripped by the branch.
+                // A condition that held applies to the value too, so a name it knows isn't stripped by the branch. Only the
+                // names: what the condition changed in its test, such as a Trim or a default, isn't part of the result.
                 if (passed && rewritten && !context.Halted)
                 {
-                    result = Merge(value, condition, result, context, 0);
+                    result = WithNamesKept(value, result, condition);
                 }
             }
         }
 
         // A branch that left the value alone kept all of it, which counts like any other branch.
         return rewritten && unchanged ? Merge(value, result, value, context, 0) : result;
+    }
+
+    /// <summary>Puts back, with its value as it came, each member of <paramref name="value"/> that <paramref name="keeper"/> kept and <paramref name="result"/> lost.</summary>
+    private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper)
+    {
+        if (value.ValueKind != JsonValueKind.Object || result.ValueKind != JsonValueKind.Object || keeper.ValueKind != JsonValueKind.Object)
+        {
+            return result;
+        }
+
+        HashSet<string> inResult = [.. result.EnumerateObject().Select(JsonText.GetName)];
+        HashSet<string> kept = [.. keeper.EnumerateObject().Select(JsonText.GetName)];
+
+        if (!kept.Any(name => !inResult.Contains(name)))
+        {
+            return result;
+        }
+
+        Dictionary<string, JsonElement> resultValues = [];
+
+        foreach (JsonProperty property in result.EnumerateObject())
+        {
+            resultValues[JsonText.GetName(property)] = property.Value;
+        }
+
+        ArrayBufferWriter<byte> buffer = new();
+
+        using (Utf8JsonWriter writer = new(buffer, new JsonWriterOptions { SkipValidation = true }))
+        {
+            writer.WriteStartObject();
+            HashSet<string> written = [];
+
+            // In the order the value came, then what the result added, such as a default.
+            foreach (JsonProperty property in value.EnumerateObject())
+            {
+                string name = JsonText.GetName(property);
+
+                if (!written.Add(name))
+                {
+                    continue;
+                }
+
+                if (resultValues.TryGetValue(name, out JsonElement rewritten))
+                {
+                    writer.WritePropertyName(name);
+                    rewritten.WriteTo(writer);
+                }
+                else if (kept.Contains(name))
+                {
+                    writer.WritePropertyName(name);
+                    property.Value.WriteTo(writer);
+                }
+            }
+
+            foreach ((string name, JsonElement added) in resultValues)
+            {
+                if (written.Add(name))
+                {
+                    writer.WritePropertyName(name);
+                    added.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return JsonElement.Parse(buffer.WrittenSpan, new JsonDocumentOptions { MaxDepth = int.MaxValue });
     }
 
     /// <summary>

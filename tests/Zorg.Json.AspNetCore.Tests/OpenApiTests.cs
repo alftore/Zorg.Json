@@ -67,6 +67,24 @@ public sealed class OpenApiTests
         Assert.Equal(2, tuple.GetProperty("minItems").GetInt32());
     }
 
+    [Theory]
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1)]
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0)]
+    public async Task Constants_and_boolean_schemas_keep_their_JSON(Microsoft.OpenApi.OpenApiSpecVersion version)
+    {
+        ObjectSchema schema = Z.Object()
+            .Property("v", Z.Integer().Const(3))
+            .Property("b", Z.Boolean().Const(true))
+            .Property("nv", Z.Never().Optional());
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/c", (JsonElement body) => "c").ValidateBody(schema), version);
+        JsonElement properties = RequestSchema(document, "/c").GetProperty("properties");
+
+        Assert.Equal(3, Assert.Single(properties.GetProperty("v").GetProperty("enum").EnumerateArray()).GetInt32());
+        Assert.True(Assert.Single(properties.GetProperty("b").GetProperty("enum").EnumerateArray()).GetBoolean());
+        Assert.Equal(JsonValueKind.Object, properties.GetProperty("nv").ValueKind);
+    }
+
     [Fact]
     public async Task Pattern_properties_do_not_close_a_3_0_document()
     {
@@ -404,7 +422,7 @@ public sealed class OpenApiTests
         JsonElement written = RequestSchema(document, "/things");
         JsonElement properties = written.GetProperty("properties");
 
-        Assert.Equal("a", properties.GetProperty("kind").GetProperty("const").GetString());
+        Assert.Equal("a", Assert.Single(properties.GetProperty("kind").GetProperty("enum").EnumerateArray()).GetString());
         Assert.Equal(0, properties.GetProperty("size").GetProperty("exclusiveMinimum").GetInt32());
         Assert.Equal(2, properties.GetProperty("size").GetProperty("multipleOf").GetInt32());
         Assert.True(properties.GetProperty("tags").GetProperty("uniqueItems").GetBoolean());
