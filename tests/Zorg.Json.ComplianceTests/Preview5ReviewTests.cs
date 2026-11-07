@@ -113,6 +113,20 @@ public sealed class Preview5ReviewTests
         Assert.True(schema.SafeParse("""{"x":{},"y":{"p":1}}""").IsSuccess);
     }
 
+    [Fact]
+    public void A_copy_written_for_a_pointer_does_not_repeat_a_dynamic_anchor()
+    {
+        var schema = Z.FromJsonSchema("""
+            {"$id":"http://e/r.json","$dynamicAnchor":"t","definitions":{"c":{"$dynamicAnchor":"t","type":"string"}},
+             "properties":{"p":{"$dynamicRef":"#t"},"q":{"$ref":"#/definitions/c"}}}
+            """);
+
+        System.Text.Json.Nodes.JsonObject emitted = schema.ToJsonSchema();
+
+        Assert.Equal("t", emitted["$dynamicAnchor"]!.GetValue<string>());
+        Assert.False(emitted["$defs"]!["c"]!.AsObject().ContainsKey("$dynamicAnchor"));
+    }
+
     private static readonly ObjectSchema Shared = Z.Object()
         .Property("i", Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String()), Z.Object()))
         .Property("s", Z.String())

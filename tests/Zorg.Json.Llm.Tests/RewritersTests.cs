@@ -182,6 +182,32 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void An_object_beside_a_union_of_objects_with_other_properties_gets_a_diagnostic()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"type":"object","properties":{"kind":{"type":"string"},"name":{"type":"string"}},"required":["kind","name"],
+             "anyOf":[{"type":"object","properties":{"kind":{"const":"a"}}},{"type":"object","properties":{"kind":{"const":"b"}}}]}
+            """);
+
+        foreach (JsonSchemaProfile profile in new[] { LlmProfiles.OpenAIStrict, LlmProfiles.AnthropicStrict, LlmProfiles.GeminiJsonSchema })
+        {
+            Assert.Contains(schema.Emit(profile).Diagnostics, diagnostic => diagnostic.Keyword == "anyOf");
+        }
+    }
+
+    [Fact]
+    public void A_branch_that_lists_an_optional_property_again_gets_a_diagnostic()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"type":"object","properties":{"o":{"type":"object","properties":{"x":{"type":"string"}},
+             "anyOf":[{"properties":{"x":{"pattern":"^a"}},"required":["x"]},{"properties":{"x":{"pattern":"^b"}},"required":["x"]}]}},"required":["o"]}
+            """);
+
+        Assert.Contains(schema.Emit(LlmProfiles.OpenAIStrict).Diagnostics, diagnostic => diagnostic.Keyword == "required");
+        Assert.DoesNotContain(Z.DiscriminatedUnion("k", Z.Object().Property("k", Z.String().Const("a")), Z.Object().Property("k", Z.String().Const("b"))).Emit(LlmProfiles.OpenAIStrict).Diagnostics, diagnostic => diagnostic.Keyword is "required" or "anyOf");
+    }
+
+    [Fact]
     public void Keywords_beside_a_reference_are_adapted_too()
     {
         JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"x":{"$ref":"#/$defs/meta","type":"object","properties":{"y":{"type":"integer"}}}},"required":["x"],"$defs":{"meta":{"description":"d"}}}""");

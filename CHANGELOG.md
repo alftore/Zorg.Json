@@ -38,6 +38,8 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.
 - The OpenAPI document no longer closes a tuple: Microsoft.OpenApi has no `prefixItems`, so they move to the description. A 3.0 document moves `patternProperties` there too, because the downgrade would otherwise refuse those names.
 - `Z.AllOf` now merges what its branches rewrite, as Zod does, and a property stays if any branch keeps it. It used to keep the last rewrite, so objects that strip lost each other's properties.
+- The closing LLM profiles report an object whose own properties differ from those of the objects in its `anyOf` or `oneOf`, because closing both lets no value pass. `RequireAllAsNullable` reports a union branch that lists a property again that the object has optional.
+- A copy of a schema written for a pointer drops a `$dynamicAnchor` its resource already has, as it drops a repeated `$anchor`.
 - `RequireAllAsNullable` reports a diagnostic where an object requires a property it doesn't list, beside a `$ref` or in an `anyOf` branch, because that property is made nullable where it's listed. `ParseModelOutput` also adapts keywords beside a `$ref` and the values of pattern properties.
 - `RequireAllAsNullable` puts the `null` of an optional imported property beside it in an `anyOf`, so a pointer `$ref` to that property from a required place doesn't accept `null`.
 - The LLM profiles turn a `Z.AllOf` of plain objects into one object before closing it. Anything else there gets a diagnostic, because closed objects reject each other's properties.

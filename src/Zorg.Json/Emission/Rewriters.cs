@@ -313,6 +313,14 @@ public static class Rewriters
                 return node;
             }
 
+            // Closed, the object and each branch of its union reject the names only the other lists, so nothing can pass.
+            HashSet<string> own = [.. node.Properties.Select(property => property.Name)];
+
+            if (!own.SetEquals([]) && node.AnyOf.Concat(node.OneOf).Any(branch => IsObject(branch) && !own.SetEquals(branch.Properties.Select(property => property.Name))))
+            {
+                context.Report(new EmitDiagnostic("anyOf", $"{context.Options.Target.Name} needs closed objects, and an object closed beside a union of objects that list other properties rejects them, so no value can pass. List every property in each branch."));
+            }
+
             SchemaNode closed = node with
             {
                 AdditionalProperties = null,
@@ -388,6 +396,15 @@ public static class Rewriters
             if (node.Properties.IsEmpty)
             {
                 return node;
+            }
+
+            // A branch that lists a property this one has optional sees the null this rewrite allows here.
+            if (node.AllOf.Concat(node.AnyOf).Concat(node.OneOf).Any(branch => branch.Properties.Any(property =>
+                !node.Required.Contains(property.Name) && node.Properties.Any(own => own.Name == property.Name))))
+            {
+                context.Report(new EmitDiagnostic(
+                    "required",
+                    $"{context.Options.Target.Name} makes optional properties nullable, and a branch that lists one of them again may accept that null where parsing doesn't."));
             }
 
             bool isInput = context.Options.Direction == SchemaDirection.Input;

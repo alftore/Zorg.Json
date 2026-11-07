@@ -79,6 +79,7 @@ internal sealed class JsonSchemaEmitter
     private HashSet<string>? _idTexts;
     private HashSet<string>? _floatingIds;
     private List<(JsonObject Schema, string Anchor)>? _anchors;
+    private List<(JsonObject Schema, string Anchor)>? _dynamicAnchors;
     private Pointing? _pointing;
     private bool _writingHome;
 
@@ -758,6 +759,16 @@ internal sealed class JsonSchemaEmitter
     {
         HashSet<(JsonObject?, string)> seen = [];
 
+        // A dynamic anchor names its place too, so one name can't be both, or twice. The first written keeps it, and a copy
+        // written for a pointer, which comes later, loses it.
+        foreach ((JsonObject schema, string anchor) in _dynamicAnchors ?? [])
+        {
+            if (!seen.Add((Owner(schema), anchor)))
+            {
+                schema.Remove("$dynamicAnchor");
+            }
+        }
+
         foreach ((JsonObject schema, string anchor) in _anchors ?? [])
         {
             if (seen.Add((Owner(schema), anchor)))
@@ -1172,6 +1183,11 @@ internal sealed class JsonSchemaEmitter
         else
         {
             Add(schema, "$dynamicAnchor", node.DynamicAnchor);
+
+            if (node.DynamicAnchor is { } dynamicAnchor)
+            {
+                (_dynamicAnchors ??= []).Add((schema, dynamicAnchor));
+            }
 
             // In its own resource the name is all it says. Another resource is read by URI, and that can change.
             if (node.DynamicRef is { } dynamicReference && dynamicReference.StartsWith('#'))
