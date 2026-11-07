@@ -172,6 +172,18 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_pointer_to_an_optional_property_does_not_take_its_null()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"a":{"type":"string"},"b":{"$ref":"#/properties/a"}},"required":["b"]}""");
+        EmitResult emitted = schema.Emit(LlmProfiles.OpenAIStrict);
+        JsonValueSchema asEmitted = Z.FromJsonSchema(emitted.Schema.ToJsonString());
+
+        Assert.False(asEmitted.SafeParse("""{"a":null,"b":null}""").IsSuccess);
+        Assert.True(asEmitted.SafeParse("""{"a":null,"b":"x"}""").IsSuccess);
+        Assert.Equal("""{"b":"x"}""", schema.ParseModelOutput(emitted, """{"a":null,"b":"x"}""").Value.GetRawText());
+    }
+
+    [Fact]
     public void Gemini_writes_a_const_beside_an_enum_as_what_both_allow()
     {
         EmitResult both = Z.Object().Property("a", Z.String().Enum("a", "b").Const("a")).Emit(LlmProfiles.GeminiJsonSchema);

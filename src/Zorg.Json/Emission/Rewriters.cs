@@ -414,8 +414,9 @@ public static class Rewriters
                 return required;
             }
 
-            // Adding null to a named node would change it at every other use.
-            return required.Behavior.DefinitionName is null
+            // Adding null to a named node would change it at every other use, and so would adding it to an imported node, which a
+            // pointer elsewhere can reach. Beside it, the null stays with this use.
+            return required.Behavior.DefinitionName is null && required.Behavior.Location is null
                 ? required.WithNull()
                 : SchemaNode.True with { BooleanValue = null, AnyOf = [required, SchemaNode.True with { BooleanValue = null, Types = JsonTypes.Null }] };
         }
