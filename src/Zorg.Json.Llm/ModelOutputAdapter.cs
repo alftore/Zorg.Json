@@ -261,6 +261,13 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
             return;
         }
 
+        // Keywords beside a $ref apply too, so they're visited as a schema of their own before the target.
+        if (schema.Ref is not null && (!schema.Properties.IsEmpty || !schema.PatternProperties.IsEmpty || schema.AdditionalProperties is not null
+            || !schema.AllOf.IsEmpty || !schema.AnyOf.IsEmpty || !schema.OneOf.IsEmpty || schema.Items is not null || !schema.PrefixItems.IsEmpty))
+        {
+            Visit(value, schema with { Ref = null, Behavior = schema.Behavior with { Target = null } }, depth + 1);
+        }
+
         SchemaNode? node = Resolve(schema);
 
         if (node is null)
@@ -404,14 +411,27 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
             }
         }
 
-        if (node.AdditionalProperties is { } additional)
+        foreach ((string name, JsonNode? item) in value.ToArray())
         {
-            foreach ((string name, JsonNode? item) in value.ToArray())
+            if (node.Properties.Any(property => property.Name == name))
             {
-                if (node.Properties.All(property => property.Name != name))
+                continue;
+            }
+
+            bool matched = false;
+
+            foreach (SchemaProperty pattern in node.PatternProperties)
+            {
+                if (MatchesPattern(name, new SchemaNode { PatternProperties = [pattern] }))
                 {
-                    Visit(item, additional, depth + 1);
+                    matched = true;
+                    Visit(item, pattern.Schema, depth + 1);
                 }
+            }
+
+            if (!matched && node.AdditionalProperties is { } additional)
+            {
+                Visit(item, additional, depth + 1);
             }
         }
     }

@@ -99,6 +99,20 @@ public sealed class Preview5ReviewTests
         Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
     }
 
+    [Fact]
+    public void An_anchor_inside_an_unknown_definitions_keyword_does_not_clash_with_a_real_one()
+    {
+        var a = Z.FromJsonSchema("""{"definitions":{"c":{"$anchor":"an4","type":"string"}}}""");
+        var b = Z.FromJsonSchema("""{"$defs":{"b":{"anyOf":[{"$anchor":"an4","type":"integer"}]}},"properties":{"p":{"$ref":"#an4"}}}""");
+        ObjectSchema schema = Z.Object().Property("x", a).Property("y", b);
+
+        string text = schema.ToJsonSchema().ToJsonString();
+
+        Assert.Contains("x-inert-definitions", text, StringComparison.Ordinal);
+        Assert.False(schema.ToJsonSchema()["properties"]!["x"]!.AsObject().ContainsKey("definitions"));
+        Assert.True(schema.SafeParse("""{"x":{},"y":{"p":1}}""").IsSuccess);
+    }
+
     private static readonly ObjectSchema Shared = Z.Object()
         .Property("i", Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String()), Z.Object()))
         .Property("s", Z.String())

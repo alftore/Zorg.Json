@@ -172,6 +172,36 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_required_name_listed_elsewhere_gets_a_diagnostic()
+    {
+        JsonValueSchema beside = Z.FromJsonSchema("""{"type":"object","properties":{"x":{"$ref":"#/$defs/o","required":["z"]}},"$defs":{"o":{"type":"object","properties":{"z":{"type":"integer"}}}}}""");
+        JsonValueSchema branches = Z.FromJsonSchema("""{"type":"object","properties":{"q":{"type":"integer"},"r":{"type":"integer"}},"anyOf":[{"required":["q"]},{"required":["r"]}]}""");
+
+        Assert.Contains(beside.Emit(LlmProfiles.OpenAIStrict).Diagnostics, diagnostic => diagnostic.Keyword == "required");
+        Assert.Contains(branches.Emit(LlmProfiles.OpenAIStrict).Diagnostics, diagnostic => diagnostic.Keyword == "required");
+    }
+
+    [Fact]
+    public void Keywords_beside_a_reference_are_adapted_too()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"x":{"$ref":"#/$defs/meta","type":"object","properties":{"y":{"type":"integer"}}}},"required":["x"],"$defs":{"meta":{"description":"d"}}}""");
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"x":{"y":null}}""");
+
+        Assert.Equal("""{"x":{}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void Pattern_property_values_are_adapted_too()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","patternProperties":{"^p":{"type":"object","properties":{"v":{"type":"integer"}}}}}""");
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(With(Rewriters.RequireAllAsNullable)), """{"p1":{"v":null}}""");
+
+        Assert.Equal("""{"p1":{}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
     public void A_pointer_to_an_optional_property_does_not_take_its_null()
     {
         JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"a":{"type":"string"},"b":{"$ref":"#/properties/a"}},"required":["b"]}""");

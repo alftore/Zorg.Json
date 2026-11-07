@@ -377,6 +377,14 @@ public static class Rewriters
     {
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
         {
+            // The properties are listed elsewhere, beside a $ref or around a branch, where this rewrite makes them nullable.
+            if (node.Required.Any(name => node.Properties.All(property => property.Name != name)))
+            {
+                context.Report(new EmitDiagnostic(
+                    "required",
+                    $"{context.Options.Target.Name} makes optional properties nullable where they're listed, so a property this requires but doesn't list can arrive as null."));
+            }
+
             if (node.Properties.IsEmpty)
             {
                 return node;

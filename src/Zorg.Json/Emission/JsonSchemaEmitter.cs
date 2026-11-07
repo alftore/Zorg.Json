@@ -822,6 +822,13 @@ internal sealed class JsonSchemaEmitter
         public string Keyword { get; init; } = "$ref";
     }
 
+    private static bool DeclaresResource(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Object => value.EnumerateObject().Any(property => property.Name is "$anchor" or "$dynamicAnchor" or "$id" || DeclaresResource(property.Value)),
+        JsonValueKind.Array => value.EnumerateArray().Any(DeclaresResource),
+        _ => false,
+    };
+
     /// <summary>Where the extensions start in what was written. Not every extension is written, and a reference is written without any.</summary>
     private static int FirstExtension(JsonObject schema, SchemaNode node)
     {
@@ -830,7 +837,7 @@ internal sealed class JsonSchemaEmitter
 
         foreach ((string keyword, JsonNode? _) in schema)
         {
-            if (names.Contains(keyword) || keyword is "x-inert-nullable" or "x-inert-definitions")
+            if (names.Contains(keyword) || keyword is "x-inert-nullable" or "x-inert-definitions" or "x-inert-dependencies" or "x-inert-additionalItems")
             {
                 return index;
             }
@@ -1230,6 +1237,12 @@ internal sealed class JsonSchemaEmitter
             {
                 // Inert in the 2020-12 document it came from, but draft-07 would apply it.
                 Unrepresentable(keyword, $"{keyword} is an unknown keyword here, but draft-07 would apply it.", location, ToNode(value));
+            }
+            else if (keyword is "definitions" or "dependencies" or "additionalItems" && DeclaresResource(value))
+            {
+                // Unknown here, but some validators and tools still read them as subschemas, and an $anchor or $id inside would
+                // then clash with a real one. A reference into it is written again, to a home of its own.
+                schema["x-inert-" + keyword] = ToNode(value);
             }
             else
             {
