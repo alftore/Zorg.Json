@@ -26,6 +26,9 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - The type error for a number names its type for every numeric type, such as `uint64`, where it was empty.
 - `byte`, `sbyte`, `short`, `ushort`, `uint` and `ulong` state their range with `minimum` and `maximum`, so a schema read without the type, such as by a model, keeps it. `decimal` writes `format: decimal` in OpenAPI, which the LLM profiles report.
 - The output schema leaves out `not`, a `oneOf` that could overlap and `maxContains` where their subschemas change the value, as the input schema does, because they test the value as it came.
+- A property that a `PatternProperty` also matches keeps what either schema keeps, as `allOf` branches do. The pattern's result used to replace the property's.
+- The output schema leaves out `propertyNames` whose subschema changes the text, because names are never changed. `unevaluated*` is left out on output too where what evaluated beside it is.
+- `Int128`, `UInt128` and `Half` state their range, and typed schemas read them as numbers.
 - `ValidateBody` no longer rounds a number a `decimal` can't hold exactly, such as `1e-29`, before the binder reads it.
 - The OpenAPI document writes `const` as a one-value `enum` and boolean subschemas as `{}` and `{"not":{}}`, because Microsoft.OpenApi turned `3` into `"3"` and `false` into `null`.
 - `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.

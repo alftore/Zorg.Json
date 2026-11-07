@@ -1710,6 +1710,12 @@ internal sealed class JsonSchemaEmitter
             {
                 Unsupported("propertyNames", notes, location);
             }
+
+            // A name is never rewritten, so on output a subschema that rewrites would describe a name that isn't there.
+            else if (!IsInput && !_exactness.IsExact(node.PropertyNames, out SchemaExactness.Cause? cause))
+            {
+                UnsupportedBecause("propertyNames", cause, $"{location}/propertyNames", notes, location);
+            }
             else
             {
                 schema["propertyNames"] = EmitNode(node.PropertyNames, $"{location}/propertyNames");
@@ -1833,7 +1839,7 @@ internal sealed class JsonSchemaEmitter
         else
         {
             // Subschemas of an if that is left out evaluate nothing in the written schema, which would make these stricter than parsing.
-            bool lost = (node.UnevaluatedItems is not null || node.UnevaluatedProperties is not null) && IsInput && LosesEvaluations(node);
+            bool lost = (node.UnevaluatedItems is not null || node.UnevaluatedProperties is not null) && LosesEvaluations(node);
 
             if (lost)
             {
@@ -1988,6 +1994,13 @@ internal sealed class JsonSchemaEmitter
             }
 
             if (node.If is { } condition && !_exactness.IsExact(condition, out _))
+            {
+                return true;
+            }
+
+            // On output an if is also left out when a branch changes the value.
+            if (!IsInput && node.If is not null
+                && ((node.Then is { } then && !_exactness.IsExact(then, out _)) || (node.Else is { } otherwise && !_exactness.IsExact(otherwise, out _))))
             {
                 return true;
             }

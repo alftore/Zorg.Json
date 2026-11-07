@@ -183,6 +183,9 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
             : typeof(TNumber) == typeof(ushort) ? ("0", "65535")
             : typeof(TNumber) == typeof(uint) ? ("0", "4294967295")
             : typeof(TNumber) == typeof(ulong) ? ("0", "18446744073709551615")
+            : typeof(TNumber) == typeof(Int128) ? ("-170141183460469231731687303715884105728", "170141183460469231731687303715884105727")
+            : typeof(TNumber) == typeof(UInt128) ? ("0", "340282366920938463463374607431768211455")
+            : typeof(TNumber) == typeof(Half) ? ("-65504", "65504")
             : null;
 
         return new SchemaNode

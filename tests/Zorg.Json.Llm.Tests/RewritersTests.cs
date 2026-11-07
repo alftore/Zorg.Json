@@ -168,6 +168,7 @@ public sealed class RewritersTests
         Assert.Equal(255, properties["b"]!["maximum"]!.GetValue<int>());
         Assert.Equal(0, properties["u"]!["minimum"]!.GetValue<int>());
         Assert.NotEmpty(Z.Object().Property("d", Z.Number<decimal>()).Emit(LlmProfiles.OpenAIStrict).Diagnostics);
+        Assert.NotNull(Z.Object().Property("i", Z.Number<Int128>()).Emit(LlmProfiles.OpenAIStrict).Schema["properties"]!["i"]!["maximum"]);
     }
 
     [Fact]

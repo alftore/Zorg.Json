@@ -15,6 +15,17 @@ public sealed class Preview5ReviewTests
 
     private const string Draft07 = "\"$schema\":\"http://json-schema.org/draft-07/schema#\"";
 
+    [Theory]
+    [InlineData("""{"type":"object","anyOf":[{}],"oneOf":[{"properties":{"b":{"type":"string","format":"email"}}},{"properties":{"c":{"type":"number"}},"required":["c"]}],"unevaluatedProperties":false}""", """{"b":"a@b.co"}""")]
+    [InlineData("""{"type":"object","if":{"properties":{"k":{"const":1}},"required":["k"]},"then":{"properties":{"b":{"type":"string","format":"email"}}},"unevaluatedProperties":false}""", """{"k":1,"b":"a@b.co"}""")]
+    public void The_output_schema_drops_unevaluated_where_what_evaluated_it_is_left_out(string text, string json)
+    {
+        var schema = Z.FromJsonSchema(text, new JsonSchemaImportOptions { Formats = FormatHandling.AssertKnown });
+
+        Assert.True(schema.SafeParse(json).IsSuccess);
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["unevaluatedProperties"]);
+    }
+
     [Fact]
     public void An_enum_that_repeats_a_value_is_written_with_each_once()
     {

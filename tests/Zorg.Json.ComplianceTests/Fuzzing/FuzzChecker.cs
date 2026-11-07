@@ -324,22 +324,16 @@ internal sealed partial class FuzzChecker(FuzzFindings findings)
             // results, so a disagreement is a note to read rather than a failure.
             if (built.Probe.ParsedJson(parsed) is { } result)
             {
-                foreach (OracleSchema output in oracles.Where(entry => entry.IsOutput && entry.Schema is not null))
-                {
-                    if (Oracle.Accepts(output.Schema!, result, output.UsesMultipleOf) == false && !Oracle.IsBeyondItsPrecision(result.GetRawText()))
-                    {
-                        findings.Note("Output schema rejects what parsing returned", $"{Truncate(result.GetRawText())} from {document} | {where}");
-                    }
-                    else
-                    {
-                        findings.Count("output schema judged a result");
-                    }
-                }
+                // The generator writes defaults that break their own rules, which is the caller's error, so those are counted apart.
+                string kind = built.Code.Contains("Default(", StringComparison.Ordinal) || built.Code.Contains("PartialOrExtend", StringComparison.Ordinal)
+                    ? "Output schema rejects what parsing returned, with a default"
+                    : "Output schema rejects what parsing returned";
+                CheckOracles([.. oracles.Where(entry => entry.IsOutput)], result, kind, $"{Truncate(result.GetRawText())} from {document}", where, asNote: true);
             }
         }
     }
 
-    private void CheckOracles(List<OracleSchema> oracles, JsonElement instance, string kind, string document, string where)
+    private void CheckOracles(List<OracleSchema> oracles, JsonElement instance, string kind, string document, string where, bool asNote = false)
     {
         bool plainText = document.All(char.IsAscii) && !document.Contains("\\u", StringComparison.Ordinal);
 
@@ -370,11 +364,15 @@ internal sealed partial class FuzzChecker(FuzzFindings findings)
                 }
                 else if (((usesRegex || usesLength) && !plainText) || usesBackreference || unevaluated)
                 {
-                    findings.Note(kind, $"{name} rejects {document} | {where}");
+                    findings.Note(asNote ? kind + ", where the oracle differs" : kind, $"{name} rejects {document} | {where}");
                 }
                 else if (usesFormat && Oracle.Accepts(schema, instance, usesMultipleOf, assertFormat: true) != false)
                 {
                     findings.Count("format enforced on both sides settled a rejection");
+                }
+                else if (asNote)
+                {
+                    findings.Note(kind, $"{name} rejects {document} | {where}");
                 }
                 else
                 {

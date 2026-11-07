@@ -462,6 +462,27 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void A_property_a_pattern_also_matches_keeps_what_each_knows()
+    {
+        ObjectSchema schema = Z.Object()
+            .Property("x-a", Z.Object().Property("v", Z.Integer()))
+            .PatternProperty("^x-", Z.Object().Property("a", Z.String()));
+
+        Assert.Equal("""{"x-a":{"v":1,"a":"b"}}""", schema.Parse("""{"x-a":{"v":1,"a":"b","junk":2}}""").GetRawText());
+
+        ObjectSchema open = Z.Object().Property("x-a", Z.Object().Property("v", Z.Integer())).PatternProperty("^x-", Z.Any());
+        Assert.Equal("""{"x-a":{"v":1,"a":"b"}}""", open.Parse("""{"x-a":{"v":1,"a":"b"}}""").GetRawText());
+    }
+
+    [Fact]
+    public void The_output_schema_leaves_out_property_names_that_are_rewritten()
+    {
+        ObjectSchema schema = Z.Object().PropertyNames(Z.String().Trim().MaxLength(1));
+
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["propertyNames"]);
+    }
+
+    [Fact]
     public void An_unnamed_number_type_is_named_in_its_message()
     {
         string message = Assert.Single(Z.Number<ulong>().SafeParse("1.5").Issues).Message;

@@ -891,7 +891,18 @@ internal sealed class ValidationPlan
                     context.Walk("patternProperties", patternName);
                     JsonElement candidate = patternPlan.Run(original, context);
                     context.Unwalk();
-                    result = context.RewriteCount != before ? candidate : result;
+
+                    // Each schema that applies sees the value as it came, so what an earlier one kept isn't lost, as in allOf. One
+                    // that changed nothing kept all of it.
+                    if (context.RewriteCount != before)
+                    {
+                        result = covered && !context.Halted ? Merge(original, result, candidate, context, 0) : candidate;
+                    }
+                    else if (covered && !context.Halted)
+                    {
+                        result = Merge(original, result, original, context, 0);
+                    }
+
                     covered = true;
                 }
             }
