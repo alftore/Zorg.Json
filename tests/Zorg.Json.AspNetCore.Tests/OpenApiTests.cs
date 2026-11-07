@@ -147,6 +147,43 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task Keywords_beside_a_reference_survive_a_3_0_document()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"$defs":{"base":{"type":"object","properties":{"id":{"type":"string"}}}},
+             "oneOf":[{"$ref":"#/$defs/base","properties":{"kind":{"const":"a"}},"required":["kind"]},
+                      {"$ref":"#/$defs/base","properties":{"kind":{"const":"b"}},"required":["kind"]}]}
+            """);
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/r", (JsonElement body) => "r").ValidateBody(schema), Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0);
+        string text = RequestSchema(document, "/r").GetRawText();
+
+        Assert.Contains("\"kind\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_format_parsing_does_not_check_is_inert_in_a_3_0_document()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"e":{"type":"string","format":"email"}}}""");
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/f", (JsonElement body) => "f").ValidateBody(schema), Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0);
+
+        Assert.False(RequestSchema(document, "/f").GetProperty("properties").GetProperty("e").TryGetProperty("format", out _));
+    }
+
+    [Fact]
+    public async Task Two_bounds_on_one_side_are_written_as_the_tighter_one()
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""{"type":"object","properties":{"n":{"not":{"minimum":7,"exclusiveMinimum":5}}}}""");
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/b", (JsonElement body) => "b").ValidateBody(schema));
+        JsonElement inner = RequestSchema(document, "/b").GetProperty("properties").GetProperty("n").GetProperty("not");
+
+        Assert.Equal(7, inner.GetProperty("minimum").GetInt32());
+        Assert.False(inner.TryGetProperty("exclusiveMinimum", out _));
+    }
+
+    [Fact]
     public async Task Pattern_properties_do_not_close_a_3_0_document()
     {
         ObjectSchema schema = Z.Object().Strict().PatternProperty("^x-", Z.String());

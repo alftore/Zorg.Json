@@ -73,6 +73,23 @@ public sealed class Preview5ReviewTests
         Assert.NotNull(discriminated.ToJsonSchema(output)["if"]);
     }
 
+    [Fact]
+    public void An_if_whose_condition_counts_or_nests_an_if_is_left_out_of_the_output_schema_where_a_branch_changes_names()
+    {
+        JsonSchemaOptions output = new() { Direction = SchemaDirection.Output };
+        var counted = Z.If(
+            Z.Object().Passthrough().MinProperties(1),
+            Z.Object().Passthrough().Property("x", Z.String()),
+            Z.Object().Passthrough().Property("m", Z.String().Default("d")));
+        var nested = Z.If(
+            Z.If(Z.Object().Passthrough().Property("a", Z.Any()), Z.Object().Passthrough().Property("a", Z.String()), Z.Any()),
+            Z.Object().Property("y", Z.String()),
+            Z.Object());
+
+        Assert.Null(counted.ToJsonSchema(output)["if"]);
+        Assert.Null(nested.ToJsonSchema(output)["if"]);
+    }
+
     private static readonly ObjectSchema Shared = Z.Object()
         .Property("i", Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String()), Z.Object()))
         .Property("s", Z.String())

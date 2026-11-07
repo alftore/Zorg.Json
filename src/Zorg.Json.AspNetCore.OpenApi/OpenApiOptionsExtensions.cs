@@ -68,7 +68,7 @@ public static class OpenApiOptionsExtensions
 
             foreach (EndpointSchemaMetadata metadata in context.Description.ActionDescriptor.EndpointMetadata.OfType<EndpointSchemaMetadata>())
             {
-                OpenApiSchema schema = Convert(metadata, document, profile);
+                OpenApiSchema schema = Convert(metadata, document, profile, version == OpenApiSpecVersion.OpenApi3_0 ? OpenApiSpecVersion.OpenApi3_0 : OpenApiSpecVersion.OpenApi3_1);
 
                 if (metadata.Direction == SchemaDirection.Input)
                 {
@@ -106,37 +106,43 @@ public static class OpenApiOptionsExtensions
             response.Content[JsonContentType] = new OpenApiMediaType { Schema = schema };
         }
 
-        // What Microsoft.OpenApi's model would make stricter:
-        // - It has no prefixItems, and keeps a closing items: false without them, which refuses every tuple.
+        // What Microsoft.OpenApi's model would make stricter, reading 3.1:
+        // - It has no prefixItems, and keeps a closing items: false without them, which refuses every tuple. Nor has it
+        //   unevaluatedItems, which it parks where validators don't look.
         // - It holds const as text, so 3 and true become "3" and "True". A one-value enum stays JSON.
         // - It reads a boolean schema in properties as null.
-        private static readonly JsonSchemaProfile Profile =
-            JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems"), new ConstAsEnum(), Rewriters.ConvertBooleanSchemas);
+        private static readonly JsonSchemaProfile Profile = JsonSchemaProfile.OpenApi31.With(
+            Rewriters.RelocateToDescription("prefixItems", "unevaluatedItems"), new MicrosoftOpenApiLimits(), Rewriters.ConvertBooleanSchemas);
 
-        // Writing 3.0, it moves the keywords 3.0 lacks to extensions or drops them. That's looser where they apply, and stricter
-        // under not or in a oneOf branch, so they're moved here, where the emitter knows which applicators that touches.
-        // patternProperties also leaves what closes the object behind, which then refuses those names.
-        private static readonly JsonSchemaProfile DowngradedProfile = JsonSchemaProfile.OpenApi31.With(
-            Rewriters.RelocateToDescription(
-                "prefixItems", "patternProperties", "contains", "minContains", "maxContains", "propertyNames", "dependentRequired",
-                "dependentSchemas", "unevaluatedProperties", "unevaluatedItems", "if", "then", "else"),
-            new ConstAsEnum(),
-            Rewriters.ConvertBooleanSchemas);
+        // A 3.0 document is emitted as 3.0 and read as 3.0, so the emitter's own handling of 3.0 applies: keywords beside $ref
+        // move into allOf, a format parsing doesn't check is inert, and what 3.0 can't state is left out where that's safe.
+        private static readonly JsonSchemaProfile DowngradedProfile = JsonSchemaProfile.OpenApi30.With(new MicrosoftOpenApiLimits());
 
-        private sealed class ConstAsEnum : ISchemaRewriter
+        private sealed class MicrosoftOpenApiLimits : ISchemaRewriter
         {
             public SchemaNode Rewrite(SchemaNode node, RewriteContext context)
             {
-                // Microsoft.OpenApi reads a number past the range of double as Infinity, which isn't JSON. Without the
-                // value the schema is only looser, and default and examples only annotate.
-                if (node.Const is { } huge && IsPastDouble(huge))
-                {
-                    node = node with { Const = null };
-                }
+                node = TighterBounds(node);
 
-                if (node.Enum.Any(IsPastDouble))
+                // Without a value it can't hold the schema is only looser, which is safe only where nothing negates it.
+                if (!context.InNegativePosition)
                 {
-                    node = node with { Enum = [] };
+                    // It reads a number past the range of double as Infinity, which isn't JSON. default and examples only annotate.
+                    if (node.Const is { } huge && IsPastDouble(huge))
+                    {
+                        node = node with { Const = null };
+                    }
+
+                    if (node.Enum.Any(IsPastDouble))
+                    {
+                        node = node with { Enum = [] };
+                    }
+
+                    // It holds multipleOf as a decimal, which throws past its range and rounds past 28 digits.
+                    if (node.MultipleOf is { } divisor && !FitsDecimal(divisor))
+                    {
+                        node = node with { MultipleOf = null };
+                    }
                 }
 
                 if (node.Default is { } fallback && IsPastDouble(fallback))
@@ -149,19 +155,29 @@ public static class OpenApiOptionsExtensions
                     node = node with { Examples = [] };
                 }
 
-                // It holds multipleOf as a decimal, which throws past its range and rounds past 28 digits. Without it the
-                // schema is only looser.
-                if (node.MultipleOf is { } divisor && !FitsDecimal(divisor))
-                {
-                    node = node with { MultipleOf = null };
-                }
-
-                // Beside an enum, the enum alone is only looser.
-                return node.Const is { } constant
-                    ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
+                // Beside an enum, only what both allow.
+                return node.Const is not { } constant ? node
+                    : node.Enum.IsEmpty || node.Enum.Any(value => System.Text.Json.JsonElement.DeepEquals(value, constant)) ? node with { Const = null, Enum = [constant] }
                     : node;
             }
 
+            /// <summary>It keeps only the exclusive bound of two on one side, which is looser, so the tighter one is written alone.</summary>
+            private static SchemaNode TighterBounds(SchemaNode node)
+            {
+                if (node.Minimum is { } minimum && node.ExclusiveMinimum is { } exclusiveMinimum
+                    && minimum.TryGetDouble(out double low) && exclusiveMinimum.TryGetDouble(out double exclusiveLow))
+                {
+                    node = low > exclusiveLow ? node with { ExclusiveMinimum = null } : node with { Minimum = null };
+                }
+
+                if (node.Maximum is { } maximum && node.ExclusiveMaximum is { } exclusiveMaximum
+                    && maximum.TryGetDouble(out double high) && exclusiveMaximum.TryGetDouble(out double exclusiveHigh))
+                {
+                    node = high < exclusiveHigh ? node with { ExclusiveMaximum = null } : node with { Maximum = null };
+                }
+
+                return node;
+            }
             private static bool FitsDecimal(System.Text.Json.JsonElement value)
             {
                 string text = value.GetRawText();
@@ -182,7 +198,7 @@ public static class OpenApiOptionsExtensions
             };
         }
 
-        private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document, JsonSchemaProfile profile)
+        private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document, JsonSchemaProfile profile, OpenApiSpecVersion version)
         {
             string namePrefix = metadata.Direction == SchemaDirection.Output ? OutputPrefix : string.Empty;
 
@@ -217,16 +233,16 @@ public static class OpenApiOptionsExtensions
                 else
                 {
                     known[id] = text;
-                    document.AddComponent<IOpenApiSchema>(id, Parse(definition, document));
+                    document.AddComponent<IOpenApiSchema>(id, Parse(definition, document, version));
                 }
             }
 
-            return Parse(emitted.Schema, document);
+            return Parse(emitted.Schema, document, version);
         }
 
-        // Always read as 3.1: Microsoft.OpenApi writes the schema object in the document's own version.
-        private static OpenApiSchema Parse(JsonObject schema, OpenApiDocument document) =>
-            OpenApiModelFactory.Parse<OpenApiSchema>(WithoutTopReference(schema).ToJsonString(), OpenApiSpecVersion.OpenApi3_1, document, out _, "json")
+        // Read in the version it was emitted in. Microsoft.OpenApi writes the schema object in the document's own version.
+        private static OpenApiSchema Parse(JsonObject schema, OpenApiDocument document, OpenApiSpecVersion version) =>
+            OpenApiModelFactory.Parse<OpenApiSchema>(WithoutTopReference(schema).ToJsonString(), version, document, out _, "json")
                 ?? throw new InvalidOperationException("Microsoft.OpenApi couldn't read an emitted schema.");
 
         // A $ref at the top reads as a reference object, not a schema, so it goes in an allOf, which means the same.

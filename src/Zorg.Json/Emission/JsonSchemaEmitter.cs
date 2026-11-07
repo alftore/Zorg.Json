@@ -2035,13 +2035,13 @@ internal sealed class JsonSchemaEmitter
         Reaches(root, static node => node.Properties.Any(property => !node.Required.Contains(property.Name)), _testsOptionalName);
 
     private bool TestsNames(SchemaNode root) =>
-        Reaches(root, static node => !node.Properties.IsEmpty || !node.Required.IsEmpty, _testsNames) || FailsOnExtraNames(root);
+        Reaches(root, static node => !node.Properties.IsEmpty || !node.Required.IsEmpty || node.MinProperties is not null || node.UniqueItems == true, _testsNames) || FailsOnExtraNames(root);
 
     /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
     private bool FailsOnExtraNames(SchemaNode root) => Reaches(root, static node =>
         node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
         || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
-        || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty, _failsOnExtraNames);
+        || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty || node.If is not null, _failsOnExtraNames);
     /// <summary>
     /// Whether <paramref name="found"/> holds for a node reachable from <paramref name="root"/>. A walk that finds nothing clears
     /// every node it visited, since what they reach it reached too, so each node is walked about once per question. Past the
