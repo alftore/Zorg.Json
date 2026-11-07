@@ -107,10 +107,10 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **Required:** a property marked `required`, or a constructor parameter with no default. System.Text.Json doesn't enforce the second kind itself, but `record Person(string Name)` says it's needed.
 - **Nullable:** follows the declaration, so `string?` allows `null` and `string` doesn't. Absent and `null` are separate: `string? Nickname` as a constructor parameter must be present, and may be `null`. Use `.Optional(p => p.Nickname)` or give it a default to let it be absent.
 - **Items of a collection** aren't nullable: `List<string?>` rejects a `null` item, because a contract doesn't carry the annotation of a type argument. Give the items a schema with `.Property(p => p.X, s => s.Items(...))` to allow it. The source generator warns about this.
-- **Unknown properties** are removed, unless the type has `[JsonExtensionData]` or the options have a `ReferenceHandler`, which keep them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is rejected with `unrecognized_keys`: the serializer would bind it to `age` past its rules, and removing it would lose what the sender meant. Send the name as the contract spells it.
+- **Unknown properties** are removed, unless the type has `[JsonExtensionData]` or the options have a `ReferenceHandler` other than `IgnoreCycles`, which keep them. When the serializer ignores case in names, as the web defaults do, a variant such as `AGE` is rejected with `unrecognized_keys`: the serializer would bind it to `age` past its rules, and removing it would lose what the sender meant. Send the name as the contract spells it.
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
-- **Computed properties** with no setter count as unknown on input, so they're removed, or rejected with `.Strict()`. They appear in the output schema.
+- **Computed properties** with no setter are refused with `unrecognized_keys` when sent, whatever the case options, because the serializer might fill them in place. They appear in the output schema. A get-only `List<T>`, `HashSet<T>`, `Dictionary<TKey, TValue>` or plain object that the serializer fills, with `JsonObjectCreationHandling.Populate`, is read and checked like any other property.
 - **`[JsonPolymorphic]` hierarchies** become a discriminated union. System.Text.Json expects the discriminator first unless `AllowOutOfOrderMetadataProperties` is set.
 
 A `required` member can't be made optional with `.Optional` or `.Omit`, because System.Text.Json would then fail on it. `DateTime` and `TimeOnly` have no `format`, because System.Text.Json writes them without an offset.
@@ -225,7 +225,7 @@ Z.String().Overwrite(text => text.Replace("-", ""))
 
 Constraints on the whole value see the result: `MinProperties` and `MaxProperties` count after `Strip` and `Default`, and `UniqueItems` compares after each item's own steps.
 
-Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Schema, so a `Trim` in one branch doesn't affect another. `allOf` merges what its branches change, and a property stays if any branch keeps it. `anyOf` returns what its first matching branch makes of the value, and `oneOf` what its one match makes of it.
+Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Schema, so a `Trim` in one branch doesn't affect another. `allOf` merges what its branches change, and a property stays if any branch keeps it. `anyOf` returns what its first matching branch makes of the value, and `oneOf` what its one match makes of it. `Z.If` returns what its `then` or `else` makes of the value, and when the condition holds it also keeps the properties the condition declares, at any depth, as they came.
 
 There's no general `Transform`. Use `ParseResult<T>.Map` to convert to another type.
 

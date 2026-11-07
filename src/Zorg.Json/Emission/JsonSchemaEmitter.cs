@@ -52,6 +52,7 @@ internal sealed class JsonSchemaEmitter
     private readonly ObjectBranchCheck _objectBranches;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
+    private readonly Dictionary<SchemaNode, bool> _leavesOutIf = new(ReferenceEqualityComparer.Instance);
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
     private ImportScope? _looseScope;
@@ -1623,7 +1624,7 @@ internal sealed class JsonSchemaEmitter
             }
 
             // contains doesn't change the items, so on output its subschema would describe changes that aren't there.
-            else if (!IsInput && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? changed))
+            else if (!IsInput && !IsExactHere(node.Contains, out SchemaExactness.Cause? changed))
             {
                 UnsupportedBecause("contains", changed, $"{location}/contains", notes, location);
             }
@@ -1642,7 +1643,7 @@ internal sealed class JsonSchemaEmitter
         {
             Add(schema, "minContains", node.MinContains);
 
-            if (node.MaxContains is not null && node.Contains is not null && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? cause))
+            if (node.MaxContains is not null && node.Contains is not null && !IsExactHere(node.Contains, out SchemaExactness.Cause? cause))
             {
                 UnsupportedBecause("maxContains", cause, $"{location}/contains", notes, location);
             }
@@ -1718,7 +1719,7 @@ internal sealed class JsonSchemaEmitter
             }
 
             // A name is never rewritten, so on output a subschema that rewrites would describe a name that isn't there.
-            else if (!IsInput && !_exactness.IsExact(node.PropertyNames, out SchemaExactness.Cause? cause))
+            else if (!IsInput && !IsExactHere(node.PropertyNames, out SchemaExactness.Cause? cause))
             {
                 UnsupportedBecause("propertyNames", cause, $"{location}/propertyNames", notes, location);
             }
@@ -1796,7 +1797,7 @@ internal sealed class JsonSchemaEmitter
         if (node.Not is not null)
         {
             // On output too: not tests the value as it came, which it returns unchanged.
-            if (!_exactness.IsExact(node.Not, out SchemaExactness.Cause? cause))
+            if (!IsExactHere(node.Not, out SchemaExactness.Cause? cause))
             {
                 UnsupportedBecause("not", cause, $"{location}/not", notes, location);
             }
@@ -1815,23 +1816,23 @@ internal sealed class JsonSchemaEmitter
                 Unsupported("if", notes, location);
             }
             // On output too: the result keeps the values the condition tested, before its own Trim or default.
-            else if (node.If is not null && !_exactness.IsExact(node.If, out cause))
+            else if (node.If is not null && !IsExactHere(node.If, out cause))
             {
                 UnsupportedBecause("if", cause, $"{location}/if", notes, location);
             }
 
             // On output the condition is tested on the result, which a Trim or default in a branch may have changed.
-            else if (!IsInput && node.If is not null && node.Then is not null && !_exactness.IsExact(node.Then, out cause))
+            else if (!IsInput && node.If is not null && node.Then is not null && !IsExactHere(node.Then, out cause))
             {
                 UnsupportedBecause("if", cause, $"{location}/then", notes, location);
             }
-            else if (!IsInput && node.If is not null && node.Else is not null && !_exactness.IsExact(node.Else, out cause))
+            else if (!IsInput && node.If is not null && node.Else is not null && !IsExactHere(node.Else, out cause))
             {
                 UnsupportedBecause("if", cause, $"{location}/else", notes, location);
             }
 
             // A branch strips names the condition never saw go, so a condition that fails on extra names can pass on the result.
-            else if (!IsInput && node.If is not null && (node.Then is not null || node.Else is not null) && FailsOnExtraNames(node.If))
+            else if (!IsInput && IfFailsOnStrippedNames(node))
             {
                 Unsupported("if", notes, location);
             }
@@ -1884,7 +1885,7 @@ internal sealed class JsonSchemaEmitter
         // On output too: a branch tests the value as it came, and the result may have changed since.
         for (int i = 0; i < node.OneOf.Length && cause is null; i++)
         {
-            if (!_exactness.IsExact(node.OneOf[i], out cause))
+            if (!IsExactHere(node.OneOf[i], out cause))
             {
                 where = $"{location}/oneOf/{i}";
             }
@@ -1983,8 +1984,113 @@ internal sealed class JsonSchemaEmitter
 
     /// <summary>True when a <c>oneOf</c> has to relax, and <c>anyOf</c> is taken, so <see cref="WriteOneOf"/> leaves it out.</summary>
     private bool OneOfIsLeftOut(SchemaNode node) =>
-        !node.OneOf.IsEmpty && !node.AnyOf.IsEmpty && node.OneOf.Any(branch => !_exactness.IsExact(branch))
+        !node.OneOf.IsEmpty && !node.AnyOf.IsEmpty && node.OneOf.Any(branch => !IsExactHere(branch))
         && !DiscriminatorKeys.TryBuild(node, out _) && !CannotOverlap(node.OneOf);
+
+    /// <summary>
+    /// Exact, and on output not left looser by an <c>if</c> this emitter leaves out there, which would make a <c>not</c> or a
+    /// <c>oneOf</c> around it stricter.
+    /// </summary>
+    private bool IsExactHere(SchemaNode node, out SchemaExactness.Cause? cause)
+    {
+        if (!_exactness.IsExact(node, out cause))
+        {
+            return false;
+        }
+
+        if (!IsInput && LeavesOutIfOnOutput(node))
+        {
+            cause = new SchemaExactness.Cause("if", null);
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool IsExactHere(SchemaNode node) => IsExactHere(node, out _);
+
+    private bool LeavesOutIfOnOutput(SchemaNode root)
+    {
+        if (_leavesOutIf.TryGetValue(root, out bool known))
+        {
+            return known;
+        }
+
+        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+        Stack<SchemaNode> pending = new();
+        pending.Push(root);
+        bool found = false;
+
+        while (!found && pending.TryPop(out SchemaNode? node))
+        {
+            if (!visited.Add(node))
+            {
+                continue;
+            }
+
+            if (visited.Count > SchemaExactness.MaxWalked)
+            {
+                found = true;
+                break;
+            }
+
+            found = IfFailsOnStrippedNames(node);
+
+            foreach (SchemaNode child in node.Children)
+            {
+                pending.Push(child);
+            }
+
+            if (node.Behavior.Target is { } target)
+            {
+                pending.Push(target());
+            }
+        }
+
+        _leavesOutIf[root] = found;
+        return found;
+    }
+
+    /// <summary>On output an <c>if</c> is left out when a branch strips names and its condition can fail on extra names.</summary>
+    private static bool IfFailsOnStrippedNames(SchemaNode node) =>
+        node.If is not null && (Strips(node.Then) || Strips(node.Else)) && FailsOnExtraNames(node.If);
+
+    private static bool Strips(SchemaNode? root)
+    {
+        if (root is null)
+        {
+            return false;
+        }
+
+        HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+        Stack<SchemaNode> pending = new();
+        pending.Push(root);
+
+        while (pending.TryPop(out SchemaNode? node) && visited.Count <= SchemaExactness.MaxWalked)
+        {
+            if (!visited.Add(node))
+            {
+                continue;
+            }
+
+            if (node.Behavior.UnknownProperties == UnknownProperties.Strip && (node.Types.HasFlag(JsonTypes.Object) || !node.Properties.IsEmpty))
+            {
+                return true;
+            }
+
+            foreach (SchemaNode child in node.Children)
+            {
+                pending.Push(child);
+            }
+
+            if (node.Behavior.Target is { } target)
+            {
+                pending.Push(target());
+            }
+        }
+
+        return visited.Count > SchemaExactness.MaxWalked;
+    }
 
     /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
     private static bool FailsOnExtraNames(SchemaNode root)
@@ -2041,15 +2147,15 @@ internal sealed class JsonSchemaEmitter
                 throw SchemaExactness.TooLarge();
             }
 
-            if (node.If is { } condition && !_exactness.IsExact(condition, out _))
+            if (node.If is { } condition && !IsExactHere(condition, out _))
             {
                 return true;
             }
 
             // On output an if is also left out when a branch changes the value.
             if (!IsInput && node.If is not null
-                && ((node.Then is { } then && !_exactness.IsExact(then, out _)) || (node.Else is { } otherwise && !_exactness.IsExact(otherwise, out _))
-                    || ((node.Then is not null || node.Else is not null) && FailsOnExtraNames(node.If))))
+                && ((node.Then is { } then && !IsExactHere(then, out _)) || (node.Else is { } otherwise && !IsExactHere(otherwise, out _))
+                    || IfFailsOnStrippedNames(node)))
             {
                 return true;
             }

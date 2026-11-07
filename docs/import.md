@@ -39,7 +39,7 @@ The emitted schema is one document that needs nothing else. A document has to us
 | Code | Meaning |
 |---|---|
 | `unsupported_keyword` | `$dynamicRef` or `$recursiveRef` beside `$ref` in one schema object |
-| `unsupported_dialect` | Draft-03, 2019-09 or a custom meta-schema. Also a boolean `nullable` in a document with no `$schema`, while `DefaultDialect` is left alone, because that is OpenAPI 3.0 and `nullable` would be ignored |
+| `unsupported_dialect` | Draft-03 or a custom meta-schema. Also a boolean `nullable` in a document with no `$schema`, while `DefaultDialect` is left alone, because that is OpenAPI 3.0 and `nullable` would be ignored |
 | `unresolved_ref` | A `$ref` to something that isn't in the document, or that points at nothing. Nothing is ever fetched |
 | `ref_cycle` | A reference cycle that never consumes input, such as `{ "$ref": "#" }` |
 | `invalid_pattern` | A pattern that isn't valid ECMA-262 |
@@ -82,7 +82,7 @@ Nothing in a document says it is OpenAPI 3.0, apart from `nullable`. With no `$s
 
 ## Conformance
 
-The compliance tests run the official JSON-Schema-Test-Suite for all four drafts, with `optional/format`, `bignum` and `float-overflow`, and `zeroTerminatedFloats` for Draft-04. Every case either passes, or its schema is refused with the exact code listed in `tests/Zorg.Json.ComplianceTests/suite-manifest.json`. No case gets a wrong verdict.
+The compliance tests run the official JSON-Schema-Test-Suite for all five drafts, with `optional/format`, `bignum` and `float-overflow`, and `zeroTerminatedFloats` for Draft-04. Every case either passes, or its schema is refused with the exact code listed in `tests/Zorg.Json.ComplianceTests/suite-manifest.json`. No case gets a wrong verdict.
 
 Every imported schema is also emitted, imported again and rechecked, so emitting doesn't change what a document means. The one exception is the Draft-04 integer, below.
 

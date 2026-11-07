@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too, and with a `ReferenceHandler` unknown properties are kept, because `$id` and `$ref` belong to the serializer. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
+**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too, and with a `ReferenceHandler` other than `IgnoreCycles` unknown properties are kept, because `$id` and `$ref` belong to the serializer. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
 
 What that means in practice:
 

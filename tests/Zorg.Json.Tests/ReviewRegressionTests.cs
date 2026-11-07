@@ -508,6 +508,20 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void A_left_out_if_is_not_written_inside_not_or_oneOf_on_output()
+    {
+        JsonSchemaOptions output = new() { Direction = SchemaDirection.Output };
+        JsonValueSchema not = Z.Not(Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String())));
+        JsonValueSchema oneOf = Z.OneOf(Z.Object().Property("a", Z.String()), Z.If(Z.Object().Property("a", Z.String()).Strict(), Z.Never()));
+
+        Assert.Null(not.ToJsonSchema(output)["not"]);
+
+        // Its then strips nothing, so the if stays, and so does the oneOf around it.
+        Assert.Contains("\"if\"", oneOf.ToJsonSchema(output)["oneOf"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.NotNull(Z.FromJsonSchema("""{"if":{"not":{"required":["x"]}},"then":{"required":["y"]}}""").ToJsonSchema(output)["if"]);
+    }
+
+    [Fact]
     public void The_output_schema_leaves_out_contains_whose_item_changes()
     {
         ArraySchema<JsonElement> schema = Z.Array().Contains(Z.Number<int>().Coerce(), 2, null);
