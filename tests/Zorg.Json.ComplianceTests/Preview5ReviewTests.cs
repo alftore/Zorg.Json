@@ -50,6 +50,51 @@ public sealed class Preview5ReviewTests
     }
 
     [Fact]
+    public void An_if_whose_branch_changes_a_name_its_condition_tests_is_left_out_of_the_output_schema()
+    {
+        JsonSchemaOptions output = new() { Direction = SchemaDirection.Output };
+        var filled = Z.If(
+            Z.Object().Passthrough().Property("mode", Z.String().Const("a").Optional()),
+            Z.Object().Passthrough().Property("mode", Z.String().Default("b")),
+            Z.Object().Passthrough().Property("x", Z.String()));
+        var stripped = Z.If(
+            Z.Object().Passthrough().Property("mode", Z.String().Const("a").Optional()),
+            Z.Object().Passthrough().Property("x", Z.String()),
+            Z.Object());
+        var discriminated = Z.If(
+            Z.Object().Passthrough().Property("kind", Z.String().Const("a")),
+            Z.Object().Property("kind", Z.String()).Property("x", Z.String()),
+            Z.Object().Property("kind", Z.String()).Property("y", Z.String()));
+
+        Assert.Equal("""{"mode":"b"}""", filled.Parse("{}").GetRawText());
+        Assert.Null(filled.ToJsonSchema(output)["if"]);
+        Assert.Equal("{}", stripped.Parse("""{"mode":"x"}""").GetRawText());
+        Assert.Null(stripped.ToJsonSchema(output)["if"]);
+        Assert.NotNull(discriminated.ToJsonSchema(output)["if"]);
+    }
+
+    private static readonly ObjectSchema Shared = Z.Object()
+        .Property("i", Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String()), Z.Object()))
+        .Property("s", Z.String())
+        .Named("shared");
+
+    [Fact]
+    public void Output_emission_stays_quick_with_many_roots_over_one_left_out_if()
+    {
+        ObjectSchema schema = Z.Object();
+
+        for (int index = 0; index < 2000; index++)
+        {
+            schema = schema.Property($"n{index}", Z.Not(Z.Object().Property($"w{index}", Shared)).Optional());
+        }
+
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        _ = schema.ToJsonSchema(new() { Direction = SchemaDirection.Output, Reused = ReusedSchemaHandling.Ref });
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
+    }
+
+    [Fact]
     public void An_enum_that_repeats_a_value_is_written_with_each_once()
     {
         var schema = Z.FromJsonSchema("""{"enum":[[1,"a",null],[1.0,"a",null],2,2]}""");

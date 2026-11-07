@@ -29,7 +29,8 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - A property that a `PatternProperty` also matches keeps what either schema keeps, as `allOf` branches do. The pattern's result used to replace the property's.
 - The output schema leaves out `propertyNames` whose subschema changes the text, because names are never changed. `unevaluated*` is left out on output too where what evaluated beside it is.
 - Merging what branches keep is charged for the bytes it compares and copies, so a deeply nested chain of `Z.AllOf` or pattern properties over a large document fails on the step limit instead of taking a minute.
-- The output schema leaves out `contains` whose subschema changes the value, because `contains` doesn't change the items. It also leaves out an `if` whose condition can fail on extra names, such as a `.Strict()` object, when a branch strips names or fills a default, because that can make the condition pass on the result.
+- The output schema leaves out `contains` whose subschema changes the value, because `contains` doesn't change the items. It also leaves out an `if` whose branch changes names its condition notices: a stripped name where the condition reacts to extra names or tests a name it doesn't require, and a filled default where it tests names at all. A discriminator, whose tested names are required, keeps its `if`.
+- A 3.0 OpenAPI document moves the keywords 3.0 lacks to the description, so one under `not` or in a `oneOf` branch no longer makes it stricter.
 - The Gemini OpenAPI profile moves a `format` other than `float`, `double`, `int32`, `int64`, `enum` and `date-time` to the description, with a diagnostic. Its `const` rewrite keeps an `enum` that is already there.
 - `Int128`, `UInt128` and `Half` state their range, and typed schemas read them as numbers.
 - `ValidateBody` no longer rounds a number a `decimal` can't hold exactly, such as `1e-29`, before the binder reads it.

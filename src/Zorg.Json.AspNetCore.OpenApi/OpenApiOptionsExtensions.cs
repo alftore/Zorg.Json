@@ -113,9 +113,15 @@ public static class OpenApiOptionsExtensions
         private static readonly JsonSchemaProfile Profile =
             JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems"), new ConstAsEnum(), Rewriters.ConvertBooleanSchemas);
 
-        // Writing 3.0, it also moves patternProperties to an extension and keeps what closes the object, which then refuses those names.
-        private static readonly JsonSchemaProfile DowngradedProfile =
-            JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems", "patternProperties"), new ConstAsEnum(), Rewriters.ConvertBooleanSchemas);
+        // Writing 3.0, it moves the keywords 3.0 lacks to extensions or drops them. That's looser where they apply, and stricter
+        // under not or in a oneOf branch, so they're moved here, where the emitter knows which applicators that touches.
+        // patternProperties also leaves what closes the object behind, which then refuses those names.
+        private static readonly JsonSchemaProfile DowngradedProfile = JsonSchemaProfile.OpenApi31.With(
+            Rewriters.RelocateToDescription(
+                "prefixItems", "patternProperties", "contains", "minContains", "maxContains", "propertyNames", "dependentRequired",
+                "dependentSchemas", "unevaluatedProperties", "unevaluatedItems", "if", "then", "else"),
+            new ConstAsEnum(),
+            Rewriters.ConvertBooleanSchemas);
 
         private sealed class ConstAsEnum : ISchemaRewriter
         {

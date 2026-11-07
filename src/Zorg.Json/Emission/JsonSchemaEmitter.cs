@@ -53,7 +53,10 @@ internal sealed class JsonSchemaEmitter
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewritten;
     private readonly Dictionary<SchemaNode, SchemaNode>[] _rewrittenNegative;
     private readonly Dictionary<SchemaNode, bool> _leavesOutIf = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<SchemaNode, bool> _changesNames = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _strips = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _fillsDefault = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _testsOptionalName = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SchemaNode, bool> _testsNames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<SchemaNode, bool> _failsOnExtraNames = new(ReferenceEqualityComparer.Instance);
     private List<JsonObject>? _fragments;
     private ImportScope? _import;
@@ -2013,20 +2016,32 @@ internal sealed class JsonSchemaEmitter
 
     private bool LeavesOutIfOnOutput(SchemaNode root) => Reaches(root, IfFailsOnStrippedNames, _leavesOutIf);
 
-    /// <summary>On output an <c>if</c> is left out when a branch changes which names there are and its condition can fail on extra names.</summary>
+    /// <summary>
+    /// On output an <c>if</c> is left out when a branch can change which names there are in a way its condition notices,
+    /// because the condition is tested again on the result. A stripped name only matters to a condition that reacts to extra
+    /// names or tests a name it doesn't require, and a filled default to any condition that tests names.
+    /// </summary>
     private bool IfFailsOnStrippedNames(SchemaNode node) =>
-        node.If is not null && (ChangesNames(node.Then) || ChangesNames(node.Else)) && FailsOnExtraNames(node.If);
+        node.If is not null
+        && (((Strips(node.Then) || Strips(node.Else)) && (FailsOnExtraNames(node.If) || TestsOptionalName(node.If)))
+            || ((FillsDefault(node.Then) || FillsDefault(node.Else)) && TestsNames(node.If)));
 
-    /// <summary>Whether a subschema can remove a name, by stripping, or add one, by filling a default.</summary>
-    private bool ChangesNames(SchemaNode? root) =>
-        root is not null && Reaches(root, static node => node.Behavior.FillDefault || (node.Behavior.UnknownProperties == UnknownProperties.Strip && (node.Types.HasFlag(JsonTypes.Object) || !node.Properties.IsEmpty)), _changesNames);
+    private bool Strips(SchemaNode? root) =>
+        root is not null && Reaches(root, static node => node.Behavior.UnknownProperties == UnknownProperties.Strip && (node.Types.HasFlag(JsonTypes.Object) || !node.Properties.IsEmpty), _strips);
+
+    private bool FillsDefault(SchemaNode? root) => root is not null && Reaches(root, static node => node.Behavior.FillDefault, _fillsDefault);
+
+    private bool TestsOptionalName(SchemaNode root) =>
+        Reaches(root, static node => node.Properties.Any(property => !node.Required.Contains(property.Name)), _testsOptionalName);
+
+    private bool TestsNames(SchemaNode root) =>
+        Reaches(root, static node => !node.Properties.IsEmpty || !node.Required.IsEmpty, _testsNames) || FailsOnExtraNames(root);
 
     /// <summary>Whether removing a name could change the verdict of a subschema: it closes an object, counts or names members, or negates.</summary>
     private bool FailsOnExtraNames(SchemaNode root) => Reaches(root, static node =>
         node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
         || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
         || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty, _failsOnExtraNames);
-
     /// <summary>
     /// Whether <paramref name="found"/> holds for a node reachable from <paramref name="root"/>. A walk that finds nothing clears
     /// every node it visited, since what they reach it reached too, so each node is walked about once per question. Past the
@@ -2040,47 +2055,68 @@ internal sealed class JsonSchemaEmitter
         }
 
         HashSet<SchemaNode> visited = new(ReferenceEqualityComparer.Instance);
+        Dictionary<SchemaNode, SchemaNode> parents = new(ReferenceEqualityComparer.Instance);
         Stack<SchemaNode> pending = new();
         pending.Push(root);
-        bool hit = false;
+        SchemaNode? hit = null;
+        bool exhausted = false;
 
-        while (!hit && pending.TryPop(out SchemaNode? node))
+        while (hit is null && pending.TryPop(out SchemaNode? node))
         {
             if (!visited.Add(node) || (memo.TryGetValue(node, out bool seen) && !seen))
             {
                 continue;
             }
 
-            if (visited.Count > SchemaExactness.MaxWalked || (memo.TryGetValue(node, out bool marked) && marked) || found(node))
+            if (visited.Count > SchemaExactness.MaxWalked)
             {
-                hit = true;
+                exhausted = true;
+                break;
+            }
+
+            if ((memo.TryGetValue(node, out bool marked) && marked) || found(node))
+            {
+                hit = node;
                 break;
             }
 
             foreach (SchemaNode child in node.Children)
             {
+                parents.TryAdd(child, node);
                 pending.Push(child);
             }
 
             if (node.Behavior.Target is { } target)
             {
-                pending.Push(target());
+                SchemaNode next = target();
+                parents.TryAdd(next, node);
+                pending.Push(next);
             }
         }
 
-        if (hit)
+        if (exhausted)
         {
             memo[root] = true;
+            return true;
         }
-        else
+
+        if (hit is null)
         {
             foreach (SchemaNode node in visited)
             {
                 memo[node] = false;
             }
+
+            return false;
         }
 
-        return hit;
+        // Every node on the way to what was found reaches it too, so another root that passes through one stops there.
+        for (SchemaNode? node = hit; node is not null; node = ReferenceEquals(node, root) ? null : parents.GetValueOrDefault(node))
+        {
+            memo[node] = true;
+        }
+
+        return true;
     }
     /// <summary>True when a subschema that applies to the same value has an <c>if</c> or a <c>oneOf</c> that isn't written, so what it evaluates is lost.</summary>
     private bool LosesEvaluations(SchemaNode root)

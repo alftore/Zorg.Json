@@ -137,6 +137,16 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task A_keyword_3_0_lacks_under_not_does_not_make_the_document_stricter()
+    {
+        JsonValueSchema schema = Z.Not(Z.Array().Contains(Z.String().Const("x")));
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/n", (JsonElement body) => "n").ValidateBody(schema), Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0);
+
+        Assert.False(RequestSchema(document, "/n").TryGetProperty("not", out _));
+    }
+
+    [Fact]
     public async Task Pattern_properties_do_not_close_a_3_0_document()
     {
         ObjectSchema schema = Z.Object().Strict().PatternProperty("^x-", Z.String());
