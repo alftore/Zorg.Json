@@ -172,6 +172,14 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void Gemini_OpenApi_reports_a_format_it_does_not_name()
+    {
+        EmitResult emitted = Z.Object().Property("s", Z.String().Format("iri")).Emit(LlmProfiles.GeminiOpenApi);
+
+        Assert.Contains(emitted.Diagnostics, diagnostic => diagnostic.Keyword == "format");
+    }
+
+    [Fact]
     public void A_coerced_property_sent_as_text_fits_its_branch()
     {
         ObjectSchema schema = Z.Object().Property("item", Z.AnyOf(

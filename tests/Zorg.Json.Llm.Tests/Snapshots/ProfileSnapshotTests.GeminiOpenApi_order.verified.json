@@ -3,8 +3,8 @@
   "type": "OBJECT",
   "properties": {
     "id": {
-      "type": "STRING",
-      "format": "uuid"
+      "description": "Must also satisfy: format uuid.",
+      "type": "STRING"
     },
     "customer": {
       "type": "OBJECT",
@@ -15,8 +15,8 @@
           "maxLength": 100
         },
         "email": {
-          "type": "STRING",
-          "format": "email"
+          "description": "Must also satisfy: format email.",
+          "type": "STRING"
         },
         "nickname": {
           "type": "STRING",

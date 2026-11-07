@@ -34,7 +34,8 @@ public static class GeminiCapabilities
 
     /// <summary>
     /// The <c>Schema</c> object on 2026-11-03, "a select subset of an OpenAPI 3.0 schema object". It has no <c>$ref</c>
-    /// or <c>additionalProperties</c>, and any <c>format</c> is allowed.
+    /// or <c>additionalProperties</c>. It takes any <c>format</c>, but names only these as supported, so others are
+    /// moved to the description with a diagnostic.
     /// </summary>
     [SuppressMessage("Naming", "CA1707:Identifiers should not contain underscores", Justification = "The date stays readable, and old tables stay beside new ones.")]
     public static SchemaCapabilities OpenApiAsOf2026_11 { get; } = new()
@@ -47,5 +48,6 @@ public static class GeminiCapabilities
             "type", "format", "title", "description", "nullable", "enum", "items", "minItems", "maxItems",
             "properties", "required", "minProperties", "maxProperties", "minimum", "maximum",
             "minLength", "maxLength", "pattern", "example", "anyOf", "propertyOrdering", "default"),
+        Formats = ImmutableHashSet.Create(StringComparer.Ordinal, "float", "double", "int32", "int64", "enum", "date-time"),
     };
 }

@@ -128,7 +128,7 @@ public static class LlmProfiles
     {
         public SchemaNode Rewrite(SchemaNode node, RewriteContext context) =>
             node.Const is { ValueKind: JsonValueKind.String or JsonValueKind.Number } constant
-                ? node with { Const = null, Enum = [constant] }
+                ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
                 : node;
     }
 

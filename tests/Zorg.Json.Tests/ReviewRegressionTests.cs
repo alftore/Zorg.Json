@@ -474,6 +474,37 @@ public sealed class ReviewRegressionTests
         Assert.Equal("""{"x-a":{"v":1,"a":"b"}}""", open.Parse("""{"x-a":{"v":1,"a":"b"}}""").GetRawText());
     }
 
+    private static readonly ObjectSchema MergeChain = Z.Object()
+        .Property("n", Z.Lazy("chain", () => MergeChain!).Optional())
+        .PatternProperty("^n$", Z.Object().Passthrough());
+
+    [Fact]
+    public void A_nested_chain_of_merges_stops_on_the_budget()
+    {
+        string payload = "\"p\":[" + string.Join(',', Enumerable.Repeat("0", 16_000)) + "]";
+        string json = "{}";
+
+        for (int level = 0; level < 60; level++)
+        {
+            json = "{" + payload + ",\"n\":" + json + "}";
+        }
+
+        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        ParseResult<JsonElement> result = MergeChain.SafeParse(json);
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
+        Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
+    public void The_output_schema_leaves_out_contains_whose_item_changes()
+    {
+        ArraySchema<JsonElement> schema = Z.Array().Contains(Z.Number<int>().Coerce(), 2, null);
+
+        Assert.True(schema.SafeParse("""["42",1]""").IsSuccess);
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["contains"]);
+    }
+
     [Fact]
     public void The_output_schema_leaves_out_property_names_that_are_rewritten()
     {

@@ -51,6 +51,10 @@ internal sealed class ValidationPlan
     private readonly ImmutableArray<(string Name, ValidationPlan Plan)> _dependentSchemas;
     private const int MaxMergeDepth = 256;
 
+    // A step for each 16 bytes a merge compares or copies. A parse may take 48 steps a byte, so one merge of the whole value
+    // at each of a dozen levels fits, and a chain of merges nested hundreds deep doesn't.
+    private const int MergeBytesPerStep = 16;
+
     private readonly ImmutableArray<ValidationPlan> _allOf;
     private readonly ImmutableArray<ValidationPlan> _anyOf;
     private readonly ImmutableArray<ValidationPlan> _oneOf;
@@ -1016,8 +1020,18 @@ internal sealed class ValidationPlan
     /// </summary>
     private static JsonElement Merge(JsonElement original, JsonElement left, JsonElement right, ValidationContext context, int depth)
     {
+        ReadOnlySpan<byte> leftBytes = JsonMarshal.GetRawUtf8Value(left);
+        ReadOnlySpan<byte> rightBytes = JsonMarshal.GetRawUtf8Value(right);
+
+        // Comparing and copying cost the size of the value, at every level a merge recurses into, so a nested chain of merges
+        // costs its size times its depth squared. The budget pays for that, not only for the members.
+        if (!context.Spend(1 + ((leftBytes.Length + (long)rightBytes.Length) / MergeBytesPerStep)))
+        {
+            return right;
+        }
+
         // Most of a value is the same on both sides, and rebuilding it at every level would cost its size each time.
-        if (JsonMarshal.GetRawUtf8Value(left).SequenceEqual(JsonMarshal.GetRawUtf8Value(right)))
+        if (leftBytes.SequenceEqual(rightBytes))
         {
             return left;
         }
@@ -1242,7 +1256,7 @@ internal sealed class ValidationPlan
                 // names: what the condition changed in its test, such as a Trim or a default, isn't part of the result.
                 if (passed && rewritten && !context.Halted)
                 {
-                    result = WithNamesKept(value, result, condition);
+                    result = WithNamesKept(value, result, condition, context);
                 }
             }
         }
@@ -1256,9 +1270,10 @@ internal sealed class ValidationPlan
     /// <paramref name="result"/> lost, at every depth. It copies raw UTF-8, so text JSON allows but .NET can't hold, such as a
     /// lone surrogate, passes through.
     /// </summary>
-    private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper, int depth = 0)
+    private static JsonElement WithNamesKept(JsonElement value, JsonElement result, JsonElement keeper, ValidationContext context, int depth = 0)
     {
-        if (depth > MaxMergeDepth)
+        // Charged as a merge is: it reads and copies the value at every level it recurses into.
+        if (depth > MaxMergeDepth || !context.Spend(1 + ((JsonMarshal.GetRawUtf8Value(value).Length + (long)JsonMarshal.GetRawUtf8Value(result).Length) / MergeBytesPerStep)))
         {
             return result;
         }
@@ -1282,7 +1297,7 @@ internal sealed class ValidationPlan
 
                 if (results.TryGetValue(name, out JsonElement rewritten))
                 {
-                    members.Add(KeyValuePair.Create(name, keepers.TryGetValue(name, out JsonElement inner) ? WithNamesKept(property.Value, rewritten, inner, depth + 1) : rewritten));
+                    members.Add(KeyValuePair.Create(name, keepers.TryGetValue(name, out JsonElement inner) ? WithNamesKept(property.Value, rewritten, inner, context, depth + 1) : rewritten));
                 }
                 else if (keepers.ContainsKey(name))
                 {
@@ -1299,7 +1314,7 @@ internal sealed class ValidationPlan
         {
             return JsonStrings.ToArray(value.EnumerateArray()
                 .Zip(result.EnumerateArray(), keeper.EnumerateArray())
-                .Select(items => WithNamesKept(items.First, items.Second, items.Third, depth + 1))
+                .Select(items => WithNamesKept(items.First, items.Second, items.Third, context, depth + 1))
                 .ToList());
         }
 

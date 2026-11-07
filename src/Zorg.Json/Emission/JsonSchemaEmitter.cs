@@ -1621,6 +1621,12 @@ internal sealed class JsonSchemaEmitter
             {
                 Unsupported("contains", notes, location);
             }
+
+            // contains doesn't change the items, so on output its subschema would describe changes that aren't there.
+            else if (!IsInput && !_exactness.IsExact(node.Contains, out SchemaExactness.Cause? changed))
+            {
+                UnsupportedBecause("contains", changed, $"{location}/contains", notes, location);
+            }
             else
             {
                 schema["contains"] = EmitNode(node.Contains, $"{location}/contains");
