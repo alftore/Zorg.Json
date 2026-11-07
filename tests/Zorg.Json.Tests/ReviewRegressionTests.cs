@@ -304,7 +304,39 @@ public sealed class ReviewRegressionTests
         ParseResult<Plain> result = schema.SafeParse("""{ "age": 1, "AGE": 999 }""");
 
         Assert.Equal(IssueCodes.UnrecognizedKeys, Code(result));
-        Assert.Equal(1, schema.Strip().Parse("""{ "age": 1, "AGE": 999 }""").Age);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(schema.Strip().SafeParse("""{ "age": 1, "AGE": 999 }""")));
+    }
+
+    [Fact]
+    public void A_case_variant_is_not_lost_without_a_word_under_the_default()
+    {
+        ParseResult<Plain> result = Schema.Object<Plain>().SafeParse("""{ "Age": 3 }""");
+
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(result));
+    }
+
+    private sealed class Bag
+    {
+        public string? Name { get; set; }
+
+        [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+        public List<string> Tags { get; } = [];
+    }
+
+    private sealed class Basket
+    {
+        public List<string> Items { get; } = [];
+    }
+
+    [Fact]
+    public void A_get_only_property_the_serializer_fills_is_read()
+    {
+        Assert.Equal(["x", "y"], Schema.Object<Bag>().Parse("""{ "name": "a", "tags": ["x", "y"] }""").Tags);
+        Assert.False(Schema.Object<Bag>().Property(p => p.Tags, s => s.MaxItems(1)).SafeParse("""{ "tags": ["x", "y"] }""").IsSuccess);
+
+        JsonSerializerOptions populate = new(JsonSerializerDefaults.Web) { PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate };
+        Assert.Equal(["z"], Schema.Object<Basket>(populate).Parse("""{ "items": ["z"] }""").Items);
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<Basket>().SafeParse("""{ "items": ["z"] }""")));
     }
 
     [Fact]

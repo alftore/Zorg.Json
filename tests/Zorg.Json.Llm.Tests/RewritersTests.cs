@@ -125,6 +125,40 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_union_of_arrays_is_told_apart_by_its_items()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(
+            Z.Array(Z.String()),
+            Z.Array(Z.Object().Property("id", Z.String()).Property("note", Z.String().Optional()))));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":[{"id":"a","note":null}]}""");
+
+        Assert.Equal("""{"r":[{"id":"a"}]}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void Branches_that_differ_inside_a_nested_object_are_told_apart()
+    {
+        ObjectSchema first = Z.Object().Property("data", Z.Object().Property("x", Z.String()).Property("p", Z.String().Optional()));
+        ObjectSchema second = Z.Object().Property("data", Z.Object().Property("y", Z.Boolean()).Property("q", Z.String().Optional()));
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(first, second));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"data":{"y":true,"q":null}}}""");
+
+        Assert.Equal("""{"r":{"data":{"y":true}}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void CloseAllObjects_reports_an_object_beside_a_union_of_objects()
+    {
+        JsonValueSchema schema = Z.AllOf(
+            Z.Object().Property("id", Z.String()),
+            Z.AnyOf(Z.Object().Property("a", Z.String()), Z.Object().Property("b", Z.Boolean())));
+
+        Assert.Contains(schema.Emit(With(Rewriters.CloseAllObjects)).Diagnostics, diagnostic => diagnostic.Keyword == "allOf");
+    }
+
+    [Fact]
     public void A_pattern_branch_the_profile_leaves_open_takes_other_names()
     {
         ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(

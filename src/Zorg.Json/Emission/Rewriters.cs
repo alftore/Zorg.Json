@@ -312,7 +312,8 @@ public static class Rewriters
         {
             bool nodeIsObject = !node.Properties.IsEmpty || node.Types.HasFlag(JsonTypes.Object);
 
-            if (node.AllOf.Count(IsObject) + (nodeIsObject ? 1 : 0) < 2)
+            // A union of objects closes its objects too, so it rejects the properties of the others as well.
+            if (node.AllOf.Count(branch => IsObject(branch) || branch.AnyOf.Any(IsObject) || branch.OneOf.Any(IsObject)) + (nodeIsObject ? 1 : 0) < 2)
             {
                 return node;
             }

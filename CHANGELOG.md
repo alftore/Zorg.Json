@@ -9,7 +9,10 @@ What that means in practice:
 - `ValidateBody` in ASP.NET Core accepts a request with unknown fields and drops them, where it used to answer 400. The schemas in the OpenAPI document no longer write `additionalProperties: false`.
 - A misspelled optional property is removed without an error. `.Strict()` reports it.
 - A type with `[JsonExtensionData]` keeps unknown properties, as the serializer does.
-- `ParseModelOutput` chooses a branch by what the emitted schema allows, so a profile that doesn't close objects leaves the branches open.
+- A property sent in another case, such as `Name` for `name` under the web defaults, is rejected with `unrecognized_keys`, as before, rather than removed, because the serializer would have bound it.
+- A get-only property that the serializer fills, through `JsonObjectCreationHandling.Populate`, is read and checked like any other.
+- `ParseModelOutput` takes the first branch of a union that the answer is valid against as emitted, and that accepts it once adapted, so branches that differ only in their items or inside a nested object are told apart.
+- The LLM profiles report an object beside a union of objects in a `Z.AllOf`, because closed objects there reject each other's properties.
 
 Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject what it accepted: two branches with only optional properties both match `{"a":1}`, which is `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches. For the same reason such a `oneOf` can be written as `anyOf` when a branch isn't exact, and a `Z.AnyOf` returns what its first matching branch keeps.
 

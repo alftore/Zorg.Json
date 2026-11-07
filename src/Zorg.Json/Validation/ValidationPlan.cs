@@ -862,7 +862,7 @@ internal sealed class ValidationPlan
                 covered = true;
             }
 
-            // The serializer would bind it to the property past its rules. What a schema states about the name still stands, so it's only stripped where nothing does.
+            // The serializer would bind it to the property past its rules, and stripping it would lose what the sender meant, so it's rejected.
             bool isVariant = !covered && _namesIgnoringCase?.Contains(name) == true;
 
             foreach ((string patternName, Regex pattern, ValidationPlan patternPlan) in isVariant ? [] : _patternProperties)
@@ -894,12 +894,7 @@ internal sealed class ValidationPlan
 
             bool keep = true;
 
-            if (isVariant && _node.Behavior.UnknownProperties == UnknownProperties.Strip && _additionalProperties is null && !_patternProperties.Any(entry => Matches(entry.Pattern, name, context)))
-            {
-                keep = false;
-                context.Rewritten();
-            }
-            else if (isVariant)
+            if (isVariant)
             {
                 (unknown ??= []).Add(name);
             }
@@ -1094,8 +1089,10 @@ internal sealed class ValidationPlan
     private bool Kept(string name, ValidationContext context) =>
         _node.Behavior.UnknownProperties != UnknownProperties.Strip
         || _properties.ContainsKey(name)
-        || (_namesIgnoringCase?.Contains(name) != true
-            && (_additionalProperties is not null || _namedByRules.Contains(name) || _patternProperties.Any(entry => Matches(entry.Pattern, name, context))));
+        || _namesIgnoringCase?.Contains(name) == true
+        || _additionalProperties is not null
+        || _namedByRules.Contains(name)
+        || _patternProperties.Any(entry => Matches(entry.Pattern, name, context));
 
     private static bool Matches(Regex pattern, string name, ValidationContext context)
     {

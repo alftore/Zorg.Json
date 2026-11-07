@@ -25,13 +25,20 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
 
     private const int MaxFlattenDepth = 8;
 
+    // Each trial copies and checks the value, and unions inside a branch try their own, so the total is capped.
+    private const int MaxTrials = 256;
+
     private static readonly JsonDocumentOptions ResultOptions = new() { MaxDepth = int.MaxValue };
 
     private readonly Func<SchemaNode, SchemaNode> _rewrite = JsonSchemaEmitter.Rewriter(new JsonSchemaOptions { Target = profile });
 
     private readonly System.Collections.Generic.Dictionary<SchemaNode, SchemaNode> _emitted = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
+    private readonly System.Collections.Generic.Dictionary<SchemaNode, ValidationPlan> _plans = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
     private int _visits;
+
+    private int _trials;
 
     public static JsonElement Adapt(SchemaNode root, EmitResult emitted, JsonElement json)
     {
@@ -267,9 +274,89 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
             Visit(value, branch, depth + 1);
         }
 
-        if (Select(value, node.AnyOf.IsEmpty ? node.OneOf : node.AnyOf) is { } selected)
+        ImmutableArray<SchemaNode> branches = node.AnyOf.IsEmpty ? node.OneOf : node.AnyOf;
+
+        if (!branches.IsEmpty && !TryEachBranch(value, branches, depth) && Select(value, branches) is { } selected)
         {
             Visit(value, selected, depth + 1);
+        }
+    }
+
+    /// <summary>
+    /// Takes the first branch whose emitted form accepts the answer, which is one the model kept to, and whose own schema
+    /// accepts the answer once adapted. When none does, the caller guesses from the shape, so that parsing reports on the
+    /// likeliest branch.
+    /// </summary>
+    private bool TryEachBranch(JsonNode value, ImmutableArray<SchemaNode> branches, int depth)
+    {
+        foreach (SchemaNode branch in branches)
+        {
+            if (Resolve(branch) is not { } resolved)
+            {
+                continue;
+            }
+
+            if (++_trials > MaxTrials)
+            {
+                return false;
+            }
+
+            if (!Accepts(Emitted(resolved), value))
+            {
+                continue;
+            }
+
+            JsonNode copy = value.DeepClone();
+            Visit(copy, resolved, depth + 1);
+
+            if (Accepts(resolved, copy))
+            {
+                MoveInto(value, copy);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool Accepts(SchemaNode node, JsonNode value)
+    {
+        if (!_plans.TryGetValue(node, out ValidationPlan? plan))
+        {
+            plan = ValidationPlan.Create(node);
+            _plans[node] = plan;
+        }
+
+        JsonElement element = ToElement(value);
+        ValidationContext context = new(element);
+        plan.Run(element, context);
+
+        // Async refinements wait for the parse, which runs them on what's chosen here.
+        return !context.HasIssues && !context.Halted;
+    }
+
+    private static void MoveInto(JsonNode target, JsonNode source)
+    {
+        if (target is JsonObject members && source is JsonObject adapted)
+        {
+            members.Clear();
+
+            foreach ((string name, JsonNode? item) in adapted.ToArray())
+            {
+                adapted.Remove(name);
+                members[name] = item;
+            }
+        }
+        else if (target is JsonArray items && source is JsonArray adaptedItems)
+        {
+            JsonNode?[] moved = [.. adaptedItems];
+            adaptedItems.Clear();
+            items.Clear();
+
+            foreach (JsonNode? item in moved)
+            {
+                items.Add(item);
+            }
         }
     }
 

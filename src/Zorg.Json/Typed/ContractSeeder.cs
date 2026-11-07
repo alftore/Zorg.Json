@@ -43,7 +43,13 @@ internal sealed class ContractSeeder
         property.IsRequired
         || property.AssociatedParameter is { HasDefaultValue: false, IsMemberInitializer: false };
 
-    public static bool IsReadable(JsonPropertyInfo property) => property.Set is not null || property.AssociatedParameter is not null;
+    /// <summary>Whether the serializer reads the property: through a setter, a constructor parameter, or by filling the object a getter returns.</summary>
+    public static bool IsReadable(JsonPropertyInfo property, JsonTypeInfo owner) =>
+        property.Set is not null
+        || property.AssociatedParameter is not null
+        || (property.Get is not null
+            && !property.PropertyType.IsValueType
+            && (property.ObjectCreationHandling ?? owner.PreferredPropertyObjectCreationHandling ?? owner.Options.PreferredObjectCreationHandling) == JsonObjectCreationHandling.Populate);
 
     private static SchemaNode Scalar(JsonTypes types, string? format = null) =>
         new() { Types = types, Format = format, Behavior = new SchemaBehavior { FormatIsFluent = format is not null } };
@@ -165,7 +171,7 @@ internal sealed class ContractSeeder
                 continue;
             }
 
-            bool readable = IsReadable(property);
+            bool readable = IsReadable(property, typeInfo);
 
             if (!readable && property.Get is null)
             {
