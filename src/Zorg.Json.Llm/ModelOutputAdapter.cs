@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -25,8 +26,11 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
 
     private const int MaxFlattenDepth = 8;
 
-    // Each trial copies and checks the value, and unions inside a branch try their own, so the total is capped.
-    private const int MaxTrials = 256;
+    // Each trial copies and checks a value, and unions inside a branch try their own, so the bytes they check are capped
+    // at a multiple of the answer. Past that, branches are chosen by their shape alone.
+    private const long TrialBytesPerAnswerByte = 64;
+
+    private const long BaseTrialBytes = 1 << 20;
 
     private static readonly JsonDocumentOptions ResultOptions = new() { MaxDepth = int.MaxValue };
 
@@ -38,7 +42,9 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
 
     private int _visits;
 
-    private int _trials;
+    private long _trialBytes;
+
+    private long _maxTrialBytes = BaseTrialBytes;
 
     public static JsonElement Adapt(SchemaNode root, EmitResult emitted, JsonElement json)
     {
@@ -77,7 +83,12 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
 
         if (requiredAll)
         {
-            new ModelOutputAdapter(root, emitted.Target ?? JsonSchemaProfile.Draft202012).Visit(value, root, 0);
+            ModelOutputAdapter adapter = new(root, emitted.Target ?? JsonSchemaProfile.Draft202012)
+            {
+                _maxTrialBytes = BaseTrialBytes + (TrialBytesPerAnswerByte * JsonMarshal.GetRawUtf8Value(json).Length),
+            };
+
+            adapter.Visit(value, root, 0);
         }
 
         return ToElement(value);
@@ -283,9 +294,9 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
     }
 
     /// <summary>
-    /// Takes the first branch whose emitted form accepts the answer, which is one the model kept to, and whose own schema
-    /// accepts the answer once adapted. When none does, the caller guesses from the shape, so that parsing reports on the
-    /// likeliest branch.
+    /// Takes the first branch whose emitted shape the answer fits, which is one the model may have kept to, and whose own
+    /// schema accepts the answer once adapted for it. When none does, the caller guesses from the shape alone, so that parsing
+    /// reports on the likeliest branch.
     /// </summary>
     private bool TryEachBranch(JsonNode value, ImmutableArray<SchemaNode> branches, int depth)
     {
@@ -296,12 +307,13 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
                 continue;
             }
 
-            if (++_trials > MaxTrials)
+            if (_trialBytes > _maxTrialBytes)
             {
                 return false;
             }
 
-            if (!Accepts(Emitted(resolved), value))
+            // A closed branch takes no name it doesn't list, which tells apart branches that stripping would let through.
+            if (!Matches(value, Flattened(resolved, 0), Emitted(resolved)))
             {
                 continue;
             }
@@ -328,10 +340,22 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
         }
 
         JsonElement element = ToElement(value);
-        ValidationContext context = new(element);
-        plan.Run(element, context);
+        _trialBytes += JsonMarshal.GetRawUtf8Value(element).Length;
 
-        // Async refinements wait for the parse, which runs them on what's chosen here.
+        // Refinements are the caller's, and run once, in the parse, on what's chosen here.
+        ValidationContext context = new(element) { SkipsRefinements = true };
+
+        try
+        {
+            plan.Run(element, context);
+        }
+#pragma warning disable CA1031 // A normalizer of the caller's that throws on a branch the parse won't take isn't the parse's failure. If the parse takes it, the parse throws.
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+#pragma warning restore CA1031
+        {
+            return false;
+        }
+
         return !context.HasIssues && !context.Halted;
     }
 

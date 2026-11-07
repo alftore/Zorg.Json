@@ -1667,7 +1667,7 @@ internal sealed class ValidationPlan
 
     private void RunRefinements(JsonElement value, ValidationContext context)
     {
-        if (_node.Behavior.Refinements.IsEmpty || value.ValueKind == JsonValueKind.Null)
+        if (_node.Behavior.Refinements.IsEmpty || value.ValueKind == JsonValueKind.Null || context.SkipsRefinements)
         {
             return;
         }

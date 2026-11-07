@@ -45,11 +45,41 @@ internal sealed class ContractSeeder
 
     /// <summary>Whether the serializer reads the property: through a setter, a constructor parameter, or by filling the object a getter returns.</summary>
     public static bool IsReadable(JsonPropertyInfo property, JsonTypeInfo owner) =>
-        property.Set is not null
-        || property.AssociatedParameter is not null
-        || (property.Get is not null
-            && !property.PropertyType.IsValueType
-            && (property.ObjectCreationHandling ?? owner.PreferredPropertyObjectCreationHandling ?? owner.Options.PreferredObjectCreationHandling) == JsonObjectCreationHandling.Populate);
+        property.Set is not null || property.AssociatedParameter is not null || IsPopulated(property, owner);
+
+    /// <summary>
+    /// A get-only property the serializer fills in place. Where it can't, it ignores the property without a word, so only the
+    /// shapes it always fills count: a mutable collection or an object it builds itself, in an owner without constructor parameters.
+    /// </summary>
+    private static bool IsPopulated(JsonPropertyInfo property, JsonTypeInfo owner)
+    {
+        if (property.Set is not null
+            || property.AssociatedParameter is not null
+            || property.Get is null
+            || property.CustomConverter is not null
+            || (property.ObjectCreationHandling ?? owner.PreferredPropertyObjectCreationHandling ?? owner.Options.PreferredObjectCreationHandling) != JsonObjectCreationHandling.Populate
+            || owner.Properties.Any(other => other.AssociatedParameter is not null)
+            || !owner.Options.TryGetTypeInfo(property.PropertyType, out JsonTypeInfo? typeInfo)
+            || typeInfo.Converter.GetType().Assembly != typeof(JsonSerializer).Assembly)
+        {
+            return false;
+        }
+
+        Type type = property.PropertyType;
+
+        return typeInfo.Kind switch
+        {
+            JsonTypeInfoKind.Object => !type.IsValueType && typeInfo.PolymorphismOptions is null && typeInfo.Properties.All(member => member.AssociatedParameter is null),
+            JsonTypeInfoKind.Enumerable or JsonTypeInfoKind.Dictionary => type.IsGenericType && PopulatedCollections.Contains(type.GetGenericTypeDefinition()),
+            _ => false,
+        };
+    }
+
+    private static readonly HashSet<Type> PopulatedCollections =
+    [
+        typeof(List<>), typeof(IList<>), typeof(ICollection<>), typeof(HashSet<>), typeof(ISet<>),
+        typeof(Dictionary<,>), typeof(IDictionary<,>), typeof(SortedDictionary<,>),
+    ];
 
     private static SchemaNode Scalar(JsonTypes types, string? format = null) =>
         new() { Types = types, Format = format, Behavior = new SchemaBehavior { FormatIsFluent = format is not null } };
@@ -189,7 +219,8 @@ internal sealed class ContractSeeder
             {
                 schema = property.CustomConverter is not null ? new SchemaNode() : Seed(property.PropertyType);
 
-                if (schema != AnyValue && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
+                // The serializer can't fill null into the object a getter returns, though IsSetNullable is true without a setter.
+                if (schema != AnyValue && !IsPopulated(property, typeInfo) && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
                 {
                     schema = schema.WithNull();
                 }

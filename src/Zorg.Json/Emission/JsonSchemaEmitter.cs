@@ -1491,7 +1491,14 @@ internal sealed class JsonSchemaEmitter
 
         foreach (JsonElement value in values)
         {
-            int hash = JsonEquality.Hash(value);
+            int hash = JsonEquality.Hash(value, out bool outOfRange);
+
+            // Numbers too large to hold all hash alike, so comparing each with the rest would take quadratic time. Kept as written.
+            if (outOfRange)
+            {
+                distinct.Add(value);
+                continue;
+            }
 
             if (!byHash.TryGetValue(hash, out List<JsonElement>? same))
             {

@@ -296,7 +296,10 @@ internal sealed class ValidationContext
     public void Unwalk() => _steps.RemoveAt(_steps.Count - 1);
 
     /// <summary>Evaluates a branch whose issues only count if the caller says so. Shares the path.</summary>
-    public ValidationContext Fork() => new(_path, _steps, _limits, isFork: true) { Depth = Depth, _stopped = _stopped };
+    public ValidationContext Fork() => new(_path, _steps, _limits, isFork: true) { Depth = Depth, _stopped = _stopped, SkipsRefinements = SkipsRefinements };
+
+    /// <summary>Checks only what the schema states, for a caller that tries values the parse may never see, so a caller's refinement runs only on what is parsed.</summary>
+    public bool SkipsRefinements { get; init; }
 
     public void Adopt(ValidationContext fork)
     {

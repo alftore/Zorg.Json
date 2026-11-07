@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
@@ -134,6 +135,44 @@ public sealed class RewritersTests
         ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":[{"id":"a","note":null}]}""");
 
         Assert.Equal("""{"r":[{"id":"a"}]}""", result.Value.GetRawText());
+    }
+
+    private static readonly ObjectSchema Item = Z.Object().Property("id", Z.String()).Property("note", Z.String().Optional());
+
+    [Fact]
+    public void A_union_of_arrays_of_a_named_item_is_told_apart_too()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(Z.Array(Z.String()), Z.Array(Z.Lazy("item", () => Item))));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":[{"id":"a","note":null}]}""");
+
+        Assert.Equal("""{"r":[{"id":"a"}]}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void A_long_list_of_unions_is_adapted_to_the_end()
+    {
+        ObjectSchema schema = Z.Object().Property("rs", Z.Array(Z.AnyOf(Z.Array(Z.String()), Z.Array(Item))));
+        string items = string.Join(',', Enumerable.Repeat("""[{"id":"a","note":null}]""", 2_000));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), $$"""{"rs":[{{items}}]}""");
+
+        Assert.True(result.IsSuccess);
+        Assert.DoesNotContain("note", result.Value.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_refinement_in_a_branch_sees_only_the_adapted_value_and_runs_once()
+    {
+        int runs = 0;
+        ObjectSchema branch = Z.Object().Property("id", Z.String()).Property("n", Z.Integer().Optional())
+            .Refine(value => ++runs > 0 && (!value.TryGetProperty("n", out JsonElement n) || n.GetInt64() >= 0), "negative");
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(branch, Z.Object().Property("k", Z.Boolean())));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"id":"a","n":null}}""");
+
+        Assert.Equal("""{"r":{"id":"a"}}""", result.Value.GetRawText());
+        Assert.Equal(1, runs);
     }
 
     [Fact]

@@ -339,6 +339,39 @@ public sealed class ReviewRegressionTests
         Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<Basket>().SafeParse("""{ "items": ["z"] }""")));
     }
 
+    private sealed class Unfillable
+    {
+        public string Name { get; } = "init";
+
+        public string[] Array { get; } = [];
+
+        public IReadOnlyList<string> ReadOnly { get; } = [];
+
+        public System.Collections.Immutable.ImmutableList<string> Immutable { get; } = [];
+    }
+
+    private sealed class WithParameter(int a)
+    {
+        public int A { get; } = a;
+
+        public List<string> L { get; } = [];
+    }
+
+    [Fact]
+    public void What_the_serializer_cannot_fill_is_still_refused_and_null_is_not_allowed_where_it_fills()
+    {
+        JsonSerializerOptions populate = new(JsonSerializerDefaults.Web) { PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate };
+
+        foreach (string json in new[] { """{"name":"x"}""", """{"array":["x"]}""", """{"readOnly":["x"]}""", """{"immutable":["x"]}""" })
+        {
+            Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<Unfillable>(populate).SafeParse(json)));
+        }
+
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<WithParameter>(populate).SafeParse("""{"a":1,"l":["x"]}""")));
+        Assert.Equal("array", Schema.Object<Bag>().ToJsonSchema()["properties"]!["tags"]!["type"]!.GetValue<string>());
+        Assert.False(Schema.Object<Bag>().SafeParse("""{ "tags": null }""").IsSuccess);
+    }
+
     [Fact]
     public void Property_only_adds_rules()
     {
