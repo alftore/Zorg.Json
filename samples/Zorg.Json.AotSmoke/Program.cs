@@ -40,7 +40,7 @@ Check("minLength", emitted["minLength"]?.GetValue<int>() == 2);
 Check("maxLength", emitted["maxLength"]?.GetValue<int>() == 10);
 Check("serialized schema", JsonNode.Parse(emitted.ToJsonString()) is JsonObject);
 
-ObjectSchema<Person> person = Schema.Object(SmokeJson.Default.Person)
+ObjectSchema<Person> person = Schema.Object(SmokeJson.Default.Person).Strict()
     .Property(p => p.Name, s => s.MinLength(1))
     .Property(p => p.Age, s => s.Minimum(0))
     .Property(p => p.Tags, s => s.MaxItems(2));
@@ -52,6 +52,7 @@ ParseResult<Person> invalid = person.SafeParse("""{ "name": "", "age": 36, "tags
 Check("typed issues", invalid.Issues.Length == 3);
 Check("typed pointer", invalid.Issues.Any(issue => issue.InstanceLocation == "/name"));
 Check("typed schema", person.ToJsonSchema()["additionalProperties"]?.GetValue<bool>() == false);
+Check("unknown removed", Schema.Object(SmokeJson.Default.Person).SafeParse("""{ "name": "Ada", "age": 36, "tags": [], "kind": "User", "extra": 1 }""").IsSuccess);
 
 Schema<Person> recursive = Schema.Lazy("person", () => (Schema<Person>)person);
 Check("lazy", recursive.SafeParse("""{ "name": "Ada", "age": 36, "tags": [], "kind": "User" }""").IsSuccess);
