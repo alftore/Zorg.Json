@@ -113,6 +113,32 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_pattern_branch_takes_only_the_names_of_its_pattern()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(
+            Z.Object().Property("id", Z.Integer()).PatternProperty("^x-", Z.String()),
+            Z.Object().Property("id", Z.String()).Property("note", Z.String().Optional())));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"id":"abc","note":null}}""");
+
+        Assert.Equal("""{"r":{"id":"abc"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void An_allOf_inside_an_allOf_counts_too()
+    {
+        ObjectSchema x = Z.Object().Property("x", Z.String());
+        ObjectSchema y = Z.Object().Property("y", Z.String());
+        ObjectSchema optional = Z.Object().Property("o", Z.String().Optional());
+        ObjectSchema c = Z.Object().Property("c1", Z.String()).Property("c2", Z.String().Optional());
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(Z.AllOf(Z.AllOf(x, y), optional), c));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"c1":"1","c2":null}}""");
+
+        Assert.Equal("""{"r":{"c1":"1"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
     public void An_allOf_in_a_union_matches_what_its_branches_say_together()
     {
         ObjectSchema x = Z.Object().Property("x", Z.String());

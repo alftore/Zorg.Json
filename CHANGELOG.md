@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
+**Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too, and with a `ReferenceHandler` unknown properties are kept, because `$id` and `$ref` belong to the serializer. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
 
 Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject what it accepted: two branches with only optional properties both match `{"a":1}`, which is `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches. For the same reason such a `oneOf` can be written as `anyOf` when a branch isn't exact, and a `Z.AnyOf` returns what its first matching branch keeps.
 

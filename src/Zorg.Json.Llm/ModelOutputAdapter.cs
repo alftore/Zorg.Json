@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Zorg.Json.Emission;
 using Zorg.Json.Model;
 using Zorg.Json.Validation;
@@ -21,6 +22,8 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     private const int MaxVisitDepth = 256;
 
     private const int MaxVisits = 1_000_000;
+
+    private const int MaxFlattenDepth = 8;
 
     private static readonly JsonDocumentOptions ResultOptions = new() { MaxDepth = int.MaxValue };
 
@@ -168,15 +171,36 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             return false;
         }
 
-        // The profiles close what strips, unless patternProperties leave it open, so a model that keeps to the schema sends no property such a branch doesn't name.
-        if ((node.Behavior.UnknownProperties == UnknownProperties.Reject || (node.Behavior.UnknownProperties == UnknownProperties.Strip && node.PatternProperties.IsEmpty))
+        // The profiles close what strips, so a model that keeps to the schema sends no property such a branch doesn't name, by name or by pattern.
+        if (node.Behavior.UnknownProperties is UnknownProperties.Reject or UnknownProperties.Strip
             && node.AdditionalProperties is null
-            && value.Any(entry => node.Properties.All(property => property.Name != entry.Key)))
+            && value.Any(entry => node.Properties.All(property => property.Name != entry.Key) && !MatchesPattern(entry.Key, node)))
         {
             return false;
         }
 
         return node.Properties.All(property => !value.TryGetPropertyValue(property.Name, out JsonNode? item) || HasAllowedValue(item, property.Schema));
+    }
+
+    private static bool MatchesPattern(string name, SchemaNode node)
+    {
+        foreach (SchemaProperty pattern in node.PatternProperties)
+        {
+            try
+            {
+                if (PatternCompiler.Compile(pattern.Name).IsMatch(name))
+                {
+                    return true;
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // It can't be told here, and parsing reports the timeout.
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool HasAllowedValue(JsonNode? value, SchemaNode node)
@@ -274,17 +298,17 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     }
 
     private SchemaNode? Select(JsonNode? value, ImmutableArray<SchemaNode> branches) =>
-        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, Flattened(resolved)));
+        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, Flattened(resolved, 0)));
 
     /// <summary>An <c>allOf</c> says what its branches say together, as the object the profile made of it does.</summary>
-    private SchemaNode Flattened(SchemaNode node)
+    private SchemaNode Flattened(SchemaNode node, int depth)
     {
-        if (node.AllOf.IsEmpty)
+        if (node.AllOf.IsEmpty || depth >= MaxFlattenDepth)
         {
             return node;
         }
 
-        SchemaNode[] branches = [.. node.AllOf.Select(Resolve).OfType<SchemaNode>()];
+        SchemaNode[] branches = [.. node.AllOf.Select(Resolve).OfType<SchemaNode>().Select(branch => Flattened(branch, depth + 1))];
         bool closes = branches.Length == node.AllOf.Length && branches.All(branch => branch.Behavior.UnknownProperties != UnknownProperties.Allow && branch.PatternProperties.IsEmpty);
 
         return node with
