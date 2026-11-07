@@ -146,6 +146,34 @@ public sealed class OpenApiTests
         Assert.False(RequestSchema(document, "/n").TryGetProperty("not", out _));
     }
 
+    [Theory]
+    [InlineData("#/$defs/a/properties/y")]
+    [InlineData("#/$defs/a/items")]
+    [InlineData("#/$defs/a/allOf/0")]
+    public async Task A_reference_into_a_definition_resolves_in_a_3_0_document(string pointer)
+    {
+        JsonValueSchema schema = Z.FromJsonSchema("""
+            {"$defs":{"a":{"type":"object","properties":{"y":{"type":"string"}},"items":{"type":"integer"},"allOf":[{"minProperties":0}]}},
+             "type":"object","properties":{"x":{"$ref":"POINTER"},"a":{"$ref":"#/$defs/a"}}}
+            """.Replace("POINTER", pointer, StringComparison.Ordinal));
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/p", (JsonElement body) => "p").ValidateBody(schema), Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0);
+        JsonElement components = document.GetProperty("components").GetProperty("schemas");
+
+        foreach (string reference in Refs(RequestSchema(document, "/p")).Concat(components.EnumerateObject().SelectMany(entry => Refs(entry.Value))))
+        {
+            Assert.StartsWith("#/components/schemas/", reference, StringComparison.Ordinal);
+            Assert.True(components.TryGetProperty(reference["#/components/schemas/".Length..], out _), reference);
+        }
+
+        static System.Collections.Generic.IEnumerable<string> Refs(JsonElement element) => element.ValueKind switch
+        {
+            JsonValueKind.Object => element.EnumerateObject().SelectMany(property => property.Name == "$ref" ? new[] { property.Value.GetString()! } : Refs(property.Value)),
+            JsonValueKind.Array => element.EnumerateArray().SelectMany(item => Refs(item)),
+            _ => Enumerable.Empty<string>(),
+        };
+    }
+
     [Fact]
     public async Task Keywords_beside_a_reference_survive_a_3_0_document()
     {

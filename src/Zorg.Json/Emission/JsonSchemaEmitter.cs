@@ -561,6 +561,13 @@ internal sealed class JsonSchemaEmitter
             }
         }
 
+        // OpenAPI 3.0 tools read a component reference by its last segment, so a pointer into a component's insides gets a
+        // home of its own there, as a pointer to the root does.
+        if (IsOpenApi30 && tokens.Count > 0)
+        {
+            return null;
+        }
+
         return known.TryGetValue(top, out string? found) ? Join(ReferencePrefix + FragmentEscape(Escape(found)), tokens) : null;
     }
 
@@ -2041,7 +2048,8 @@ internal sealed class JsonSchemaEmitter
     private bool FailsOnExtraNames(SchemaNode root) => Reaches(root, static node =>
         node.Behavior.UnknownProperties == UnknownProperties.Reject || node.AdditionalProperties is not null || node.UnevaluatedProperties is not null
         || node.MaxProperties is not null || node.PropertyNames is not null || !node.PatternProperties.IsEmpty || node.Not is not null
-        || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty || node.If is not null, _failsOnExtraNames);
+        || !node.DependentRequired.IsEmpty || !node.DependentSchemas.IsEmpty || !node.OneOf.IsEmpty || node.If is not null
+        || node.Const is { ValueKind: JsonValueKind.Object or JsonValueKind.Array } || node.Enum.Any(value => value.ValueKind is JsonValueKind.Object or JsonValueKind.Array), _failsOnExtraNames);
     /// <summary>
     /// Whether <paramref name="found"/> holds for a node reachable from <paramref name="root"/>. A walk that finds nothing clears
     /// every node it visited, since what they reach it reached too, so each node is walked about once per question. Past the

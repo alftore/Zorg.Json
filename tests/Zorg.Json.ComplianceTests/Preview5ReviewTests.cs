@@ -90,6 +90,15 @@ public sealed class Preview5ReviewTests
         Assert.Null(nested.ToJsonSchema(output)["if"]);
     }
 
+    [Fact]
+    public void An_if_whose_condition_is_an_object_const_is_left_out_where_a_branch_changes_names()
+    {
+        var schema = Z.If(Z.FromJsonSchema("""{"const":{"a":1}}"""), Z.Object().Passthrough().Property("b", Z.String().Default("d")), Z.Never());
+
+        Assert.Equal("""{"a":1,"b":"d"}""", schema.Parse("""{"a":1}""").GetRawText());
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
+    }
+
     private static readonly ObjectSchema Shared = Z.Object()
         .Property("i", Z.If(Z.Object().Strict(), Z.Object().Property("a", Z.String()), Z.Object()))
         .Property("s", Z.String())
