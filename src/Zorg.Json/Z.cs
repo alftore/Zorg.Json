@@ -210,7 +210,8 @@ public static class Z
 
     /// <summary>Creates a schema that matches every branch. JSON Schema: <c>allOf</c>. Zod equivalent: <c>z.intersection()</c>.</summary>
     /// <param name="branches">
-    /// The branches. Object branches must use <c>Passthrough</c>, because a closed object rejects the other branches' properties.
+    /// The branches. The result merges what they keep, so objects that strip keep each other's properties. Don't combine
+    /// <c>Strict</c> objects here, because each rejects the other's properties. Use <c>Extend</c>.
     /// </param>
     /// <returns>A new schema.</returns>
     /// <example>

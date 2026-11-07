@@ -125,6 +125,42 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_pattern_branch_the_profile_leaves_open_takes_other_names()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(
+            Z.Object().Property("id", Z.Integer()).Property("note", Z.String().Optional()).PatternProperty("^x-", Z.String()),
+            Z.Object().Property("k", Z.String())));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"id":1,"note":null,"other":5}}""");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("""{"r":{"id":1}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void A_profile_that_does_not_close_objects_leaves_branches_open()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(Z.Object().Property("id", Z.String()).Property("note", Z.String().Optional())));
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(With(Rewriters.RequireAllAsNullable)), """{"r":{"id":"a","note":null,"extra":1}}""");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("""{"r":{"id":"a"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
+    public void A_passthrough_branch_is_closed_when_the_profile_closes_it_and_types_count()
+    {
+        ObjectSchema schema = Z.Object().Property("r", Z.AnyOf(
+            Z.Object().Property("id", Z.Integer()).Passthrough(),
+            Z.Object().Property("id", Z.String()).Property("note", Z.String().Optional())));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.OpenAIStrict), """{"r":{"id":"abc","note":null}}""");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("""{"r":{"id":"abc"}}""", result.Value.GetRawText());
+    }
+
+    [Fact]
     public void An_allOf_inside_an_allOf_counts_too()
     {
         ObjectSchema x = Z.Object().Property("x", Z.String());

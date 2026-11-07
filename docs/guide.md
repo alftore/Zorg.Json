@@ -225,7 +225,7 @@ Z.String().Overwrite(text => text.Replace("-", ""))
 
 Constraints on the whole value see the result: `MinProperties` and `MaxProperties` count after `Strip` and `Default`, and `UniqueItems` compares after each item's own steps.
 
-Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Schema, so a `Trim` in one branch doesn't affect another. If several branches change the value, the last change wins.
+Branches of `allOf`, `anyOf` and `oneOf` all see the same value, as in JSON Schema, so a `Trim` in one branch doesn't affect another. `allOf` merges what its branches change, and a property stays if any branch keeps it. `anyOf` returns what its first matching branch makes of the value, and `oneOf` what its one match makes of it.
 
 There's no general `Transform`. Use `ParseResult<T>.Map` to convert to another type.
 

@@ -37,6 +37,18 @@ ObjectSchema search = Z.Object()
     .Property("limit", Z.Integer().Minimum(1).Maximum(50).Default(10));
 ```
 
+Objects remove unknown properties by default, and the schema leaves `additionalProperties` out. Call `.Strict()` to reject them.
+
+A source generator in this package writes the schema from a type's validation attributes:
+
+```csharp
+[GenerateSchema(typeof(AppJson))]
+public sealed partial record Signup([property: MinLength(3)] string UserName, [property: Range(13, 120)] int Age);
+
+// AppJson also needs [JsonSerializable(typeof(Signup))].
+ParseResult<Signup> result = Signup.Schema.SafeParse(json);
+```
+
 ## How this is built
 
 Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthropic. The maintainer sets the direction and makes the design decisions, and agents do most of the implementation. This note covers the whole project, so individual commits don't carry a co-author line.
@@ -51,4 +63,4 @@ Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthrop
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
 | `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 
-JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, Draft-07, Draft-06 and Draft-04, and passes the official JSON-Schema-Test-Suite: every case passes, or its schema is refused at import with a stable error code. Every public member has XML documentation naming the JSON Schema keyword and the Zod equivalent.
+JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, 2019-09, Draft-07, Draft-06 and Draft-04, and passes the official JSON-Schema-Test-Suite: every case passes, or its schema is refused at import with a stable error code. Every public member has XML documentation naming the JSON Schema keyword and the Zod equivalent.

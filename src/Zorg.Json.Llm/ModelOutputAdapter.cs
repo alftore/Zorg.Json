@@ -12,7 +12,7 @@ using Zorg.Json.Validation;
 namespace Zorg.Json.Llm;
 
 /// <summary>Turns JSON shaped by an emitted schema back into the shape the full schema expects.</summary>
-internal sealed class ModelOutputAdapter(SchemaNode root)
+internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile profile)
 {
     private const string DefsPrefix = "#/$defs/";
 
@@ -26,6 +26,10 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     private const int MaxFlattenDepth = 8;
 
     private static readonly JsonDocumentOptions ResultOptions = new() { MaxDepth = int.MaxValue };
+
+    private readonly Func<SchemaNode, SchemaNode> _rewrite = JsonSchemaEmitter.Rewriter(new JsonSchemaOptions { Target = profile });
+
+    private readonly System.Collections.Generic.Dictionary<SchemaNode, SchemaNode> _emitted = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private int _visits;
 
@@ -66,7 +70,7 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
         if (requiredAll)
         {
-            new ModelOutputAdapter(root).Visit(value, root, 0);
+            new ModelOutputAdapter(root, emitted.Target ?? JsonSchemaProfile.Draft202012).Visit(value, root, 0);
         }
 
         return ToElement(value);
@@ -152,14 +156,14 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     private static bool IsWrapper(JsonObject schema) =>
         schema["properties"] is JsonObject { Count: 1 } properties && properties.ContainsKey(Rewriters.RootWrapperProperty);
 
-    private static bool Matches(JsonNode? value, SchemaNode node) => value switch
+    private static bool Matches(JsonNode? value, SchemaNode node, SchemaNode emitted) => value switch
     {
-        JsonObject target => MatchesObject(target, node),
+        JsonObject target => MatchesObject(target, node, emitted),
         JsonArray => node.Types == JsonTypes.None || node.Types.HasFlag(JsonTypes.Array),
         _ => false,
     };
 
-    private static bool MatchesObject(JsonObject value, SchemaNode node)
+    private static bool MatchesObject(JsonObject value, SchemaNode node, SchemaNode emitted)
     {
         if (node.Types != JsonTypes.None && !node.Types.HasFlag(JsonTypes.Object))
         {
@@ -171,10 +175,10 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
             return false;
         }
 
-        // The profiles close what strips, so a model that keeps to the schema sends no property such a branch doesn't name, by name or by pattern.
-        if (node.Behavior.UnknownProperties is UnknownProperties.Reject or UnknownProperties.Strip
-            && node.AdditionalProperties is null
-            && value.Any(entry => node.Properties.All(property => property.Name != entry.Key) && !MatchesPattern(entry.Key, node)))
+        // Where the emitted branch is closed, a model that keeps to the schema sends no property it doesn't name, by name or by pattern.
+        if (emitted.Behavior.UnknownProperties == UnknownProperties.Reject
+            && emitted.AdditionalProperties is null
+            && value.Any(entry => emitted.Properties.All(property => property.Name != entry.Key) && !MatchesPattern(entry.Key, emitted)))
         {
             return false;
         }
@@ -207,6 +211,11 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     {
         JsonElement element = ToElement(value);
 
+        if (!HasAllowedType(element, node.Types))
+        {
+            return false;
+        }
+
         if (node.Const is { } constant && !JsonEquality.AreEqual(constant, element))
         {
             return element.ValueKind == JsonValueKind.Null;
@@ -214,6 +223,17 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
 
         return node.Enum.IsEmpty || element.ValueKind == JsonValueKind.Null || node.Enum.Any(item => JsonEquality.AreEqual(item, element));
     }
+
+    // Null passes, because the profile made optional properties nullable. Integer is read as number, which only lets more through.
+    private static bool HasAllowedType(JsonElement element, JsonTypes types) => types == JsonTypes.None || element.ValueKind switch
+    {
+        JsonValueKind.String => types.HasFlag(JsonTypes.String),
+        JsonValueKind.True or JsonValueKind.False => types.HasFlag(JsonTypes.Boolean),
+        JsonValueKind.Number => types.HasFlag(JsonTypes.Number) || types.HasFlag(JsonTypes.Integer),
+        JsonValueKind.Object => types.HasFlag(JsonTypes.Object),
+        JsonValueKind.Array => types.HasFlag(JsonTypes.Array),
+        _ => true,
+    };
 
     private void Visit(JsonNode? value, SchemaNode schema, int depth)
     {
@@ -298,7 +318,19 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
     }
 
     private SchemaNode? Select(JsonNode? value, ImmutableArray<SchemaNode> branches) =>
-        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, Flattened(resolved, 0)));
+        branches.FirstOrDefault(branch => Resolve(branch) is { } resolved && Matches(value, Flattened(resolved, 0), Emitted(resolved)));
+
+    /// <summary>The branch as the profile emitted it, which is what the model kept to.</summary>
+    private SchemaNode Emitted(SchemaNode node)
+    {
+        if (!_emitted.TryGetValue(node, out SchemaNode? emitted))
+        {
+            emitted = _rewrite(node);
+            _emitted[node] = emitted;
+        }
+
+        return emitted;
+    }
 
     /// <summary>An <c>allOf</c> says what its branches say together, as the object the profile made of it does.</summary>
     private SchemaNode Flattened(SchemaNode node, int depth)
@@ -309,14 +341,12 @@ internal sealed class ModelOutputAdapter(SchemaNode root)
         }
 
         SchemaNode[] branches = [.. node.AllOf.Select(Resolve).OfType<SchemaNode>().Select(branch => Flattened(branch, depth + 1))];
-        bool closes = branches.Length == node.AllOf.Length && branches.All(branch => branch.Behavior.UnknownProperties != UnknownProperties.Allow && branch.PatternProperties.IsEmpty);
 
         return node with
         {
             Types = node.Types != JsonTypes.None ? node.Types : branches.FirstOrDefault(branch => branch.Types != JsonTypes.None)?.Types ?? JsonTypes.None,
             Properties = [.. node.Properties.Concat(branches.SelectMany(branch => branch.Properties)).DistinctBy(property => property.Name)],
             Required = [.. node.Required.Concat(branches.SelectMany(branch => branch.Required)).Distinct(StringComparer.Ordinal)],
-            Behavior = node.Behavior with { UnknownProperties = closes ? UnknownProperties.Strip : UnknownProperties.Allow },
         };
     }
 

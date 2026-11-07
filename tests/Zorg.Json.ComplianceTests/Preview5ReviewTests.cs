@@ -16,6 +16,14 @@ public sealed class Preview5ReviewTests
     private const string Draft07 = "\"$schema\":\"http://json-schema.org/draft-07/schema#\"";
 
     [Fact]
+    public void An_enum_that_repeats_a_value_is_written_with_each_once()
+    {
+        var schema = Z.FromJsonSchema("""{"enum":[[1,"a",null],[1.0,"a",null],2,2]}""");
+
+        Assert.Equal("""[[1,"a",null],2]""", schema.ToJsonSchema()["enum"]!.ToJsonString());
+    }
+
+    [Fact]
     public void A_document_with_a_reference_at_its_root_reads_its_own_pointers()
     {
         JsonValueSchema schema = Z.FromJsonSchema(

@@ -4,10 +4,18 @@
 
 **Breaking:** objects now accept unknown properties and remove them from the result, instead of rejecting them. This is `Z.Object()` and `Schema.Object(...)`. It matches `z.object()` in Zod and the default of System.Text.Json, and JSON Schema itself doesn't close objects unless asked. The input and output schemas no longer write `additionalProperties: false`. Call `.Strict()` on an object to keep the old behaviour. It applies to that object only. `JsonUnmappedMemberHandling.Disallow` closes a typed schema too, and with a `ReferenceHandler` unknown properties are kept, because `$id` and `$ref` belong to the serializer. Imported schemas are unchanged, and the LLM profiles that closed objects still do.
 
+What that means in practice:
+
+- `ValidateBody` in ASP.NET Core accepts a request with unknown fields and drops them, where it used to answer 400. The schemas in the OpenAPI document no longer write `additionalProperties: false`.
+- A misspelled optional property is removed without an error. `.Strict()` reports it.
+- A type with `[JsonExtensionData]` keeps unknown properties, as the serializer does.
+- `ParseModelOutput` chooses a branch by what the emitted schema allows, so a profile that doesn't close objects leaves the branches open.
+
 Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject what it accepted: two branches with only optional properties both match `{"a":1}`, which is `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches. For the same reason such a `oneOf` can be written as `anyOf` when a branch isn't exact, and a `Z.AnyOf` returns what its first matching branch keeps.
 
 - `Z.AllOf` now merges what its branches rewrite, as Zod does, and a property stays if any branch keeps it. It used to keep the last rewrite, so objects that strip lost each other's properties.
 - The LLM profiles turn a `Z.AllOf` of plain objects into one object before closing it. Anything else there gets a diagnostic, because closed objects reject each other's properties.
+- An `enum` is written with each value once, since strict validators refuse one that repeats a value.
 - `.Strip()` no longer writes `additionalProperties: false` to the output schema, and keeps a name that `DependentRequired` asks for.
 - A case variant of a property is no longer taken by `AdditionalProperties` or `PatternProperty`, which let it bind past the rules of the property.
 - A deep instance is no longer rejected under `$dynamicRef` or `$recursiveRef` beside `anyOf`, `oneOf` and `unevaluated*`. Finding what was evaluated doubled with the depth there and ran out of steps at about 13 levels.
@@ -17,7 +25,7 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - `contains` beside `unevaluatedItems` from a 2019-09 document now gets a diagnostic when it's written to 2020-12, where it's looser.
 - Added a source generator, in the `Zorg.Json` package. `[GenerateSchema(typeof(AppJson))]` on a partial type writes a static `Schema` property from its contract and its validation attributes: `[MinLength]`, `[MaxLength]`, `[Length]`, `[StringLength]`, `[Range]`, `[RegularExpression]`, `[EmailAddress]`, `[Url]`, `[Required]` and `[Description]`. What it writes is ordinary fluent code, so it works under Native AOT. An attribute it can't state is a warning, `ZORG0005`, and it refuses polymorphic types and types with a custom converter, `ZORG0007`. See the guide for how each attribute reads.
 - Added `JsonSchemaImportOptions.Documents`: other documents a `$ref` can reach, by URI. They're bundled into the schema as embedded resources, so nothing is fetched and the emitted schema needs nothing else.
-- `$dynamicRef` and `$dynamicAnchor` now work. They were refused with `unsupported_keyword`. They're written to 2020-12 and OpenAPI 3.1, and left out with a diagnostic where they can't work: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. They can't sit beside `$ref` in one schema object. A `$dynamicRef` that doesn't land on a `$dynamicAnchor` of its name is written as `$ref`, and inside a larger fluent schema dynamic keywords are left out, because the import shares a resource there.
+- `$dynamicRef` and `$dynamicAnchor` now work. They were refused with `unsupported_keyword`. They're written to 2020-12 and OpenAPI 3.1, and left out with a diagnostic where they can't work: draft-07, OpenAPI 3.0, with `ReferencePrefix`, and with rewriters. They can't sit beside `$ref` in one schema object. A `$dynamicRef` that doesn't land on a `$dynamicAnchor` of its name is written as `$ref`, and inside a larger fluent schema dynamic keywords are left out, because the import shares a resource there. `SchemaNode` has new `DynamicRef` and `DynamicAnchor` properties.
 - Added Draft 2019-09 import, including `$recursiveRef` and `$recursiveAnchor`, which are written as `$dynamicRef` and `$dynamicAnchor` when emitted.
 - Refused cases of the official suite dropped from 88 to 9 for 2020-12, and to 4 each for draft-07, draft-06 and draft-04. Draft 2019-09 refuses 9 of 2,204. What remains is a `$ref` to an official meta-schema and custom meta-schemas.
 

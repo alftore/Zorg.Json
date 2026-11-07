@@ -203,6 +203,13 @@ internal sealed class JsonSchemaEmitter
         };
     }
 
+    /// <summary>Rewrites subschemas as an emission with these options does, so that a reader of the emitted schema can tell what each one says.</summary>
+    internal static Func<SchemaNode, SchemaNode> Rewriter(JsonSchemaOptions options)
+    {
+        JsonSchemaEmitter emitter = new(options);
+        return node => emitter.Rewrite(node, isRoot: false);
+    }
+
     private SchemaNode Rewrite(SchemaNode node, bool isRoot)
     {
         SchemaNode result = node;
@@ -1472,8 +1479,34 @@ internal sealed class JsonSchemaEmitter
 
         if (!node.Enum.IsEmpty)
         {
-            schema["enum"] = ToArray(node.Enum);
+            // A repeated value adds nothing, and the specification asks for each once, so strict validators refuse a list that repeats one.
+            schema["enum"] = ToArray(Distinct(node.Enum));
         }
+    }
+
+    private static List<JsonElement> Distinct(ImmutableArray<JsonElement> values)
+    {
+        List<JsonElement> distinct = new(values.Length);
+        Dictionary<int, List<JsonElement>> byHash = [];
+
+        foreach (JsonElement value in values)
+        {
+            int hash = JsonEquality.Hash(value);
+
+            if (!byHash.TryGetValue(hash, out List<JsonElement>? same))
+            {
+                same = [];
+                byHash[hash] = same;
+            }
+
+            if (!same.Exists(other => JsonEquality.AreEqual(other, value)))
+            {
+                same.Add(value);
+                distinct.Add(value);
+            }
+        }
+
+        return distinct;
     }
 
     private void WriteNumbers(JsonObject schema, SchemaNode node)
