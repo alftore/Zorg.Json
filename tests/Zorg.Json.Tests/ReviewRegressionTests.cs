@@ -374,6 +374,42 @@ public sealed class ReviewRegressionTests
         Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<ValueOwner>().SafeParse("""{ "items": [1] }""")));
     }
 
+    private sealed class Observed
+    {
+        [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
+        public System.Collections.ObjectModel.ObservableCollection<string> Items { get; } = [];
+    }
+
+    [Fact]
+    public void A_get_only_property_sent_in_is_refused_with_names_that_keep_case()
+    {
+        Assert.Equal(IssueCodes.UnrecognizedKeys, Code(Schema.Object<Observed>(new JsonSerializerOptions()).SafeParse("""{ "Items": ["x"] }""")));
+    }
+
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    private sealed class Chain
+    {
+        public int V { get; set; }
+
+        public Chain? Next { get; set; }
+
+        public int Double => V * 2;
+    }
+
+    [Fact]
+    public void An_instance_validates_with_computed_properties_inside_a_nullable_named_type()
+    {
+        Assert.True(Schema.Object<Chain>().Validate(new Chain { V = 1, Next = new Chain { V = 2 } }).IsSuccess);
+    }
+
+    [Fact]
+    public void An_if_keeps_what_its_condition_knows()
+    {
+        JsonValueSchema schema = Z.If(Z.Object().Property("kind", Z.String()), Z.Object().Property("x", Z.Number()));
+
+        Assert.Equal("""{"kind":"a","x":1}""", schema.Parse("""{"kind":"a","x":1,"junk":2}""").GetRawText());
+    }
+
     private sealed class WithParameter(int a)
     {
         public int A { get; } = a;

@@ -7,6 +7,8 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.OpenApi;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Reader;
 using Zorg.Json.Emission;
@@ -59,9 +61,13 @@ public static class OpenApiOptionsExtensions
         {
             OpenApiDocument document = context.Document ?? throw new InvalidOperationException("The operation has no document.");
 
+            OpenApiSpecVersion version = context.ApplicationServices.GetService<IOptionsMonitor<OpenApiOptions>>()?.Get(context.DocumentName).OpenApiVersion
+                ?? OpenApiSpecVersion.OpenApi3_1;
+            JsonSchemaProfile profile = version == OpenApiSpecVersion.OpenApi3_0 ? DowngradedProfile : Profile;
+
             foreach (EndpointSchemaMetadata metadata in context.Description.ActionDescriptor.EndpointMetadata.OfType<EndpointSchemaMetadata>())
             {
-                OpenApiSchema schema = Convert(metadata, document);
+                OpenApiSchema schema = Convert(metadata, document, profile);
 
                 if (metadata.Direction == SchemaDirection.Input)
                 {
@@ -99,13 +105,19 @@ public static class OpenApiOptionsExtensions
             response.Content[JsonContentType] = new OpenApiMediaType { Schema = schema };
         }
 
-        private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document)
+        // Microsoft.OpenApi has no prefixItems, and keeps a closing items: false without them, which refuses every tuple.
+        private static readonly JsonSchemaProfile Profile = JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems"));
+
+        // Writing 3.0, it moves patternProperties to an extension and keeps what closes the object, which then refuses those names.
+        private static readonly JsonSchemaProfile DowngradedProfile = JsonSchemaProfile.OpenApi31.With(Rewriters.RelocateToDescription("prefixItems", "patternProperties"));
+
+        private static OpenApiSchema Convert(EndpointSchemaMetadata metadata, OpenApiDocument document, JsonSchemaProfile profile)
         {
             string namePrefix = metadata.Direction == SchemaDirection.Output ? OutputPrefix : string.Empty;
 
             EmitResult emitted = metadata.Emit(new JsonSchemaOptions
             {
-                Target = JsonSchemaProfile.OpenApi31,
+                Target = profile,
                 Direction = metadata.Direction,
                 Reused = ReusedSchemaHandling.Ref,
                 ReferencePrefix = ComponentPrefix + namePrefix,

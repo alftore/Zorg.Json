@@ -34,12 +34,17 @@ internal static class OutputOnlyProperties
             node = target();
         }
 
-        if (value is JsonArray array && node.Items is { } items)
+        if (value is JsonArray array)
         {
-            foreach (JsonNode? item in array)
+            for (int index = 0; index < array.Count; index++)
             {
-                Strip(item, items);
+                if ((index < node.PrefixItems.Length ? node.PrefixItems[index] : node.Items) is { } item)
+                {
+                    Strip(array[index], item);
+                }
             }
+
+            StripOnlyObjectBranch(value, node);
         }
         else if (value is JsonObject obj)
         {
@@ -59,6 +64,26 @@ internal static class OutputOnlyProperties
             }
 
             StripBranch(obj, node);
+            StripOnlyObjectBranch(value, node);
+        }
+    }
+
+    /// <summary>A nullable named or polymorphic type is a union of the type and null, so its value is read through the one branch that takes it.</summary>
+    private static void StripOnlyObjectBranch(JsonNode value, SchemaNode node)
+    {
+        if (node.Behavior.Discriminator is not null)
+        {
+            return;
+        }
+
+        JsonTypes kind = value is JsonArray ? JsonTypes.Array : JsonTypes.Object;
+        SchemaNode[] takers = [.. node.AnyOf.Concat(node.OneOf)
+            .Select(branch => branch.Behavior.Target is { } target ? target() : branch)
+            .Where(branch => branch.Types.HasFlag(kind) || (kind == JsonTypes.Object && !branch.Properties.IsEmpty) || branch.Behavior.Discriminator is not null)];
+
+        if (takers.Length == 1)
+        {
+            Strip(value, takers[0]);
         }
     }
 

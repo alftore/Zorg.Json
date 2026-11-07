@@ -37,6 +37,9 @@ internal sealed class ValidationPlan
     private readonly FrozenDictionary<string, ValidationPlan> _properties;
     private readonly FrozenSet<string>? _namesIgnoringCase;
 
+    /// <summary>Properties only written, such as computed ones. The serializer may still fill some in place, so one sent in is refused rather than lost.</summary>
+    private readonly FrozenSet<string> _outputOnly;
+
     /// <summary>Names a rule asks for without declaring them. Stripping one would leave a result that breaks the rule it passed.</summary>
     private readonly FrozenSet<string> _namedByRules;
     private readonly ImmutableArray<(string Name, Regex Pattern, ValidationPlan Plan)> _patternProperties;
@@ -101,6 +104,7 @@ internal sealed class ValidationPlan
         _itemsKeyword = node.Items is null ? "unevaluatedItems" : "items";
         _contains = Single(node.Contains);
         _properties = node.Properties.Where(property => !property.OutputOnly).ToFrozenDictionary(property => property.Name, property => Get(property.Schema, plans), StringComparer.Ordinal);
+        _outputOnly = node.Properties.Where(property => property.OutputOnly).Select(property => property.Name).ToFrozenSet(StringComparer.Ordinal);
         _namesIgnoringCase = node.Behavior.IgnoresNameCase
             ? node.Properties.Select(property => property.Name).ToFrozenSet(StringComparer.OrdinalIgnoreCase)
             : null;
@@ -914,6 +918,10 @@ internal sealed class ValidationPlan
                 {
                     (unknown ??= []).Add(name);
                 }
+                else if (_node.Behavior.UnknownProperties == UnknownProperties.Strip && _outputOnly.Contains(name))
+                {
+                    (unknown ??= []).Add(name);
+                }
                 else if (_node.Behavior.UnknownProperties == UnknownProperties.Strip && !_namedByRules.Contains(name))
                 {
                     keep = false;
@@ -1209,14 +1217,21 @@ internal sealed class ValidationPlan
         if (_if is not null)
         {
             ValidationContext fork = context.Fork();
-            _if.Run(value, fork);
-            ValidationPlan? branch = fork.HasIssues ? _else : _then;
+            JsonElement condition = _if.Run(value, fork);
+            bool passed = !fork.HasIssues;
+            ValidationPlan? branch = passed ? _then : _else;
 
             if (branch is not null)
             {
-                context.Walk(fork.HasIssues ? "else" : "then");
+                context.Walk(passed ? "then" : "else");
                 Keep(branch.Run(value, context));
                 context.Unwalk();
+
+                // A condition that held applies to the value too, so what it knows isn't stripped by the branch.
+                if (passed && rewritten && !context.Halted)
+                {
+                    result = Merge(value, condition, result, context, 0);
+                }
             }
         }
 

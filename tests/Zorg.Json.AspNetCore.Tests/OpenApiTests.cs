@@ -14,7 +14,7 @@ public sealed class OpenApiTests
 {
     private static readonly ObjectSchema<Person> People = PersonSchema.Create();
 
-    private static async Task<JsonElement> DocumentAsync(Action<WebApplication> map)
+    private static async Task<JsonElement> DocumentAsync(Action<WebApplication> map, Microsoft.OpenApi.OpenApiSpecVersion version = Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1)
     {
         await using TestApp app = await TestApp.StartAsync(
             a =>
@@ -22,7 +22,11 @@ public sealed class OpenApiTests
                 a.MapOpenApi();
                 map(a);
             },
-            services => services.AddOpenApi(options => options.AddEndpointSchemas()));
+            services => services.AddOpenApi(options =>
+            {
+                options.OpenApiVersion = version;
+                options.AddEndpointSchemas();
+            }));
 
         return JsonElement.Parse(await app.Client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
     }
@@ -47,6 +51,30 @@ public sealed class OpenApiTests
         Assert.False(schema.GetProperty("properties").GetProperty("name").TryGetProperty("minLength", out _));
         Assert.Equal(0, schema.GetProperty("properties").GetProperty("age").GetProperty("minimum").GetInt32());
         Assert.False(schema.TryGetProperty("$schema", out _));
+    }
+
+    [Theory]
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1)]
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0)]
+    public async Task A_tuple_is_not_closed_in_the_document(Microsoft.OpenApi.OpenApiSpecVersion version)
+    {
+        ObjectSchema schema = Z.Object().Property("t", Z.Tuple(Z.String(), Z.Integer()));
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/t", (JsonElement body) => "t").ValidateBody(schema), version);
+        JsonElement tuple = RequestSchema(document, "/t").GetProperty("properties").GetProperty("t");
+
+        Assert.False(tuple.TryGetProperty("items", out _));
+        Assert.Equal(2, tuple.GetProperty("minItems").GetInt32());
+    }
+
+    [Fact]
+    public async Task Pattern_properties_do_not_close_a_3_0_document()
+    {
+        ObjectSchema schema = Z.Object().Strict().PatternProperty("^x-", Z.String());
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/p", (JsonElement body) => "p").ValidateBody(schema), Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0);
+
+        Assert.False(RequestSchema(document, "/p").TryGetProperty("additionalProperties", out _));
     }
 
     [Fact]

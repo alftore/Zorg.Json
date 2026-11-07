@@ -56,7 +56,7 @@ internal sealed class ModelOutputAdapter(SchemaNode root, JsonSchemaProfile prof
 
         ImmutableArray<ISchemaRewriter> rewriters = emitted.Target?.Rewriters ?? [];
         bool requiredAll = rewriters.Contains(Rewriters.RequireAllAsNullable);
-        bool unwrap = rewriters.Contains(Rewriters.RequireObjectRoot) && !Rewriters.HasObjectRoot(root) && IsWrapper(emitted.Schema);
+        bool unwrap = Rewriters.WrapsRoot(root, rewriters) && IsWrapper(emitted.Schema);
 
         if (!unwrap && !requiredAll)
         {

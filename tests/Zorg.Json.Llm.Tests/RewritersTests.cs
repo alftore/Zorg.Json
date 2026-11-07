@@ -150,6 +150,16 @@ public sealed class RewritersTests
     }
 
     [Fact]
+    public void A_named_object_root_is_not_unwrapped_when_inlining_left_it_an_object()
+    {
+        JsonValueSchema schema = Z.Lazy("thing", () => Z.Object().Property("data", Z.String()));
+
+        ParseResult<JsonElement> result = schema.ParseModelOutput(schema.Emit(LlmProfiles.AnthropicStrict), """{"data":"x"}""");
+
+        Assert.Equal("""{"data":"x"}""", result.Value.GetRawText());
+    }
+
+    [Fact]
     public void A_coerced_property_sent_as_text_fits_its_branch()
     {
         ObjectSchema schema = Z.Object().Property("item", Z.AnyOf(

@@ -172,6 +172,27 @@ public static class Rewriters
         return node.Types == JsonTypes.Object && node.Ref is null && node.AnyOf.IsEmpty && node.OneOf.IsEmpty;
     }
 
+    /// <summary>Whether a profile wraps this root. Inlining first replaces a root reference with its target, which the wrapper then sees.</summary>
+    internal static bool WrapsRoot(SchemaNode root, ImmutableArray<ISchemaRewriter> rewriters)
+    {
+        int wrapping = rewriters.IndexOf(RequireObjectRoot);
+
+        if (wrapping < 0)
+        {
+            return false;
+        }
+
+        int inlining = rewriters.IndexOf(InlineOrRejectRecursion);
+        SchemaNode seen = root;
+
+        for (int hop = 0; inlining >= 0 && inlining < wrapping && hop < 32 && seen.Ref is not null && seen.Behavior.Target is { } target; hop++)
+        {
+            seen = target();
+        }
+
+        return !HasObjectRoot(seen);
+    }
+
     /// <summary>Tells whether a node accepts JSON <c>null</c>, looking only at its type keywords, unions and resolved references.</summary>
     /// <param name="node">The node.</param>
     /// <returns>Whether <c>null</c> passes. False for a <c>$ref</c> that can't be resolved.</returns>

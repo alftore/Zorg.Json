@@ -62,7 +62,7 @@ public static class LlmSchemaExtensions
             ?? profile.PostProcessors.OfType<CapabilityEnforcer>().FirstOrDefault()?.Capabilities
             ?? throw new ArgumentException("This profile has no capability table, so pass one.", nameof(capabilities));
 
-        bool wrapped = profile.Rewriters.Contains(Rewriters.RequireObjectRoot) && !Rewriters.HasObjectRoot(schema.ToNode());
+        bool wrapped = Rewriters.WrapsRoot(schema.ToNode(), profile.Rewriters);
         return new CompatibilityChecker(table, profile.Name).Check(schema.Emit(), schema.Emit(profile), wrapped);
     }
 

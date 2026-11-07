@@ -16,6 +16,10 @@ What that means in practice:
 
 Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject what it accepted: two branches with only optional properties both match `{"a":1}`, which is `invalid_union`. Use `Z.DiscriminatedUnion`, or `.Strict()` on the branches. For the same reason such a `oneOf` can be written as `anyOf` when a branch isn't exact, and a `Z.AnyOf` returns what its first matching branch keeps.
 
+- A property only written, such as a computed one, is refused when sent in, whatever the case options, so one the serializer would fill isn't lost.
+- `Z.If` keeps the properties its condition declares when the condition holds, as `Z.AllOf` does.
+- `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.
+- The OpenAPI document no longer closes a tuple: Microsoft.OpenApi has no `prefixItems`, so they move to the description. A 3.0 document moves `patternProperties` there too, because the downgrade would otherwise refuse those names.
 - `Z.AllOf` now merges what its branches rewrite, as Zod does, and a property stays if any branch keeps it. It used to keep the last rewrite, so objects that strip lost each other's properties.
 - The LLM profiles turn a `Z.AllOf` of plain objects into one object before closing it. Anything else there gets a diagnostic, because closed objects reject each other's properties.
 - An `enum` is written with each value once, since strict validators refuse one that repeats a value.
