@@ -20,6 +20,10 @@ Open objects don't exclude each other, so a `Z.OneOf` of objects can now reject 
 - `Z.If` keeps the properties its condition declares when the condition holds. Only the names: what the condition changed while testing, such as a `Trim`, stays out of the result.
 - `Z.If` keeps nested names its condition knows too, and an `if` whose condition changes the value is left out of the output schema with a diagnostic, as it already was from the input schema.
 - A `Named` OpenAPI component that would share a name with the framework's component for a .NET type throws, instead of silently using the framework's. Numbers past the range of `double` are left out of `const`, `enum`, `default` and `examples` there, because Microsoft.OpenApi wrote them as `Infinity`.
+- An `if` whose `then` or `else` changes the value is left out of the output schema, because the condition would be tested on the changed result.
+- `ValidateBody` passes a whole number past the range of `long`, such as `1e19` for a `ulong`, to the binder as plain digits.
+- The OpenAPI document leaves out a `multipleOf` that a `decimal` can't hold exactly, because Microsoft.OpenApi threw on it or rounded it.
+- The type error for a number names its type for every numeric type, such as `uint64`, where it was empty.
 - The OpenAPI document writes `const` as a one-value `enum` and boolean subschemas as `{}` and `{"not":{}}`, because Microsoft.OpenApi turned `3` into `"3"` and `false` into `null`.
 - `Validate` reads computed properties inside a nullable named or polymorphic type and inside tuple items, so a type that disallows unknown properties accepts its own instances.
 - The OpenAPI document no longer closes a tuple: Microsoft.OpenApi has no `prefixItems`, so they move to the description. A 3.0 document moves `patternProperties` there too, because the downgrade would otherwise refuse those names.

@@ -42,6 +42,18 @@ public sealed class ValidateBodyTests
     }
 
     [Fact]
+    public async Task A_whole_number_past_long_reaches_the_binder_as_plain_digits()
+    {
+        await using TestApp app = await TestApp.StartAsync(a => a
+            .MapPost("/u", ([FromBody] JsonElement body) => body.GetProperty("u").GetRawText())
+            .ValidateBody(Z.Object().Property("u", Z.Number<ulong>())));
+
+        HttpResponseMessage response = await app.PostJsonAsync("/u", """{ "u": 1e19 }""");
+
+        Assert.Contains("10000000000000000000", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Plain_parameter_sees_normalization_and_defaults()
     {
         await using TestApp app = await PeopleAppAsync();

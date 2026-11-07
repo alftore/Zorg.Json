@@ -143,10 +143,28 @@ public static class OpenApiOptionsExtensions
                     node = node with { Examples = [] };
                 }
 
+                // It holds multipleOf as a decimal, which throws past its range and rounds past 28 digits. Without it the
+                // schema is only looser.
+                if (node.MultipleOf is { } divisor && !FitsDecimal(divisor))
+                {
+                    node = node with { MultipleOf = null };
+                }
+
                 // Beside an enum, the enum alone is only looser.
                 return node.Const is { } constant
                     ? node with { Const = null, Enum = node.Enum.IsEmpty ? [constant] : node.Enum }
                     : node;
+            }
+
+            private static bool FitsDecimal(System.Text.Json.JsonElement value)
+            {
+                string text = value.GetRawText();
+                int exponentAt = text.IndexOfAny(['e', 'E']);
+                string mantissa = (exponentAt < 0 ? text : text[..exponentAt]).TrimStart('-').Replace(".", string.Empty, StringComparison.Ordinal).Trim('0');
+
+                return mantissa.Length <= 28
+                    && value.TryGetDecimal(out decimal number)
+                    && number != 0;
             }
 
             private static bool IsPastDouble(System.Text.Json.JsonElement value) => value.ValueKind switch

@@ -124,6 +124,19 @@ public sealed class OpenApiTests
     }
 
     [Fact]
+    public async Task A_multipleOf_a_decimal_cannot_hold_is_left_out()
+    {
+        ObjectSchema schema = Z.Object().Property("big", Z.Number().MultipleOf(1e30)).Property("tiny", Z.Number().MultipleOf(1e-30)).Property("ok", Z.Number().MultipleOf(0.5));
+
+        JsonElement document = await DocumentAsync(a => a.MapPost("/m", (JsonElement body) => "m").ValidateBody(schema));
+        JsonElement properties = RequestSchema(document, "/m").GetProperty("properties");
+
+        Assert.False(properties.GetProperty("big").TryGetProperty("multipleOf", out _));
+        Assert.False(properties.GetProperty("tiny").TryGetProperty("multipleOf", out _));
+        Assert.Equal(0.5, properties.GetProperty("ok").GetProperty("multipleOf").GetDouble());
+    }
+
+    [Fact]
     public async Task Pattern_properties_do_not_close_a_3_0_document()
     {
         ObjectSchema schema = Z.Object().Strict().PatternProperty("^x-", Z.String());

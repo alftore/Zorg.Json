@@ -1803,6 +1803,16 @@ internal sealed class JsonSchemaEmitter
             {
                 UnsupportedBecause("if", cause, $"{location}/if", notes, location);
             }
+
+            // On output the condition is tested on the result, which a Trim or default in a branch may have changed.
+            else if (!IsInput && node.If is not null && node.Then is not null && !_exactness.IsExact(node.Then, out cause))
+            {
+                UnsupportedBecause("if", cause, $"{location}/then", notes, location);
+            }
+            else if (!IsInput && node.If is not null && node.Else is not null && !_exactness.IsExact(node.Else, out cause))
+            {
+                UnsupportedBecause("if", cause, $"{location}/else", notes, location);
+            }
             else
             {
                 WriteSingle(schema, "if", node.If, location);

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -219,6 +220,11 @@ public static class ValidationEndpointExtensions
                 {
                     writer.WriteNumberValue((long)number);
                 }
+                else if (WholeDigits(element) is { } digits)
+                {
+                    // Past long, such as 1e19 for a ulong, the binder reads only plain digits.
+                    writer.WriteRawValue(digits, skipInputValidation: true);
+                }
                 else
                 {
                     element.WriteTo(writer);
@@ -230,6 +236,34 @@ public static class ValidationEndpointExtensions
                 element.WriteTo(writer);
                 break;
         }
+    }
+
+    /// <summary>A whole number written with a fraction or an exponent, as plain digits, or null for any other number.</summary>
+    private static string? WholeDigits(JsonElement element)
+    {
+        const int MaxDigits = 400;
+        string text = element.GetRawText();
+        int exponentAt = text.IndexOfAny(['e', 'E']);
+        string mantissa = exponentAt < 0 ? text : text[..exponentAt];
+
+        if (!int.TryParse(exponentAt < 0 ? "0" : text[(exponentAt + 1)..], System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out int exponent))
+        {
+            return null;
+        }
+
+        bool negative = mantissa.StartsWith('-');
+        string unsigned = negative ? mantissa[1..] : mantissa;
+        int point = unsigned.IndexOf('.', StringComparison.Ordinal);
+        string digits = point < 0 ? unsigned : string.Concat(unsigned.AsSpan(0, point), unsigned.AsSpan(point + 1));
+        int whole = (point < 0 ? unsigned.Length : point) + exponent;
+
+        if (whole < 1 || whole > MaxDigits || digits[Math.Min(whole, digits.Length)..].Any(digit => digit != '0'))
+        {
+            return null;
+        }
+
+        string integral = (whole <= digits.Length ? digits[..whole] : digits.PadRight(whole, '0')).TrimStart('0');
+        return integral.Length == 0 ? "0" : negative ? "-" + integral : integral;
     }
 
     // The original bytes won't do: the framework's binder would fail on input the schema accepts, such as a

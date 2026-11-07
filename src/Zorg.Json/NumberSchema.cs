@@ -185,7 +185,14 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
                     : typeof(TNumber) == typeof(long) ? "int64"
                     : typeof(TNumber) == typeof(float) ? "float"
                     : typeof(TNumber) == typeof(double) ? "double"
-                    : string.Empty,
+                    : typeof(TNumber) == typeof(byte) ? "uint8"
+                    : typeof(TNumber) == typeof(sbyte) ? "int8"
+                    : typeof(TNumber) == typeof(short) ? "int16"
+                    : typeof(TNumber) == typeof(ushort) ? "uint16"
+                    : typeof(TNumber) == typeof(uint) ? "uint32"
+                    : typeof(TNumber) == typeof(ulong) ? "uint64"
+                    : typeof(TNumber) == typeof(decimal) ? "decimal"
+                    : typeof(TNumber).Name,
             },
         };
     }

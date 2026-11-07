@@ -16,9 +16,26 @@ internal static class OutputOnlyProperties
 
     public static JsonElement Remove(JsonElement element, SchemaNode node)
     {
-        JsonNode? root = JsonNode.Parse(element.GetRawText());
+        // The element came from the serializer, which may allow more depth than the default.
+        JsonDocumentOptions deep = new() { MaxDepth = int.MaxValue };
+        JsonNode? root = JsonNode.Parse(element.GetRawText(), documentOptions: deep);
         Strip(root, node);
-        return JsonElement.Parse(root?.ToJsonString() ?? "null");
+
+        System.Buffers.ArrayBufferWriter<byte> buffer = new();
+
+        using (Utf8JsonWriter writer = new(buffer, new JsonWriterOptions { MaxDepth = int.MaxValue }))
+        {
+            if (root is null)
+            {
+                writer.WriteNullValue();
+            }
+            else
+            {
+                root.WriteTo(writer);
+            }
+        }
+
+        return JsonElement.Parse(buffer.WrittenSpan, deep);
     }
 
     private static bool Any(SchemaNode node, HashSet<object> visited) =>

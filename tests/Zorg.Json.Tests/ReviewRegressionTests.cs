@@ -439,6 +439,23 @@ public sealed class ReviewRegressionTests
     }
 
     [Fact]
+    public void An_if_whose_branch_rewrites_is_left_out_of_the_output_schema()
+    {
+        JsonValueSchema schema = Z.If(Z.Object().Property("s", Z.String().MinLength(3)), Z.Object().Property("s", Z.String().Trim()), Z.Never());
+
+        Assert.Null(schema.ToJsonSchema(new() { Direction = SchemaDirection.Output })["if"]);
+        Assert.NotNull(schema.ToJsonSchema()["if"]);
+    }
+
+    [Fact]
+    public void An_unnamed_number_type_is_named_in_its_message()
+    {
+        string message = Assert.Single(Z.Number<ulong>().SafeParse("1.5").Issues).Message;
+
+        Assert.Contains("uint64", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void An_if_keeps_a_nested_name_its_condition_knows()
     {
         JsonValueSchema schema = Z.If(
