@@ -2,7 +2,7 @@
 
 One fluent C# definition that validates raw JSON with precise error paths, gives you a typed result, and emits JSON Schema you can serve from an API. Inspired by Zod, idiomatic in .NET, depends only on System.Text.Json, and works with Native AOT.
 
-This is a preview, and the API may change.
+This is a 0.x release, so the API can still change before 1.0. Breaking changes are listed in the [changelog](https://github.com/alftore/Zorg.Json/blob/main/CHANGELOG.md).
 
 ```csharp
 public sealed record Person(string Name, string? Nickname, int Age);
