@@ -76,6 +76,7 @@ JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenA
 - [ASP.NET Core](docs/aspnetcore.md)
 - [LLM structured output](docs/llm.md)
 - [Importing JSON Schema](docs/import.md)
+- [Known limits](docs/limits.md)
 
 ## Conformance
 
@@ -97,7 +98,7 @@ Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthrop
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Local scratch files go in `.tmp/`, which is gitignored.
+Issues are welcome. Pull requests are open to the maintainer only. See [CONTRIBUTING.md](CONTRIBUTING.md) for why, and for how to build and test.
 
 ## License
 

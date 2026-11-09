@@ -5,3 +5,4 @@
 - [Import](import.md): reading existing JSON Schema documents.
 - [ASP.NET Core](aspnetcore.md): request validation, serving schemas and OpenAPI.
 - [LLM](llm.md): structured output profiles for OpenAI, Anthropic and Gemini.
+- [Known limits](limits.md): what doesn't work yet, or works differently than you might expect.

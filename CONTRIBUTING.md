@@ -1,11 +1,19 @@
 # Contributing
 
+## Issues and pull requests
+
+Issues are welcome: bug reports, feature requests and questions about the documentation. Please use one of the issue forms. A bug report with a minimal schema and input usually gets fixed fastest.
+
+Pull requests are open to the maintainer only. That keeps one person responsible for every change, its tests and its signed history. If you have a fix in mind, describe it or paste the patch in the issue, and it will be credited in the changelog.
+
+Report security problems privately, as [SECURITY.md](SECURITY.md) describes, not in an issue.
+
 ## Build and test
 
 You need the .NET SDK version in `global.json`. The compliance tests need the JSON Schema Test Suite submodule.
 
 ```
-git clone --recurse-submodules <repository url>
+git clone --recurse-submodules https://github.com/alftore/Zorg.Json.git
 git submodule update --init      # if you've already cloned without it
 
 dotnet build Zorg.Json.slnx

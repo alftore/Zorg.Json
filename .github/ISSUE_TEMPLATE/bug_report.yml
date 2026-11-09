@@ -1,0 +1,65 @@
+name: Bug report
+description: Something parses, validates or emits the wrong result, or throws.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check [the known limits](https://github.com/alftore/Zorg.Json/blob/main/docs/limits.md) first. A small, complete example gets a fix fastest.
+  - type: input
+    id: version
+    attributes:
+      label: Zorg.Json version
+      description: The package version, and the version of any other Zorg.Json package involved.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: .NET version and OS
+      description: Say if you publish with Native AOT.
+      placeholder: .NET 10.0.1 on Windows 11, Native AOT
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Parsing or validation (SafeParse, Parse, Validate)
+        - Emitted JSON Schema (input or output)
+        - Importing JSON Schema (Z.FromJsonSchema)
+        - Typed schemas or the source generator
+        - LLM profiles or ParseModelOutput
+        - ASP.NET Core or OpenAPI
+        - Microsoft.Extensions.AI
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Schema and input
+      description: The C# schema definition (or the imported JSON Schema) and the JSON you parse. Keep it as small as you can.
+      render: csharp
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: The issues, the emitted schema, or the exception with its stack trace.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Another validator's verdict, the spec section, or a fix you have in mind.

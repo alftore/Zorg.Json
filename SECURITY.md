@@ -12,7 +12,7 @@ Please include the affected version, a way to reproduce it, and the impact you e
 
 ## How releases are protected
 
-- Nobody pushes to `main` directly. Changes arrive through reviewed pull requests with passing checks.
+- Nobody pushes to `main` directly, administrators included. Every change arrives through a pull request with signed commits and passing checks on Windows, Linux and Native AOT.
 - A release runs only from a `v*` tag on a commit that's on `main`, and it waits for approval in the `nuget` environment.
 - Packages are published with NuGet trusted publishing. There's no long-lived API key: each release gets a key that lasts one hour.
 - The job that publishes doesn't run repository code. The job that builds has no access to publishing credentials.
@@ -23,7 +23,7 @@ Please include the affected version, a way to reproduce it, and the impact you e
 Each release has a build provenance attestation for the packages it built. To check one, download the `packages` artifact from the release's workflow run and run:
 
 ```
-gh attestation verify Zorg.Json.<version>.nupkg --repo <owner>/Zorg.Json
+gh attestation verify Zorg.Json.<version>.nupkg --repo alftore/Zorg.Json
 ```
 
 This doesn't work on a `.nupkg` downloaded from nuget.org. nuget.org adds a repository signature to every package, so the file's digest no longer matches the attestation. Check those with `dotnet nuget verify` instead.

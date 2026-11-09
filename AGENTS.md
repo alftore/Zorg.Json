@@ -29,7 +29,7 @@ dotnet test --solution Zorg.Json.slnx --no-build
 - Commit messages and pull requests have no `Co-Authored-By` or "Generated with" lines. The README states that agents help build the library.
 - The compliance tests need `git submodule update --init --depth 1`.
 - Accept a snapshot by reading the `.received.` file, then renaming it to `.verified.`. Never bulk-accept without reading.
-- `.tmp/design/01-core-model.md` holds the agreed design, where it exists on your machine.
+- The maintainer keeps design notes in `.tmp/design/`, which is gitignored. Read `01-core-model.md` there if it exists on your machine.
 - Don't add the Verify package: its build requires a licence declaration. In tests use only JsonSchema.Net and `jv`, the command line of santhosh-tekuri/jsonschema, which runs outside the test process: set `ZORG_JV` to its path, or those tests are skipped. Never use Newtonsoft.Json.Schema.
 - The input guarantee is the rule that matters most: the input schema must never reject what `SafeParse` accepts. `StructuredGuaranteeTests` checks it against an independent validator, so add new features there. Leaving a rule out is only safe in positive positions: see `SchemaExactness`.
 - `SafeParse` must not throw for any input. `ReviewRegressionTests` holds the cases that once did. Catch around the parse or materialize call only, so that exceptions from a caller's refinement pass through.
