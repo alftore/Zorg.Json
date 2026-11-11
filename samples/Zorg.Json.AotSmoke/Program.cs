@@ -145,6 +145,14 @@ Check("a generated schema accepts", Generated.Schema.SafeParse("""{"name":"ann",
 Check("a generated schema applies MinLength", !Generated.Schema.SafeParse("""{"name":"","age":3}""").IsSuccess);
 Check("a generated schema applies Range", !Generated.Schema.SafeParse("""{"name":"ann","age":200}""").IsSuccess);
 
+#if NET11_0_OR_GREATER
+// .NET 11: C# unions and the new number types.
+foreach ((string name, bool passed) in Net11Smoke.Run())
+{
+    Check(name, passed);
+}
+
+#endif
 Console.WriteLine(failures == 0 ? "AOT smoke test passed" : $"AOT smoke test failed: {failures} check(s)");
 return failures == 0 ? 0 : 1;
 

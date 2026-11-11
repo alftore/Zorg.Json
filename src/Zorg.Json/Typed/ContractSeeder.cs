@@ -106,6 +106,12 @@ internal sealed class ContractSeeder
         _ when type == typeof(Int128) => NumberNode<Int128>(),
         _ when type == typeof(UInt128) => NumberNode<UInt128>(),
         _ when type == typeof(Half) => NumberNode<Half>(),
+#if NET11_0_OR_GREATER
+        _ when type == typeof(System.Numerics.BFloat16) => NumberNode<System.Numerics.BFloat16>(),
+        _ when type == typeof(System.Numerics.Decimal32) => NumberNode<System.Numerics.Decimal32>(),
+        _ when type == typeof(System.Numerics.Decimal64) => NumberNode<System.Numerics.Decimal64>(),
+        _ when type == typeof(System.Numerics.Decimal128) => NumberNode<System.Numerics.Decimal128>(),
+#endif
         _ when type == typeof(Guid) => Scalar(JsonTypes.String, "uuid"),
         _ when type == typeof(DateTimeOffset) => Scalar(JsonTypes.String, "date-time"),
         _ when type == typeof(DateTime) => Scalar(JsonTypes.String),
@@ -143,6 +149,13 @@ internal sealed class ContractSeeder
             return EnumNode(target, typeInfo);
         }
 
+#if NET11_0_OR_GREATER
+        if (typeInfo.Kind == JsonTypeInfoKind.Union)
+        {
+            return Union(typeInfo);
+        }
+#endif
+
         return typeInfo.Kind switch
         {
             JsonTypeInfoKind.Enumerable => new SchemaNode { Types = JsonTypes.Array, Items = SeedElement(typeInfo.ElementType!) },
@@ -152,6 +165,44 @@ internal sealed class ContractSeeder
         };
     }
 
+#if NET11_0_OR_GREATER
+    /// <summary>
+    /// A C# union: any of its cases. The serializer picks the case from the JSON as written, by token kind or, with a
+    /// classifier, by the names at the root of an object. So the root of each case keeps unknown properties rather than
+    /// stripping them, and what reaches the serializer is what it would have read on its own.
+    /// </summary>
+    private SchemaNode Union(JsonTypeInfo typeInfo)
+    {
+        ImmutableArray<SchemaNode>.Builder branches = ImmutableArray.CreateBuilder<SchemaNode>(typeInfo.UnionCases.Count);
+
+        foreach (JsonUnionCaseInfo unionCase in typeInfo.UnionCases)
+        {
+            SchemaNode branch = Seed(unionCase.CaseType);
+
+            if (branch == AnyValue)
+            {
+                return AnyValue;
+            }
+
+            branch = KeepsUnknownAtRoot(branch);
+            branches.Add(unionCase.IsNullable || Nullable.GetUnderlyingType(unionCase.CaseType) is not null ? branch.WithNull() : branch);
+        }
+
+        return branches.Count == 0 ? AnyValue : new SchemaNode { AnyOf = branches.ToImmutable() };
+    }
+
+    /// <summary>Allows unknown properties where the node would strip them, at its root and in the branches of a polymorphic type.</summary>
+    private static SchemaNode KeepsUnknownAtRoot(SchemaNode node)
+    {
+        if (node.Behavior.UnknownProperties == UnknownProperties.Strip)
+        {
+            node = node with { Behavior = node.Behavior with { UnknownProperties = UnknownProperties.Allow } };
+        }
+
+        return node.OneOf.IsEmpty ? node : node with { OneOf = [.. node.OneOf.Select(KeepsUnknownAtRoot)] };
+    }
+
+#endif
     private SchemaNode SeedElement(Type type)
     {
         SchemaNode node = Seed(type);

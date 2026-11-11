@@ -31,11 +31,11 @@ dotnet test --solution Zorg.Json.slnx -c Release --no-build --coverage --coverag
 
 ## AOT smoke test
 
-`samples/Zorg.Json.AotSmoke` checks that the core works under Native AOT. CI fails on any IL2xxx or IL3xxx warning, or if a result is wrong. To run it yourself:
+`samples/Zorg.Json.AotSmoke` checks that the core works under Native AOT. It has a `net10.0` and a `net11.0` build, and the second also checks C# unions and the new number types; pass `-f` to pick one. CI fails on any IL2xxx or IL3xxx warning, or if a result is wrong. To run it yourself:
 
 ```
-dotnet publish samples/Zorg.Json.AotSmoke -r win-x64 -c Release
-samples/Zorg.Json.AotSmoke/bin/Release/net10.0/win-x64/publish/Zorg.Json.AotSmoke.exe
+dotnet publish samples/Zorg.Json.AotSmoke -f net11.0 -r win-x64 -c Release
+samples/Zorg.Json.AotSmoke/bin/Release/net11.0/win-x64/publish/Zorg.Json.AotSmoke.exe
 ```
 
 `samples/Zorg.Json.AspNetCore.AotSmoke` does the same for the ASP.NET Core packages, over real HTTP, and is published and run the same way. It catches failures that a clean publish doesn't, because a missing JSON contract only shows up at run time.

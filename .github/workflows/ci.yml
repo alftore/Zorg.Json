@@ -96,18 +96,23 @@ jobs:
 
       # The explicit shell turns on pipefail, so a failed publish isn't hidden by tee.
       # The grep is a second gate that keeps working if the warnings stop being errors.
+      # The core sample has a net10.0 and a net11.0 build; the second also checks C# unions and the new number types.
       - name: Publish
         shell: bash
         run: |
-          dotnet publish samples/Zorg.Json.AotSmoke -r linux-x64 -c Release -o "$RUNNER_TEMP/aot" | tee "$RUNNER_TEMP/publish.log"
-          if grep -E '\bIL[23][0-9]{3}\b' "$RUNNER_TEMP/publish.log"; then
-            echo "::error::The publish reported trim or AOT warnings."
-            exit 1
-          fi
+          for framework in net10.0 net11.0; do
+            dotnet publish samples/Zorg.Json.AotSmoke -f "$framework" -r linux-x64 -c Release -o "$RUNNER_TEMP/aot-$framework" | tee "$RUNNER_TEMP/publish-$framework.log"
+            if grep -E '\bIL[23][0-9]{3}\b' "$RUNNER_TEMP/publish-$framework.log"; then
+              echo "::error::The $framework publish reported trim or AOT warnings."
+              exit 1
+            fi
+          done
 
       - name: Run
         shell: bash
-        run: '"$RUNNER_TEMP/aot/Zorg.Json.AotSmoke"'
+        run: |
+          "$RUNNER_TEMP/aot-net10.0/Zorg.Json.AotSmoke"
+          "$RUNNER_TEMP/aot-net11.0/Zorg.Json.AotSmoke"
 
       - name: Publish ASP.NET Core
         shell: bash

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 (not released)
+
+For .NET 11. `Zorg.Json` now has a `net11.0` build, which reads what System.Text.Json 11 added. Nothing changes on .NET 10.
+
+- **C# 15 unions:** a property of a union type, such as `union Pet(Cat, Dog)`, becomes `anyOf` of its cases, with `null` added to a nullable case. It used to accept any value. The value reaches the serializer as written, so its classifier picks the same case as without Zorg. A union the serializer can't read, such as two object cases without `JsonUnionTypeStructuralClassifier`, fails with `deserialization_failed`.
+- **New number types:** `BFloat16`, `Decimal32`, `Decimal64` and `Decimal128` are numbers in typed schemas and with `Z.Number<T>()`. `BFloat16` states its range, as `Half` does.
+- `closed` class hierarchies with `InferClosedTypePolymorphism`, `IReadOnlySet<T>`, extension data in an `IReadOnlyDictionary` or a `JsonObject`, and `[JsonNamingPolicy]` on a member already worked through the contract. They're now covered by tests.
+
 ## 0.1.1
 
 - **Fixed:** `Zorg.Json.AspNetCore.OpenApi` failed on ASP.NET Core 11. With version 11 of `Microsoft.AspNetCore.OpenApi`, which uses `Microsoft.OpenApi` 3.x, building the OpenAPI document threw `MissingMethodException`. The package now has a build for .NET 10, against `Microsoft.AspNetCore.OpenApi` 10, and one for .NET 11, against version 11. On .NET 11, the OpenAPI 3.2 document that ASP.NET Core 11 writes by default gets the same schemas as a 3.1 document. On 0.1.0 the workaround is to keep `Microsoft.AspNetCore.OpenApi` at 10.0.x.
