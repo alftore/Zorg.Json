@@ -16,7 +16,7 @@ Please include the affected version, a way to reproduce it, and the impact you e
 - A release runs only from a `v*` tag on a commit that's on `main`, and it waits for approval in the `nuget` environment.
 - Packages are published with NuGet trusted publishing. There's no long-lived API key: each release gets a key that lasts one hour.
 - The job that publishes doesn't run repository code. The job that builds has no access to publishing credentials.
-- Every GitHub Action is pinned to a full commit SHA. Dependabot proposes updates after a 7-day cooldown.
+- Every GitHub Action, and every action it uses in turn, is locked in `.github/workflows/actions.lock`: the commit that runs, and the IDs of the repository it must come from. A moved tag, or a commit that isn't on the tag in the action's own repository, is rejected at run time. Dependabot proposes updates after a 7-day cooldown.
 
 ## Verifying a package
 

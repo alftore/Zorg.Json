@@ -1,6 +1,7 @@
 version: 2
 
 updates:
+  # Dependabot also updates .github/workflows/actions.lock in the same pull request.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -21,3 +22,7 @@ updates:
     groups:
       nuget:
         patterns: ['*']
+    ignore:
+      # The source generator is built against the oldest compiler it supports. A newer Roslyn would stop it loading in
+      # earlier .NET 10 SDKs and Visual Studio versions (CS9057), so this is raised by hand when the generator needs it.
+      - dependency-name: Microsoft.CodeAnalysis.CSharp
