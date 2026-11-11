@@ -62,6 +62,7 @@ A property whose type also has `[GenerateSchema]` with the same context uses tha
 - The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. A polymorphic type, or one with a custom converter, has JSON its properties don't describe. All of these are compile errors.
 - **Presence and null** come from the contract, as in every typed schema: `required`, `[JsonRequired]`, or a constructor parameter with no default. `[Required]` on anything else, or on something nullable, gets a warning, `ZORG0006`.
 - An attribute that can't be stated gets a warning, `ZORG0005`, and isn't checked. That covers `[CreditCard]`, `[Range]` on a date or one nothing can meet, a rule on a field, on a parameter of a class, on a property with a converter, and on a shape the fluent API has no overload for, such as `bool?`. Add it with `.Property(...)` or `.Refine(...)`.
+- **Async validation** (.NET 11), `AsyncValidationAttribute` or `IAsyncValidatableObject`, gets `ZORG0005` too, and the generator doesn't turn it into `RefineAsync`. Such a check usually needs services and the finished object from its `ValidationContext`, which a check on a value still being parsed doesn't have. It still runs where it was written for: in `Validator.ValidateObjectAsync`, and in ASP.NET Core's validation after binding, also behind `ValidateBody`. To check it while parsing, write the refinement yourself, as in [Async checks that need services](#async-checks-that-need-services).
 - Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too, though `Validator` wouldn't.
 - The schema checks JSON, so it differs from `Validator` in a few ways by design. It checks nested types with their own schemas, a `[Range]` on an absent property isn't checked, and a `[Range(int, int)]` on a `double` is exact where `Validator` rounds.
 - Under Native AOT, .NET marks `[MinLength]`, `[MaxLength]` and `[Length]` themselves as needing reflection, so using them gives a trim warning, whatever reads them. For text, `[StringLength]` says the same without it.
@@ -293,6 +294,22 @@ PersonSchema.Refine(p => p.Age >= 18 || p.Nickname is null, "Minors cannot have 
 
 Z.String().RefineAsync(users.IsFreeAsync, "This name is taken");   // needs SafeParseAsync
 ```
+
+### Async checks that need services
+
+A refinement gets the value and a cancellation token, not a `ValidationContext`. A check that needs a service, such as a database, takes it the usual way: build the schema where the service is available, such as in a class that receives it through its constructor, and capture it in the lambda. The class mustn't outlive the service: a scoped `DbContext` belongs in a scoped class, not a singleton.
+
+```csharp
+public sealed class SignupSchemas(IUserStore users)
+{
+    public ObjectSchema<Signup> ForSignup { get; } = Signup.Schema
+        .Property(s => s.UserName, name => name.RefineAsync(
+            async (value, cancellationToken) => !await users.ExistsAsync(value, cancellationToken),
+            "This name is taken"));
+}
+```
+
+Parse with `SafeParseAsync`, which runs async refinements. `SafeParse` throws an `InvalidOperationException` when it reaches one, rather than skipping it.
 
 Don't put `RefineAsync` inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`. These decide before async checks run, and they count an async check as passed. So `Contains` can accept a value the check would refuse, and `AnyOf` can reject a value another branch would accept. Put `RefineAsync` on the outer schema instead.
 

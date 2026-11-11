@@ -77,6 +77,11 @@ internal static class TypeReader
             findings.Add(new Finding(Descriptors.NotApplied.Id, $"IValidatableObject on '{type.Name}' can't be stated in the schema", location));
         }
 
+        if (type.AllInterfaces.Any(candidate => candidate.ToDisplayString() == Annotations + "IAsyncValidatableObject"))
+        {
+            findings.Add(new Finding(Descriptors.NotApplied.Id, $"IAsyncValidatableObject on '{type.Name}' can't be stated in the schema. {RunsElsewhere}", location));
+        }
+
         ReportConstructorAttributes(type, findings);
         HashSet<string> seen = new(StringComparer.Ordinal);
 
@@ -413,7 +418,28 @@ internal static class TypeReader
     private static bool IsRule(AttributeData attribute) => IsValidation(attribute) || NameOf(attribute) == "System.ComponentModel.DescriptionAttribute";
 
     private static Finding Skipped(AttributeData attribute, string name, Location? location) =>
-        new(Descriptors.NotApplied.Id, $"[{attribute.AttributeClass?.Name}] on '{name}' can't be stated in the schema", location);
+        new(Descriptors.NotApplied.Id, IsAsync(attribute)
+            ? $"[{attribute.AttributeClass?.Name}] on '{name}' is async validation, which the schema can't state. {RunsElsewhere}"
+            : $"[{attribute.AttributeClass?.Name}] on '{name}' can't be stated in the schema", location);
+
+    /// <summary>
+    /// Async validation usually needs the finished object and services from the <c>ValidationContext</c>, which a refinement on a
+    /// value being parsed doesn't have, so it isn't turned into one.
+    /// </summary>
+    private const string RunsElsewhere = "It still runs in Validator.ValidateObjectAsync, and in ASP.NET Core's validation after binding. To check it while parsing, add RefineAsync by hand.";
+
+    private static bool IsAsync(AttributeData attribute)
+    {
+        for (INamedTypeSymbol? current = attribute.AttributeClass; current is not null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() == Annotations + "AsyncValidationAttribute")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>What a property's type allows the generated code to say.</summary>
     private sealed record Shape(string Kind, bool CanConfigure, ITypeSymbol? Number, ITypeSymbol? Nested, bool NestedIsItem, bool IsNullable);

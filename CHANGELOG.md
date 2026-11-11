@@ -6,6 +6,7 @@ For .NET 11. `Zorg.Json` now has a `net11.0` build, which reads what System.Text
 
 - **C# 15 unions:** a property of a union type, such as `union Pet(Cat, Dog)`, becomes `anyOf` of its cases, with `null` added to a nullable case. It used to accept any value. The value reaches the serializer as written, so its classifier picks the same case as without Zorg. A union the serializer can't read, such as two object cases without `JsonUnionTypeStructuralClassifier`, fails with `deserialization_failed`.
 - **New number types:** `BFloat16`, `Decimal32`, `Decimal64` and `Decimal128` are numbers in typed schemas and with `Z.Number<T>()`. `BFloat16` states its range, as `Half` does.
+- The source generator reports .NET 11 async validation, `AsyncValidationAttribute` and `IAsyncValidatableObject`, with `ZORG0005`, saying where it still runs. It doesn't turn it into `RefineAsync`, because such a check usually needs services and the finished object from its `ValidationContext`. The guide shows how to write the refinement with the service captured.
 - `closed` class hierarchies with `InferClosedTypePolymorphism`, `IReadOnlySet<T>`, extension data in an `IReadOnlyDictionary` or a `JsonObject`, and `[JsonNamingPolicy]` on a member already worked through the contract. They're now covered by tests.
 
 ## 0.1.1

@@ -132,6 +132,40 @@ public sealed class DiagnosticsTests
         Assert.Contains(found, diagnostic => diagnostic.Id == id);
     }
 
+    // The tests run on .NET 10, which doesn't have the .NET 11 types, so they're declared here with the same names.
+    private const string AsyncTypes = """
+
+        namespace System.ComponentModel.DataAnnotations
+        {
+            public abstract class AsyncValidationAttribute : ValidationAttribute;
+
+            public interface IAsyncValidatableObject;
+        }
+
+        public sealed class UniqueAttribute : AsyncValidationAttribute;
+        """;
+
+    [Theory]
+    [InlineData("[GenerateSchema(typeof(C))] public partial record P([property: Unique] string A);", "[UniqueAttribute] on 'A' is async validation")]
+    [InlineData("[GenerateSchema(typeof(C))] public partial class P : IAsyncValidatableObject;", "IAsyncValidatableObject on 'P' can't be stated in the schema")]
+    public void Async_validation_is_reported_with_where_it_runs(string source, string start)
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run(source + Context + AsyncTypes);
+
+        Diagnostic reported = Assert.Single(found, diagnostic => diagnostic.Id == "ZORG0005");
+        string message = reported.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.StartsWith(start, message, StringComparison.Ordinal);
+        Assert.Contains("Validator.ValidateObjectAsync", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_synchronous_attribute_keeps_the_plain_message()
+    {
+        (ImmutableArray<Diagnostic> found, _) = Run("[GenerateSchema(typeof(C))] public partial record P([property: CreditCard] string A);" + Context);
+
+        Assert.DoesNotContain("async", Assert.Single(found, diagnostic => diagnostic.Id == "ZORG0005").GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_private_schema_on_a_base_needs_no_new_and_no_length_means_no_warning()
     {
