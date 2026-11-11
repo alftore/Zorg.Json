@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Json.Schema;
 using Zorg.Json.Emission;
@@ -194,18 +195,16 @@ internal static partial class ReferenceChecker
         void Fail(string kind, string detail, string? instance = null) =>
             failures.Add(new ReferenceFailure(kind, variant.Profile, variant.Name, detail, instance));
 
-        Stopwatch clock = Stopwatch.StartNew();
-        EmitResult? result = Emit(emit ?? @case.Probe.Emit, variant, Fail, counters, timeout ?? EmitTimeout);
+        EmitResult? result = Emit(emit ?? @case.Probe.Emit, variant, Fail, counters, timeout ?? EmitTimeout, out TimeSpan ran);
 
-        if (clock.Elapsed > (budget ?? EmitBudget) && failures.Count == 0)
+        if (ran > (budget ?? EmitBudget) && failures.Count == 0)
         {
             // A busy machine can pause any one run. Work that really blows up is slow every time.
-            clock.Restart();
-            _ = Emit(emit ?? @case.Probe.Emit, variant, static (_, _, _) => { }, null, timeout ?? EmitTimeout);
+            _ = Emit(emit ?? @case.Probe.Emit, variant, static (_, _, _) => { }, null, timeout ?? EmitTimeout, out ran);
 
-            if (clock.Elapsed > (budget ?? EmitBudget))
+            if (ran > (budget ?? EmitBudget))
             {
-                Fail("d-emit-slow", $"{clock.Elapsed.TotalSeconds:F1} seconds for a small document");
+                Fail("d-emit-slow", $"{ran.TotalSeconds:F1} seconds for a small document");
             }
         }
 
@@ -349,9 +348,28 @@ internal static partial class ReferenceChecker
         }
     }
 
-    private static EmitResult? Emit(Func<JsonSchemaOptions, EmitResult> emit, ReferenceVariant variant, Action<string, string, string?> fail, ReferenceCounters? counters, TimeSpan timeout)
+    /// <remarks>
+    /// <paramref name="ran"/> is timed inside the task, so it leaves out the wait for a pool thread. The fuzzer's workers and the
+    /// other test classes share the pool, and on a busy CI machine that wait alone has passed the budget.
+    /// </remarks>
+    private static EmitResult? Emit(Func<JsonSchemaOptions, EmitResult> emit, ReferenceVariant variant, Action<string, string, string?> fail, ReferenceCounters? counters, TimeSpan timeout, out TimeSpan ran)
     {
-        Task<EmitResult> task = Task.Run(() => emit(variant.Options));
+        long elapsed = 0;
+        Task<EmitResult> task = Task.Run(() =>
+        {
+            long start = Stopwatch.GetTimestamp();
+
+            try
+            {
+                return emit(variant.Options);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref elapsed, Stopwatch.GetTimestamp() - start);
+            }
+        });
+
+        ran = timeout;
 
         try
         {
@@ -373,6 +391,13 @@ internal static partial class ReferenceChecker
             Exception exception = wrapped.InnerException ?? wrapped;
             fail("d-emit-crashed", $"{exception.GetType().Name}: {exception.Message}", null);
             return null;
+        }
+        finally
+        {
+            if (task.IsCompleted)
+            {
+                ran = Stopwatch.GetElapsedTime(0, Interlocked.Read(ref elapsed));
+            }
         }
     }
 
