@@ -61,7 +61,7 @@ public sealed class ReviewFollowUpTests
     {
         const int Length = 40_000;
         string json = "{\"" + new string('k', Length) + "\":[" + string.Join(',', Enumerable.Repeat("0", Length)) + "]}";
-        JsonElement element = JsonDocument.Parse(json).RootElement;
+        JsonElement element = JsonElement.Parse(json);
         Schema<JsonElement>[] schemas = [Z.Record(Z.Array(Z.Not(Z.String()))), Z.Record(Z.Array().Contains(Z.String(), 0))];
 
         foreach (Schema<JsonElement> schema in schemas)

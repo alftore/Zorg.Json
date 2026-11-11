@@ -83,10 +83,17 @@ public static class OpenApiOptionsExtensions
             return Task.CompletedTask;
         }
 
+        // Microsoft.OpenApi 3.x, which Microsoft.AspNetCore.OpenApi 11 uses, holds media types behind an interface.
+#if NET11_0_OR_GREATER
+        private static Dictionary<string, IOpenApiMediaType> NewContent() => [];
+#else
+        private static Dictionary<string, OpenApiMediaType> NewContent() => [];
+#endif
+
         private static void SetRequestBody(OpenApiOperation operation, OpenApiSchema schema)
         {
             OpenApiRequestBody body = operation.RequestBody as OpenApiRequestBody ?? new OpenApiRequestBody { Required = true };
-            body.Content ??= new Dictionary<string, OpenApiMediaType>();
+            body.Content ??= NewContent();
             body.Content[JsonContentType] = new OpenApiMediaType { Schema = schema };
             operation.RequestBody = body;
         }
@@ -102,7 +109,7 @@ public static class OpenApiOptionsExtensions
                 operation.Responses[key] = response;
             }
 
-            response.Content ??= new Dictionary<string, OpenApiMediaType>();
+            response.Content ??= NewContent();
             response.Content[JsonContentType] = new OpenApiMediaType { Schema = schema };
         }
 

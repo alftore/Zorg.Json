@@ -106,7 +106,7 @@ public sealed class JsonSchemaImportTests
     [Fact]
     public void An_element_with_a_repeated_keyword_is_an_error()
     {
-        JsonElement element = JsonDocument.Parse("""{ "type": "string", "type": "number" }""").RootElement;
+        JsonElement element = JsonElement.Parse("""{ "type": "string", "type": "number" }""");
         JsonSchemaImportException exception = Assert.Throws<JsonSchemaImportException>(() => Z.FromJsonSchema(element));
         Assert.Equal(JsonSchemaImportCodes.InvalidSchema, exception.Code);
     }

@@ -10,7 +10,7 @@ Report security problems privately, as [SECURITY.md](SECURITY.md) describes, not
 
 ## Build and test
 
-You need the .NET SDK version in `global.json`. The compliance tests need the JSON Schema Test Suite submodule.
+You need the .NET SDK version in `global.json`, which is 11, and the .NET 10 runtime: the libraries target .NET 10, and `Zorg.Json.AspNetCore.OpenApi` and its tests target .NET 11 too. The compliance tests need the JSON Schema Test Suite submodule.
 
 ```
 git clone --recurse-submodules https://github.com/alftore/Zorg.Json.git

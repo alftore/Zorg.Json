@@ -56,6 +56,9 @@ public sealed class OpenApiTests
     [Theory]
     [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1)]
     [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0)]
+#if NET11_0_OR_GREATER
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_2)]
+#endif
     public async Task A_tuple_is_not_closed_in_the_document(Microsoft.OpenApi.OpenApiSpecVersion version)
     {
         ObjectSchema schema = Z.Object().Property("t", Z.Tuple(Z.String(), Z.Integer()));
@@ -70,6 +73,9 @@ public sealed class OpenApiTests
     [Theory]
     [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1)]
     [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0)]
+#if NET11_0_OR_GREATER
+    [InlineData(Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_2)]
+#endif
     public async Task Constants_and_boolean_schemas_keep_their_JSON(Microsoft.OpenApi.OpenApiSpecVersion version)
     {
         ObjectSchema schema = Z.Object()
@@ -85,6 +91,28 @@ public sealed class OpenApiTests
         Assert.Equal(JsonValueKind.Object, properties.GetProperty("nv").ValueKind);
     }
 
+#if NET11_0_OR_GREATER
+    // Microsoft.AspNetCore.OpenApi 11 writes OpenAPI 3.2 by default, through Microsoft.OpenApi 3.x.
+    [Fact]
+    public async Task The_default_document_of_ASP_NET_Core_11_is_OpenAPI_3_2_with_both_schemas()
+    {
+        await using TestApp app = await TestApp.StartAsync(
+            a =>
+            {
+                a.MapOpenApi();
+                a.MapPost("/people", (Person person) => person.Name).ValidateBody(People);
+                a.MapGet("/people/{id}", (int id) => new Person("Ada", id)).ProducesSchema(People);
+            },
+            services => services.AddOpenApi(options => options.AddEndpointSchemas()));
+
+        JsonElement document = JsonElement.Parse(await app.Client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
+
+        Assert.StartsWith("3.2", document.GetProperty("openapi").GetString(), StringComparison.Ordinal);
+        Assert.Equal("name", Assert.Single(RequestSchema(document, "/people").GetProperty("required").EnumerateArray()).GetString());
+        Assert.Equal(0, ResponseSchema(document, "/people/{id}", "get", "200").GetProperty("properties").GetProperty("age").GetProperty("minimum").GetInt32());
+    }
+
+#endif
     [Fact]
     public async Task A_named_schema_and_its_nullable_form_on_two_endpoints_say_why_they_clash()
     {

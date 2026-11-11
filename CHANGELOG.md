@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- **Fixed:** `Zorg.Json.AspNetCore.OpenApi` failed on ASP.NET Core 11. With version 11 of `Microsoft.AspNetCore.OpenApi`, which uses `Microsoft.OpenApi` 3.x, building the OpenAPI document threw `MissingMethodException`. The package now has a build for .NET 10, against `Microsoft.AspNetCore.OpenApi` 10, and one for .NET 11, against version 11. On .NET 11, the OpenAPI 3.2 document that ASP.NET Core 11 writes by default gets the same schemas as a 3.1 document. On 0.1.0 the workaround is to keep `Microsoft.AspNetCore.OpenApi` at 10.0.x.
+- The other packages are unchanged. They target .NET 10, and the whole test suite also passes on the .NET 11 runtime.
+- The repository builds with the .NET 11 SDK.
+
 ## 0.1.0
 
 The first release outside preview. The library is the same as 0.1.0-preview.5. What's new is around it:

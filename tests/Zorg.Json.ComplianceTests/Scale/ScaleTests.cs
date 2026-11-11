@@ -24,7 +24,7 @@ public sealed class ScaleTests
     private static string Nest(string open, string close, string inner, int depth) =>
         string.Concat(Enumerable.Repeat(open, depth)) + inner + string.Concat(Enumerable.Repeat(close, depth));
 
-    private static JsonElement Deep(string text) => JsonDocument.Parse(text, Unlimited).RootElement;
+    private static JsonElement Deep(string text) => JsonElement.Parse(text, Unlimited);
 
     private static JsonSchemaImportException Refused(string document, JsonSchemaImportOptions? options = null) =>
         Assert.Throws<JsonSchemaImportException>(() => Z.FromJsonSchema(document, options));
