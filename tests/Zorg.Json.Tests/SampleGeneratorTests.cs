@@ -94,9 +94,9 @@ public sealed class SampleGeneratorTests
     public void Every_format_has_samples(string format)
     {
         ISchema schema = Z.String().Format(format);
-        Assert.Equal(SampleStrings.Format(format, 0), JsonDocument.Parse(Valid(schema)).RootElement.GetString());
+        Assert.Equal(SampleStrings.Format(format, 0), JsonElement.Parse(Valid(schema)).GetString());
 
-        string[] several = [.. JsonDocument.Parse(Valid(Z.Array(Z.String().Format(format)).MinItems(20).UniqueItems())).RootElement.EnumerateArray().Select(item => item.GetString()!)];
+        string[] several = [.. JsonElement.Parse(Valid(Z.Array(Z.String().Format(format)).MinItems(20).UniqueItems())).EnumerateArray().Select(item => item.GetString()!)];
         Assert.Equal(20, several.Distinct(StringComparer.Ordinal).Count());
     }
 
@@ -148,7 +148,7 @@ public sealed class SampleGeneratorTests
     public void Patterns_are_generated(string pattern, string expected)
     {
         string sample = Valid(Z.String().Pattern(pattern));
-        Assert.Equal(expected, JsonDocument.Parse(sample).RootElement.GetString());
+        Assert.Equal(expected, JsonElement.Parse(sample).GetString());
     }
 
     [Theory]

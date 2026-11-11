@@ -97,7 +97,7 @@ public sealed class SamplingReviewTests
     public void A_const_nested_beyond_the_text_limit_is_not_reported_as_valid()
     {
         string deep = new string('[', 70) + "1" + new string(']', 70);
-        JsonElement document = JsonDocument.Parse("{\"const\":" + deep + "}", new JsonDocumentOptions { MaxDepth = 200 }).RootElement;
+        JsonElement document = JsonElement.Parse("{\"const\":" + deep + "}", new JsonDocumentOptions { MaxDepth = 200 });
         JsonValueSchema schema = Z.FromJsonSchema(document);
 
         SampleResult result = schema.GenerateSample();

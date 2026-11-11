@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- One build per ASP.NET Core major version, because Microsoft.AspNetCore.OpenApi 11 moved to Microsoft.OpenApi 3.x.
+         TargetFramework comes from Directory.Build.props and has to be cleared for TargetFrameworks to apply. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <Description>Puts Zorg.Json schemas into the OpenAPI documents of Microsoft.AspNetCore.OpenApi.</Description>
     <PackageTags>json;json-schema;validation;zod;aspnetcore;openapi</PackageTags>
     <!-- The shared framework's reference assemblies don't carry the attribute this checks. samples/Zorg.Json.AspNetCore.AotSmoke publishes for real instead. -->

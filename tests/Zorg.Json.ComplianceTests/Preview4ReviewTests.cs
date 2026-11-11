@@ -466,7 +466,7 @@ public sealed class Preview4ReviewTests
     public void A_small_stack_fails_the_parse_and_keeps_the_process()
     {
         JsonValueSchema schema = Z.FromJsonSchema("""{"items":{"$ref":"#"}}""");
-        System.Text.Json.JsonElement deep = System.Text.Json.JsonDocument.Parse(new string('[', 170) + new string(']', 170), new System.Text.Json.JsonDocumentOptions { MaxDepth = 400 }).RootElement;
+        System.Text.Json.JsonElement deep = System.Text.Json.JsonElement.Parse(new string('[', 170) + new string(']', 170), new System.Text.Json.JsonDocumentOptions { MaxDepth = 400 });
         bool finished = false;
 
         System.Threading.Thread thread = new(() =>
