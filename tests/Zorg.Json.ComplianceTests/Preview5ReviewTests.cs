@@ -34,10 +34,7 @@ public sealed class Preview5ReviewTests
         string text = $"{{\"$defs\":{{\"big\":{{\"type\":\"object\",\"properties\":{big}}},{defs}}},\"type\":\"object\",\"properties\":{{{string.Join(',', Enumerable.Range(0, 1000).Select(index => $"\"q{index}\":{{\"$ref\":\"#/$defs/d{index}\"}}"))}}}}}";
         var schema = Z.FromJsonSchema(text);
 
-        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
-        _ = schema.ToJsonSchema(new() { Direction = SchemaDirection.Output });
-
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"took {watch.Elapsed}");
+        Timing.Within(TimeSpan.FromSeconds(3), () => schema.ToJsonSchema(new() { Direction = SchemaDirection.Output }));
     }
 
     [Fact]
@@ -142,10 +139,7 @@ public sealed class Preview5ReviewTests
             schema = schema.Property($"n{index}", Z.Not(Z.Object().Property($"w{index}", Shared)).Optional());
         }
 
-        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
-        _ = schema.ToJsonSchema(new() { Direction = SchemaDirection.Output, Reused = ReusedSchemaHandling.Ref });
-
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
+        Timing.Within(TimeSpan.FromSeconds(5), () => schema.ToJsonSchema(new() { Direction = SchemaDirection.Output, Reused = ReusedSchemaHandling.Ref }));
     }
 
     [Fact]

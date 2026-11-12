@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -685,10 +684,7 @@ public sealed class EmissionReviewTests
 
         builder.Append("}}");
         JsonSchemaOptions options = new() { Target = JsonSchemaProfile.Draft202012.With(Rewriters.RelocateToDescription("minLength")) };
-        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
-
-        Assert.NotNull(Import(builder.ToString()).ToJsonSchema(options));
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"took {watch.Elapsed}");
+        Assert.NotNull(Timing.Within(TimeSpan.FromSeconds(15), () => Import(builder.ToString()).ToJsonSchema(options)));
     }
 
     private const string NullableReference = """
@@ -951,11 +947,8 @@ public sealed class EmissionReviewTests
     public void A_reference_moved_to_a_description_is_written_without_nesting_homes()
     {
         JsonSchemaProfile profile = JsonSchemaProfile.Draft202012.With(Rewriters.CloseAllObjects);
-        Stopwatch clock = Stopwatch.StartNew();
+        EmitResult result = Timing.Within(TimeSpan.FromSeconds(5), () => Import("""{"$id":"http://x/t.json","type":"object","additionalProperties":{"$ref":"#"}}""").Emit(new JsonSchemaOptions { Target = profile }));
 
-        EmitResult result = Import("""{"$id":"http://x/t.json","type":"object","additionalProperties":{"$ref":"#"}}""").Emit(new JsonSchemaOptions { Target = profile });
-
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
         Assert.True(result.Schema.ToJsonString().Length < 1000, result.Schema.ToJsonString());
     }
 
@@ -1038,11 +1031,7 @@ public sealed class EmissionReviewTests
         }
 
         JsonValueSchema schema = Import(targets.ToString() + references + "}}", new JsonSchemaImportOptions { MaxNodes = 1_000_000 });
-        Stopwatch clock = Stopwatch.StartNew();
-
-        _ = schema.Emit(new JsonSchemaOptions());
-
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
+        Timing.Within(TimeSpan.FromSeconds(5), () => schema.Emit(new JsonSchemaOptions()));
     }
 
     [Fact]
@@ -1053,12 +1042,9 @@ public sealed class EmissionReviewTests
             "dN":{"properties":{"n":{"$ref":"#/$defs/dM"}}}
             """.Replace("dN", "d" + index.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal).Replace("dM", "d" + ((index + 1) % Count).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)));
         JsonValueSchema schema = Import("{\"$defs\":{" + definitions + "},\"$ref\":\"#/$defs/d0\"}", new JsonSchemaImportOptions { MaxNodes = 1_000_000 });
-        Stopwatch clock = Stopwatch.StartNew();
-
-        EmitResult result = schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" });
+        EmitResult result = Timing.Within(TimeSpan.FromSeconds(10), () => schema.Emit(new JsonSchemaOptions { ReferencePrefix = "#/components/schemas/" }));
 
         Assert.Equal(Count, result.Definitions.Count);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), clock.Elapsed.ToString());
     }
 
     // What the reference fuzzer found, and the three limits docs/import.md once listed.

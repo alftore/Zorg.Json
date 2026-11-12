@@ -237,12 +237,9 @@ public sealed class DisjointBranchTests
     {
         string[] branches = [.. Enumerable.Range(0, 3_000).Select(i => Kind($"{i}", WithId))];
         JsonValueSchema schema = Import(Union(branches));
-        System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
-
-        string text = schema.ToJsonSchema().ToJsonString();
+        string text = Timing.Within(TimeSpan.FromSeconds(10), () => schema.ToJsonSchema().ToJsonString());
 
         Assert.DoesNotContain("\"oneOf\"", text, StringComparison.Ordinal);
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"took {watch.Elapsed}");
     }
 
     [Fact]
