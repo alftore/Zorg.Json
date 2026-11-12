@@ -186,7 +186,7 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
             : typeof(TNumber) == typeof(Int128) ? ("-170141183460469231731687303715884105728", "170141183460469231731687303715884105727")
             : typeof(TNumber) == typeof(UInt128) ? ("0", "340282366920938463463374607431768211455")
             : typeof(TNumber) == typeof(Half) ? ("-65504", "65504")
-            : Net11Range();
+            : null;
 
         return new SchemaNode
         {
@@ -210,19 +210,6 @@ public sealed class NumberSchema<TNumber> : Schema<TNumber, NumberSchema<TNumber
                     : typeof(TNumber).Name,
             },
         };
-    }
-
-    private static (string Minimum, string Maximum)? Net11Range()
-    {
-#if NET11_0_OR_GREATER
-        // 2^128 - 2^120, the largest finite BFloat16. The IEEE decimal types state no range: their limits are far past double,
-        // where OpenAPI documents and model providers would read them as Infinity. Parsing refuses an overflow anyway.
-        if (typeof(TNumber) == typeof(System.Numerics.BFloat16))
-        {
-            return ("-338953138925153547590470800371487866880", "338953138925153547590470800371487866880");
-        }
-#endif
-        return null;
     }
 
     /// <summary>A number that isn't zero but reads as zero has lost its value, so it doesn't fit the type, as an overflow doesn't.</summary>

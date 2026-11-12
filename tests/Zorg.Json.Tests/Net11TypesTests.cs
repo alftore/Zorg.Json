@@ -32,7 +32,6 @@ public sealed record MaybeTextHolder(MaybeText Value);
 public union Loose(JsonElement, int);
 
 public sealed record LooseHolder(Loose Value);
-#pragma warning restore CA1815
 
 public sealed class Measurements
 {
@@ -46,6 +45,71 @@ public sealed class Measurements
 
     public BFloat16? Maybe { get; set; }
 }
+
+public sealed record Box(int X);
+
+public sealed record WideBox(int X, int Y);
+
+public sealed record Kit(string Name, Box Data)
+{
+    public int Lives { get; set; }
+}
+
+public sealed record Pup(string Name, bool Good, WideBox Data);
+
+public union Litter(Kit, Pup);
+
+public sealed record Litters(Litter One, IReadOnlyList<Litter> Many);
+
+public sealed record Disc(double R);
+
+public sealed record Group(string Name, Figure Child);
+
+[JsonUnion(TypeClassifier = typeof(KindClassifier))]
+public union Figure(Disc, Group);
+
+public sealed record Drawing(Figure Figure);
+
+public sealed class Unset
+{
+    public Scalar Value { get; set; }
+}
+
+/// <summary>Picks the case from a "kind" property that neither case declares, so removing it would break the choice.</summary>
+public sealed class KindClassifier : JsonTypeClassifierFactory
+{
+    public override bool CanClassify(JsonTypeClassifierContext context) => true;
+
+    public override JsonTypeClassifier CreateJsonClassifier(JsonTypeClassifierContext context, JsonSerializerOptions options) =>
+        (ref Utf8JsonReader reader) =>
+        {
+            if (reader.TokenType != JsonTokenType.StartObject)
+            {
+                return null;
+            }
+
+            Utf8JsonReader copy = reader;
+            copy.Read();
+
+            while (copy.TokenType == JsonTokenType.PropertyName)
+            {
+                bool isKind = copy.ValueTextEquals("kind");
+                copy.Read();
+
+                if (isKind)
+                {
+                    return copy.GetString() == "circle" ? typeof(Disc) : typeof(Group);
+                }
+
+                copy.Skip();
+                copy.Read();
+            }
+
+            return null;
+        };
+}
+
+#pragma warning restore CA1815
 
 public sealed record Tagged(IReadOnlySet<string> Tags);
 
@@ -113,7 +177,8 @@ public sealed class Net11TypesTests
         JsonObject pet = Schema.Object<PetOwner>(Structural).ToJsonSchema()["properties"]!["pet"]!.AsObject();
 
         JsonArray cases = pet["anyOf"]!.AsArray();
-        Assert.Equal(2, cases.Count);
+        Assert.Equal(3, cases.Count);
+        Assert.Equal("null", cases[2]!["type"]!.GetValue<string>());
         Assert.Equal(["name", "lives"], cases[0]!["properties"]!.AsObject().Select(property => property.Key));
         Assert.Equal(["name", "good"], cases[1]!["properties"]!.AsObject().Select(property => property.Key));
     }
@@ -168,7 +233,7 @@ public sealed class Net11TypesTests
     [InlineData("""{"Value":"text"}""", true)]
     [InlineData("""{"Value":5}""", true)]
     [InlineData("""{"Value":true}""", false)]
-    [InlineData("""{"Value":null}""", false)]
+    [InlineData("""{"Value":null}""", true)]
     public void A_union_of_scalars_takes_each_case(string json, bool valid)
     {
         ObjectSchema<ScalarHolder> schema = Schema.Object<ScalarHolder>(Plain);
@@ -217,14 +282,16 @@ public sealed class Net11TypesTests
     }
 
     [Fact]
-    public void BFloat16_states_its_largest_finite_value()
+    public void BFloat16_takes_its_largest_value_as_the_serializer_writes_it()
     {
-        JsonObject brain = Z.Number<BFloat16>().ToJsonSchema();
+        // The serializer writes BFloat16.MaxValue as 3.39E+38, which is above the exact value, so no range is stated, as for float.
+        string written = JsonSerializer.Serialize(BFloat16.MaxValue);
 
-        Assert.Equal(BFloat16.MaxValue, BFloat16.Parse(brain["maximum"]!.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture));
-        Assert.Equal(BFloat16.MinValue, BFloat16.Parse(brain["minimum"]!.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture));
-        Assert.True(Z.Number<BFloat16>().SafeParse("3e38").IsSuccess);
+        Assert.True(Z.Number<BFloat16>().SafeParse(written).IsSuccess, written);
+        Assert.True(Z.Number<BFloat16>().Validate(BFloat16.MaxValue).IsSuccess);
+        Assert.True(Z.Number<BFloat16>().Validate(BFloat16.MinValue).IsSuccess);
         Assert.False(Z.Number<BFloat16>().SafeParse("4e38").IsSuccess);
+        Assert.Null(Z.Number<BFloat16>().ToJsonSchema()["maximum"]);
     }
 
     [Theory]
@@ -245,6 +312,43 @@ public sealed class Net11TypesTests
         Assert.Equal((BFloat16)2.5f, value.Brain);
         Assert.Equal(Decimal128.Parse("123.456", System.Globalization.CultureInfo.InvariantCulture), value.Large);
         Assert.Null(value.Maybe);
+    }
+
+    [Fact]
+    public void Nothing_inside_a_union_is_removed_before_the_serializer_picks_the_case()
+    {
+        ObjectSchema<Litters> schema = Schema.Object<Litters>(Structural);
+        const string Json = """{"one":{"name":"r","good":true,"data":{"x":1,"y":2}},"many":[{"name":"r","good":true,"data":{"x":1,"y":2}}]}""";
+
+        // The Kit case also matches, and its Box would have dropped "y" though the serializer picks Pup.
+        Litters parsed = schema.Parse(Json);
+
+        Assert.Equal(2, Assert.IsType<Pup>(parsed.One.Value).Data.Y);
+        Assert.Equal(JsonSerializer.Serialize(JsonSerializer.Deserialize<Litters>(Json, Structural), Structural), JsonSerializer.Serialize(parsed, Structural));
+    }
+
+    [Theory]
+    [InlineData("""{"figure":{"kind":"group","name":"g","child":{"kind":"circle","r":1}}}""")]
+    [InlineData("""{"figure":{"kind":"group","name":"g","child":{"kind":"group","name":"h","child":{"kind":"circle","r":1}}}}""")]
+    public void A_recursive_union_keeps_what_its_classifier_reads_at_every_level(string json)
+    {
+        JsonSerializerOptions options = new(JsonSerializerDefaults.Web) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
+        ParseResult<Drawing> parsed = Schema.Object<Drawing>(options).SafeParse(json);
+
+        Assert.True(parsed.IsSuccess, string.Join("; ", parsed.Issues.Select(issue => issue.Message)));
+        Assert.Equal(JsonSerializer.Serialize(JsonSerializer.Deserialize<Drawing>(json, options), options), JsonSerializer.Serialize(parsed.Value, options));
+    }
+
+    [Fact]
+    public void An_unset_union_is_null_in_and_out_as_the_serializer_has_it()
+    {
+        ObjectSchema<Unset> schema = Schema.Object<Unset>(Plain);
+        Unset unset = schema.Parse("{}");
+
+        Assert.Null(unset.Value.Value);
+        Assert.True(schema.Validate(unset).IsSuccess);
+        Assert.True(schema.SafeParse("""{"Value":null}""").IsSuccess);
+        Assert.True(IsValid(schema.ToJsonSchema(new() { Direction = Zorg.Json.Emission.SchemaDirection.Output }), JsonSerializer.Serialize(unset, Plain)));
     }
 
     [Fact]

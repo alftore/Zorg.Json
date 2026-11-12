@@ -72,14 +72,14 @@ internal static class TypeReader
             }
         }
 
-        if (type.AllInterfaces.Any(candidate => candidate.ToDisplayString() == Annotations + "IValidatableObject"))
-        {
-            findings.Add(new Finding(Descriptors.NotApplied.Id, $"IValidatableObject on '{type.Name}' can't be stated in the schema", location));
-        }
-
+        // IAsyncValidatableObject extends IValidatableObject, so a type that has it is reported once, as async.
         if (type.AllInterfaces.Any(candidate => candidate.ToDisplayString() == Annotations + "IAsyncValidatableObject"))
         {
             findings.Add(new Finding(Descriptors.NotApplied.Id, $"IAsyncValidatableObject on '{type.Name}' can't be stated in the schema. {RunsElsewhere}", location));
+        }
+        else if (type.AllInterfaces.Any(candidate => candidate.ToDisplayString() == Annotations + "IValidatableObject"))
+        {
+            findings.Add(new Finding(Descriptors.NotApplied.Id, $"IValidatableObject on '{type.Name}' can't be stated in the schema", location));
         }
 
         ReportConstructorAttributes(type, findings);

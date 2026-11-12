@@ -21,8 +21,21 @@ internal sealed class ContractSeeder
     private static readonly SchemaNode AnyValue = new();
 
     private readonly JsonSerializerOptions _options;
-    private readonly Dictionary<Type, SchemaNode> _finished = [];
-    private readonly HashSet<Type> _inProgress = [];
+    private readonly Dictionary<(Type Type, bool KeepsUnknown), SchemaNode> _finished = [];
+    private readonly HashSet<(Type Type, bool KeepsUnknown)> _inProgress = [];
+
+    /// <summary>
+    /// True while seeding the cases of a union, where every object keeps unknown properties: the serializer picks the case
+    /// from the JSON as written, and a property Zorg removed for one case may be one the case it picks reads. A type gets a
+    /// copy of its own in this mode, so its schema elsewhere still removes them.
+    /// </summary>
+#if !NET11_0_OR_GREATER
+#pragma warning disable CS0649, IDE0044 // Only a union sets it, and unions are read on .NET 11.
+#endif
+    private bool _keepsUnknown;
+#if !NET11_0_OR_GREATER
+#pragma warning restore CS0649, IDE0044
+#endif
 
     private ContractSeeder(JsonSerializerOptions options) => _options = options;
 
@@ -167,39 +180,42 @@ internal sealed class ContractSeeder
 
 #if NET11_0_OR_GREATER
     /// <summary>
-    /// A C# union: any of its cases. The serializer picks the case from the JSON as written, by token kind or, with a
-    /// classifier, by the names at the root of an object. So the root of each case keeps unknown properties rather than
-    /// stripping them, and what reaches the serializer is what it would have read on its own.
+    /// A C# union: any of its cases, or null, which the serializer reads as the default and writes for it. The serializer picks
+    /// the case from the JSON as written, by token kind or with a classifier, so the value reaches it unchanged: nothing
+    /// inside a case removes unknown properties, at any depth.
     /// </summary>
     private SchemaNode Union(JsonTypeInfo typeInfo)
     {
         ImmutableArray<SchemaNode>.Builder branches = ImmutableArray.CreateBuilder<SchemaNode>(typeInfo.UnionCases.Count);
+        bool outer = _keepsUnknown;
+        _keepsUnknown = true;
 
-        foreach (JsonUnionCaseInfo unionCase in typeInfo.UnionCases)
+        try
         {
-            SchemaNode branch = Seed(unionCase.CaseType);
-
-            if (branch == AnyValue)
+            foreach (JsonUnionCaseInfo unionCase in typeInfo.UnionCases)
             {
-                return AnyValue;
+                SchemaNode branch = Seed(unionCase.CaseType);
+
+                if (branch == AnyValue)
+                {
+                    return AnyValue;
+                }
+
+                branches.Add(branch);
             }
-
-            branch = KeepsUnknownAtRoot(branch);
-            branches.Add(unionCase.IsNullable || Nullable.GetUnderlyingType(unionCase.CaseType) is not null ? branch.WithNull() : branch);
         }
-
-        return branches.Count == 0 ? AnyValue : new SchemaNode { AnyOf = branches.ToImmutable() };
-    }
-
-    /// <summary>Allows unknown properties where the node would strip them, at its root and in the branches of a polymorphic type.</summary>
-    private static SchemaNode KeepsUnknownAtRoot(SchemaNode node)
-    {
-        if (node.Behavior.UnknownProperties == UnknownProperties.Strip)
+        finally
         {
-            node = node with { Behavior = node.Behavior with { UnknownProperties = UnknownProperties.Allow } };
+            _keepsUnknown = outer;
         }
 
-        return node.OneOf.IsEmpty ? node : node with { OneOf = [.. node.OneOf.Select(KeepsUnknownAtRoot)] };
+        if (branches.Count == 0)
+        {
+            return AnyValue;
+        }
+
+        branches.Add(new SchemaNode { Types = JsonTypes.Null });
+        return new SchemaNode { AnyOf = branches.ToImmutable() };
     }
 
 #endif
@@ -212,18 +228,19 @@ internal sealed class ContractSeeder
     private SchemaNode Reference(JsonTypeInfo typeInfo)
     {
         Type type = typeInfo.Type;
+        (Type, bool) key = (type, _keepsUnknown);
 
-        if (_finished.TryGetValue(type, out SchemaNode? finished))
+        if (_finished.TryGetValue(key, out SchemaNode? finished))
         {
             return finished;
         }
 
-        if (_inProgress.Contains(type))
+        if (_inProgress.Contains(key))
         {
             return new SchemaNode
             {
                 Ref = $"#/$defs/{type.Name}",
-                Behavior = new SchemaBehavior { DefinitionName = type.Name, Target = () => _finished[type] },
+                Behavior = new SchemaBehavior { DefinitionName = type.Name, Target = () => _finished[key] },
             };
         }
 
@@ -232,15 +249,15 @@ internal sealed class ContractSeeder
 
     private SchemaNode SeedObject(JsonTypeInfo typeInfo)
     {
-        Type type = typeInfo.Type;
-        _inProgress.Add(type);
+        (Type, bool) key = (typeInfo.Type, _keepsUnknown);
+        _inProgress.Add(key);
 
         SchemaNode node = typeInfo.PolymorphismOptions is { DerivedTypes.Count: > 0 } polymorphism
             ? Polymorphic(polymorphism)
             : Properties(typeInfo);
 
-        _inProgress.Remove(type);
-        _finished[type] = node;
+        _inProgress.Remove(key);
+        _finished[key] = node;
         return node;
     }
 
@@ -305,7 +322,10 @@ internal sealed class ContractSeeder
             Required = required.ToImmutable(),
             Behavior = new SchemaBehavior
             {
-                UnknownProperties = hasExtensionData || KeepsMetadata ? UnknownProperties.Allow : IsClosed(typeInfo) ? UnknownProperties.Reject : UnknownProperties.Strip,
+                UnknownProperties = hasExtensionData || KeepsMetadata ? UnknownProperties.Allow
+                    : IsClosed(typeInfo) ? UnknownProperties.Reject
+                    : _keepsUnknown ? UnknownProperties.Allow
+                    : UnknownProperties.Strip,
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };

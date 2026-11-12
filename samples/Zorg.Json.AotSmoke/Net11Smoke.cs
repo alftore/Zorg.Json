@@ -37,8 +37,8 @@ internal static class Net11Smoke
         yield return ("union of scalars", cat.IsSuccess && cat.Value.Pet.Value is SmokeCat && cat.Value.Tag.Value is true);
 
         yield return ("union refused", !home.SafeParse("""{"pet":1,"tag":"x","brain":1,"price":1}""").IsSuccess);
-        yield return ("union schema", home.ToJsonSchema()["properties"]?["pet"]?["anyOf"]?.AsArray().Count == 2);
-        yield return ("BFloat16 range", !home.SafeParse("""{"pet":{"name":"Tom","lives":3},"tag":"x","brain":1e39,"price":1}""").IsSuccess);
+        yield return ("union schema", home.ToJsonSchema()["properties"]?["pet"]?["anyOf"]?.AsArray().Count == 3);
+        yield return ("BFloat16 overflow", !home.SafeParse("""{"pet":{"name":"Tom","lives":3},"tag":"x","brain":1e39,"price":1}""").IsSuccess);
         yield return ("Decimal128", dog.IsSuccess && dog.Value.Price == Decimal128.Parse("19.99", System.Globalization.CultureInfo.InvariantCulture));
         yield return ("union validate", dog.IsSuccess && home.Validate(dog.Value).IsSuccess);
     }

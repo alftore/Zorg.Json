@@ -132,14 +132,15 @@ public sealed class DiagnosticsTests
         Assert.Contains(found, diagnostic => diagnostic.Id == id);
     }
 
-    // The tests run on .NET 10, which doesn't have the .NET 11 types, so they're declared here with the same names.
+    // The tests run on .NET 10, which doesn't have the .NET 11 types, so they're declared here with the same names and,
+    // as in .NET 11, IAsyncValidatableObject extends IValidatableObject.
     private const string AsyncTypes = """
 
         namespace System.ComponentModel.DataAnnotations
         {
             public abstract class AsyncValidationAttribute : ValidationAttribute;
 
-            public interface IAsyncValidatableObject;
+            public interface IAsyncValidatableObject : IValidatableObject;
         }
 
         public sealed class UniqueAttribute : AsyncValidationAttribute;
@@ -147,7 +148,7 @@ public sealed class DiagnosticsTests
 
     [Theory]
     [InlineData("[GenerateSchema(typeof(C))] public partial record P([property: Unique] string A);", "[UniqueAttribute] on 'A' is async validation")]
-    [InlineData("[GenerateSchema(typeof(C))] public partial class P : IAsyncValidatableObject;", "IAsyncValidatableObject on 'P' can't be stated in the schema")]
+    [InlineData("[GenerateSchema(typeof(C))] public partial class P : IAsyncValidatableObject { public System.Collections.Generic.IEnumerable<ValidationResult> Validate(ValidationContext c) => []; }", "IAsyncValidatableObject on 'P' can't be stated in the schema")]
     public void Async_validation_is_reported_with_where_it_runs(string source, string start)
     {
         (ImmutableArray<Diagnostic> found, _) = Run(source + Context + AsyncTypes);
