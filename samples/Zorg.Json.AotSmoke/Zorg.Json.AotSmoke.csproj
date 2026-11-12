@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- net11.0 also checks C# unions and the new number types. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <LangVersion Condition="'$(TargetFramework)' == 'net11.0'">15.0</LangVersion>
     <PublishAot>true</PublishAot>
     <!-- Report each trim and AOT warning, not one summary warning per assembly. -->
     <TrimmerSingleWarn>false</TrimmerSingleWarn>

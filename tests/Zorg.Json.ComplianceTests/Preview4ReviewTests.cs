@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using Xunit;
@@ -204,11 +203,7 @@ public sealed class Preview4ReviewTests
         document.Append("""},"$ref":"#/$defs/d16"}""");
         JsonValueSchema schema = Z.FromJsonSchema(document.ToString(), new JsonSchemaImportOptions { MaxNodes = 10_000_000 });
         string instance = "{" + string.Join(",", Enumerable.Range(0, 10_000).Select(index => $"\"n{index}\":1")) + "}";
-        Stopwatch watch = Stopwatch.StartNew();
-
-        _ = schema.SafeParse(instance);
-
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
+        Timing.Within(TimeSpan.FromSeconds(20), () => schema.SafeParse(instance));
     }
 
     [Fact]

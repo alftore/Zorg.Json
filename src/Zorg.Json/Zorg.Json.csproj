@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- The net11.0 build reads what System.Text.Json 11 adds: C# unions and the new number types. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <Description>Fluent, Zod-inspired JSON Schema generation and validation for .NET.</Description>
     <PackageTags>json;json-schema;validation;zod;system-text-json</PackageTags>
   </PropertyGroup>

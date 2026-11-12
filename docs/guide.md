@@ -62,6 +62,7 @@ A property whose type also has `[GenerateSchema]` with the same context uses tha
 - The type must be partial and neither generic nor nested, and the context needs a `[JsonSerializable]` for it. A polymorphic type, or one with a custom converter, has JSON its properties don't describe. All of these are compile errors.
 - **Presence and null** come from the contract, as in every typed schema: `required`, `[JsonRequired]`, or a constructor parameter with no default. `[Required]` on anything else, or on something nullable, gets a warning, `ZORG0006`.
 - An attribute that can't be stated gets a warning, `ZORG0005`, and isn't checked. That covers `[CreditCard]`, `[Range]` on a date or one nothing can meet, a rule on a field, on a parameter of a class, on a property with a converter, and on a shape the fluent API has no overload for, such as `bool?`. Add it with `.Property(...)` or `.Refine(...)`.
+- **Async validation** (.NET 11), `AsyncValidationAttribute` or `IAsyncValidatableObject`, gets `ZORG0005` too, and the generator doesn't turn it into `RefineAsync`. Such a check usually needs services and the finished object from its `ValidationContext`, which a check on a value still being parsed doesn't have. It still runs where it was written for: in `Validator.ValidateObjectAsync`, and in ASP.NET Core's validation after binding, also behind `ValidateBody`. To check it while parsing, write the refinement yourself, as in [Async checks that need services](#async-checks-that-need-services).
 - Without `property:` on a record parameter the attribute goes on the parameter, and the generator reads it there too, though `Validator` wouldn't.
 - The schema checks JSON, so it differs from `Validator` in a few ways by design. It checks nested types with their own schemas, a `[Range]` on an absent property isn't checked, and a `[Range(int, int)]` on a `double` is exact where `Validator` rounds.
 - Under Native AOT, .NET marks `[MinLength]`, `[MaxLength]` and `[Length]` themselves as needing reflection, so using them gives a trim warning, whatever reads them. For text, `[StringLength]` says the same without it.
@@ -111,7 +112,9 @@ ParseResult<Customer> customer = PersonSchema.SafeParse(json).Map(person => new 
 - **`[JsonIgnore]` properties** aren't part of the schema.
 - **Custom converters** decide their own JSON shape, so a property that has one accepts any value before the converter runs. Add a rule with `.Property(p => p.X, schema)`.
 - **Computed properties** with no setter are refused with `unrecognized_keys` when sent, whatever the case options, because the serializer might fill them in place. They appear in the output schema. A get-only `List<T>`, `HashSet<T>`, `Dictionary<TKey, TValue>` or plain object that the serializer fills, with `JsonObjectCreationHandling.Populate`, is read and checked like any other property.
-- **`[JsonPolymorphic]` hierarchies** become a discriminated union. System.Text.Json expects the discriminator first unless `AllowOutOfOrderMetadataProperties` is set.
+- **`[JsonPolymorphic]` hierarchies** become a discriminated union. System.Text.Json expects the discriminator first unless `AllowOutOfOrderMetadataProperties` is set. On .NET 11, so does a `closed` hierarchy when `InferClosedTypePolymorphism` is on.
+- **C# 15 unions** (.NET 11), such as `union Pet(Cat, Dog)`, become `anyOf` of their cases and `null`, which the serializer reads as an unset union and writes for one. The serializer picks the case from the JSON as written, so Zorg removes nothing inside a union, at any depth: what it removed for one case might be what the case the serializer picks reads. The serializer picks by token kind by default, so two cases that are both objects need `JsonUnionTypeStructuralClassifier`, or a classifier of your own, or it refuses them. Under the web defaults a number can also be read from a string, so a `string` case and a number case are ambiguous to it as well. In both cases Zorg reports `deserialization_failed`, as the serializer would fail. The schema can accept such a value, which is looser but never stricter.
+- **Numbers** state the range of an integer type, `byte` through `UInt128`, and of `Half`. On .NET 11, `BFloat16`, `Decimal32`, `Decimal64` and `Decimal128` are numbers with no stated range, as `float` and `double`: the serializer writes the largest `BFloat16` as `3.39E+38`, which is above its exact value, and the decimal limits are far past what most tools read as a number. Parsing still refuses a value that overflows.
 
 A `required` member can't be made optional with `.Optional` or `.Omit`, because System.Text.Json would then fail on it. `DateTime` and `TimeOnly` have no `format`, because System.Text.Json writes them without an offset.
 
@@ -291,6 +294,22 @@ PersonSchema.Refine(p => p.Age >= 18 || p.Nickname is null, "Minors cannot have 
 
 Z.String().RefineAsync(users.IsFreeAsync, "This name is taken");   // needs SafeParseAsync
 ```
+
+### Async checks that need services
+
+A refinement gets the value and a cancellation token, not a `ValidationContext`. A check that needs a service, such as a database, takes it the usual way: build the schema where the service is available, such as in a class that receives it through its constructor, and capture it in the lambda. The class mustn't outlive the service: a scoped `DbContext` belongs in a scoped class, not a singleton.
+
+```csharp
+public sealed class SignupSchemas(IUserStore users)
+{
+    public ObjectSchema<Signup> ForSignup { get; } = Signup.Schema
+        .Property(s => s.UserName, name => name.RefineAsync(
+            async (value, cancellationToken) => !await users.ExistsAsync(value, cancellationToken),
+            "This name is taken"));
+}
+```
+
+Parse with `SafeParseAsync`, which runs async refinements. `SafeParse` throws an `InvalidOperationException` when it reaches one, rather than skipping it.
 
 Don't put `RefineAsync` inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`. These decide before async checks run, and they count an async check as passed. So `Contains` can accept a value the check would refuse, and `AnyOf` can reject a value another branch would accept. Put `RefineAsync` on the outer schema instead.
 

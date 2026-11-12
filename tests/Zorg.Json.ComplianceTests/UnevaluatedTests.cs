@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Json.Schema;
@@ -81,11 +80,7 @@ public sealed class UnevaluatedTests
         }
 
         JsonValueSchema schema = Z.FromJsonSchema(document, new JsonSchemaImportOptions { MaxNodes = 1_000_000 });
-        Stopwatch watch = Stopwatch.StartNew();
-
-        _ = schema.SafeParse("""{"z":1,"a":"b"}""");
-
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"took {watch.Elapsed}");
+        Timing.Within(TimeSpan.FromSeconds(20), () => schema.SafeParse("""{"z":1,"a":"b"}"""));
     }
 
     private static readonly string[] Branches =

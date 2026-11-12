@@ -7,7 +7,7 @@ Method names follow JSON Schema keywords first. Coming from Zod, look up the nam
 | JSON Schema | Zorg.Json | Zod |
 |---|---|---|
 | `type: string` | `Z.String()` | `z.string()` |
-| `type: number` | `Z.Number()`, `Z.Number<decimal>()` | `z.number()` |
+| `type: number` | `Z.Number()`, `Z.Number<decimal>()`, and on .NET 11 `Z.Number<BFloat16>()` or `Z.Number<Decimal128>()` | `z.number()` |
 | `type: integer` | `Z.Integer()`, `Z.Number<int>()` | `z.int()`, `z.int32()` |
 | `type: boolean` | `Z.Boolean()` | `z.boolean()` |
 | `type: string`, `enum` of member names | `Z.Enum<TEnum>()` | `z.enum()` |

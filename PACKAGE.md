@@ -63,4 +63,6 @@ Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthrop
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
 | `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 
+The packages run on .NET 10 and .NET 11. On .NET 11, typed schemas also read C# 15 unions and the new number types, such as `Decimal128`.
+
 JSON Schema Draft 2020-12 is the default output. Draft-07, OpenAPI 3.0 and OpenAPI 3.1 are also available. Import reads 2020-12, 2019-09, Draft-07, Draft-06 and Draft-04, and passes the official JSON-Schema-Test-Suite: every case passes, or its schema is refused at import with a stable error code. Every public member has XML documentation naming the JSON Schema keyword and the Zod equivalent.

@@ -4,6 +4,8 @@
     <!-- Both builds of Zorg.Json.AspNetCore.OpenApi, each against its own Microsoft.AspNetCore.OpenApi. -->
     <TargetFramework></TargetFramework>
     <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <!-- The net11.0 tests declare C# 15 unions. -->
+    <LangVersion Condition="'$(TargetFramework)' == 'net11.0'">15.0</LangVersion>
     <OutputType>Exe</OutputType>
     <!-- Lambdas passed to Map methods compile through the Request Delegate Generator, the Native AOT path.
          A handler typed as Delegate can't be intercepted, so those tests take the runtime path (RDG002 is that notice). -->

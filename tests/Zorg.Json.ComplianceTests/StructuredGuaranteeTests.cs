@@ -53,7 +53,7 @@ public sealed class Patch
 public sealed partial class ComplianceJson : JsonSerializerContext;
 
 /// <summary>Extends <see cref="InputGuaranteeTests"/> to every kind of schema, with generated documents.</summary>
-public sealed class StructuredGuaranteeTests
+public sealed partial class StructuredGuaranteeTests
 {
     private const int DocumentCount = 400;
 

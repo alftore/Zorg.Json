@@ -311,7 +311,11 @@ internal static class JsonText
 
             if (Rune.DecodeFromUtf8(raw[index..], out Rune rune, out int consumed) == OperationStatus.Done)
             {
+#if NET11_0_OR_GREATER
+                builder.Append(rune);
+#else
                 builder.Append(rune.ToString());
+#endif
                 index += consumed;
             }
             else

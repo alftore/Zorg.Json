@@ -20,9 +20,31 @@ internal sealed class ContractSeeder
 {
     private static readonly SchemaNode AnyValue = new();
 
+    private static readonly SchemaNode NullValue = new() { Types = JsonTypes.Null };
+
+    /// <summary>A C# union as the seeder builds it: nothing but its cases and a last branch for null.</summary>
+    private static bool IsUnion(SchemaNode node) =>
+        node.AnyOf.Length > 1 && node.AnyOf[^1] == NullValue && (node with { AnyOf = [] }) == AnyValue;
+
+    /// <summary>Adds null, unless the node is a union, which already has it.</summary>
+    private static SchemaNode OrNull(SchemaNode node) => IsUnion(node) ? node : node.WithNull();
+
     private readonly JsonSerializerOptions _options;
-    private readonly Dictionary<Type, SchemaNode> _finished = [];
-    private readonly HashSet<Type> _inProgress = [];
+    private readonly Dictionary<(Type Type, bool KeepsUnknown), SchemaNode> _finished = [];
+    private readonly HashSet<(Type Type, bool KeepsUnknown)> _inProgress = [];
+
+    /// <summary>
+    /// True while seeding the cases of a union, where every object keeps unknown properties: the serializer picks the case
+    /// from the JSON as written, and a property Zorg removed for one case may be one the case it picks reads. A type gets a
+    /// copy of its own in this mode, so its schema elsewhere still removes them.
+    /// </summary>
+#if !NET11_0_OR_GREATER
+#pragma warning disable CS0649, IDE0044 // Only a union sets it, and unions are read on .NET 11.
+#endif
+    private bool _keepsUnknown;
+#if !NET11_0_OR_GREATER
+#pragma warning restore CS0649, IDE0044
+#endif
 
     private ContractSeeder(JsonSerializerOptions options) => _options = options;
 
@@ -106,6 +128,12 @@ internal sealed class ContractSeeder
         _ when type == typeof(Int128) => NumberNode<Int128>(),
         _ when type == typeof(UInt128) => NumberNode<UInt128>(),
         _ when type == typeof(Half) => NumberNode<Half>(),
+#if NET11_0_OR_GREATER
+        _ when type == typeof(System.Numerics.BFloat16) => NumberNode<System.Numerics.BFloat16>(),
+        _ when type == typeof(System.Numerics.Decimal32) => NumberNode<System.Numerics.Decimal32>(),
+        _ when type == typeof(System.Numerics.Decimal64) => NumberNode<System.Numerics.Decimal64>(),
+        _ when type == typeof(System.Numerics.Decimal128) => NumberNode<System.Numerics.Decimal128>(),
+#endif
         _ when type == typeof(Guid) => Scalar(JsonTypes.String, "uuid"),
         _ when type == typeof(DateTimeOffset) => Scalar(JsonTypes.String, "date-time"),
         _ when type == typeof(DateTime) => Scalar(JsonTypes.String),
@@ -143,6 +171,13 @@ internal sealed class ContractSeeder
             return EnumNode(target, typeInfo);
         }
 
+#if NET11_0_OR_GREATER
+        if (typeInfo.Kind == JsonTypeInfoKind.Union)
+        {
+            return Union(typeInfo);
+        }
+#endif
+
         return typeInfo.Kind switch
         {
             JsonTypeInfoKind.Enumerable => new SchemaNode { Types = JsonTypes.Array, Items = SeedElement(typeInfo.ElementType!) },
@@ -152,27 +187,77 @@ internal sealed class ContractSeeder
         };
     }
 
+#if NET11_0_OR_GREATER
+    /// <summary>
+    /// A C# union: any of its cases, or null, which the serializer reads as the default and writes for it. The serializer picks
+    /// the case from the JSON as written, by token kind or with a classifier, so the value reaches it unchanged: nothing
+    /// inside a case removes unknown properties, at any depth.
+    /// </summary>
+    private SchemaNode Union(JsonTypeInfo typeInfo)
+    {
+        ImmutableArray<SchemaNode>.Builder branches = ImmutableArray.CreateBuilder<SchemaNode>(typeInfo.UnionCases.Count);
+        bool outer = _keepsUnknown;
+        _keepsUnknown = true;
+
+        try
+        {
+            foreach (JsonUnionCaseInfo unionCase in typeInfo.UnionCases)
+            {
+                SchemaNode branch = Seed(unionCase.CaseType);
+
+                if (branch == AnyValue)
+                {
+                    return AnyValue;
+                }
+
+                // A case that is a union itself brings its own cases, and the null this union adds anyway.
+                if (IsUnion(branch))
+                {
+                    branches.AddRange(branch.AnyOf[..^1]);
+                }
+                else
+                {
+                    branches.Add(branch);
+                }
+            }
+        }
+        finally
+        {
+            _keepsUnknown = outer;
+        }
+
+        if (branches.Count == 0)
+        {
+            return AnyValue;
+        }
+
+        branches.Add(NullValue);
+        return new SchemaNode { AnyOf = branches.ToImmutable() };
+    }
+
+#endif
     private SchemaNode SeedElement(Type type)
     {
         SchemaNode node = Seed(type);
-        return Nullable.GetUnderlyingType(type) is null ? node : node.WithNull();
+        return Nullable.GetUnderlyingType(type) is null ? node : OrNull(node);
     }
 
     private SchemaNode Reference(JsonTypeInfo typeInfo)
     {
         Type type = typeInfo.Type;
+        (Type, bool) key = (type, _keepsUnknown);
 
-        if (_finished.TryGetValue(type, out SchemaNode? finished))
+        if (_finished.TryGetValue(key, out SchemaNode? finished))
         {
             return finished;
         }
 
-        if (_inProgress.Contains(type))
+        if (_inProgress.Contains(key))
         {
             return new SchemaNode
             {
                 Ref = $"#/$defs/{type.Name}",
-                Behavior = new SchemaBehavior { DefinitionName = type.Name, Target = () => _finished[type] },
+                Behavior = new SchemaBehavior { DefinitionName = type.Name, Target = () => _finished[key] },
             };
         }
 
@@ -181,15 +266,15 @@ internal sealed class ContractSeeder
 
     private SchemaNode SeedObject(JsonTypeInfo typeInfo)
     {
-        Type type = typeInfo.Type;
-        _inProgress.Add(type);
+        (Type, bool) key = (typeInfo.Type, _keepsUnknown);
+        _inProgress.Add(key);
 
         SchemaNode node = typeInfo.PolymorphismOptions is { DerivedTypes.Count: > 0 } polymorphism
             ? Polymorphic(polymorphism)
             : Properties(typeInfo);
 
-        _inProgress.Remove(type);
-        _finished[type] = node;
+        _inProgress.Remove(key);
+        _finished[key] = node;
         return node;
     }
 
@@ -228,7 +313,7 @@ internal sealed class ContractSeeder
                 // The serializer can't fill null into the object a getter returns, though IsSetNullable is true without a setter.
                 if (schema != AnyValue && !IsPopulated(property, typeInfo) && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
                 {
-                    schema = schema.WithNull();
+                    schema = OrNull(schema);
                 }
             }
 
@@ -254,7 +339,10 @@ internal sealed class ContractSeeder
             Required = required.ToImmutable(),
             Behavior = new SchemaBehavior
             {
-                UnknownProperties = hasExtensionData || KeepsMetadata ? UnknownProperties.Allow : IsClosed(typeInfo) ? UnknownProperties.Reject : UnknownProperties.Strip,
+                UnknownProperties = hasExtensionData || KeepsMetadata ? UnknownProperties.Allow
+                    : IsClosed(typeInfo) ? UnknownProperties.Reject
+                    : _keepsUnknown ? UnknownProperties.Allow
+                    : UnknownProperties.Strip,
                 IgnoresNameCase = _options.PropertyNameCaseInsensitive,
             },
         };
@@ -269,12 +357,19 @@ internal sealed class ContractSeeder
     {
         SchemaNode schema = Seed(valueType);
 
-        if (schema == AnyValue || valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
+        if (schema == AnyValue)
         {
             return schema;
         }
 
-        return AllowsNull(property, valueType) ? schema.WithNull() : schema;
+        // A union keeps its null: Optional<T> of a struct can't read it, but the serializer writes an unset union as null, and
+        // the output schema has to take that. The input schema is only looser for it.
+        if (valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
+        {
+            return schema;
+        }
+
+        return AllowsNull(property, valueType) ? OrNull(schema) : schema;
     }
 
     private static bool AllowsNull(JsonPropertyInfo property, Type valueType)

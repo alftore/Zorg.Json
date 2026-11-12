@@ -14,13 +14,17 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Features>strict</Features>
 
+    <!-- In a net11.0 build, CA1307 and CA2263 suggest overloads that are new in .NET 11, such as StartsWith(char, StringComparison)
+         and GetTypeInfo<T>(), so the shared code can't take them. A char compares ordinally anyway. The net10.0 build keeps both rules. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'net11.0'">$(NoWarn);CA1307;CA2263</NoWarn>
+
     <!-- Determinism -->
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
 
     <!-- Packaging metadata -->
-    <VersionPrefix>0.1.1</VersionPrefix>
+    <VersionPrefix>0.2.0</VersionPrefix>
     <Authors>Zorg.Json contributors</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
