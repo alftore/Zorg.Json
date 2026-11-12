@@ -20,6 +20,15 @@ internal sealed class ContractSeeder
 {
     private static readonly SchemaNode AnyValue = new();
 
+    private static readonly SchemaNode NullValue = new() { Types = JsonTypes.Null };
+
+    /// <summary>A C# union as the seeder builds it: nothing but its cases and a last branch for null.</summary>
+    private static bool IsUnion(SchemaNode node) =>
+        node.AnyOf.Length > 1 && node.AnyOf[^1] == NullValue && (node with { AnyOf = [] }) == AnyValue;
+
+    /// <summary>Adds null, unless the node is a union, which already has it.</summary>
+    private static SchemaNode OrNull(SchemaNode node) => IsUnion(node) ? node : node.WithNull();
+
     private readonly JsonSerializerOptions _options;
     private readonly Dictionary<(Type Type, bool KeepsUnknown), SchemaNode> _finished = [];
     private readonly HashSet<(Type Type, bool KeepsUnknown)> _inProgress = [];
@@ -201,7 +210,15 @@ internal sealed class ContractSeeder
                     return AnyValue;
                 }
 
-                branches.Add(branch);
+                // A case that is a union itself brings its own cases, and the null this union adds anyway.
+                if (IsUnion(branch))
+                {
+                    branches.AddRange(branch.AnyOf[..^1]);
+                }
+                else
+                {
+                    branches.Add(branch);
+                }
             }
         }
         finally
@@ -214,7 +231,7 @@ internal sealed class ContractSeeder
             return AnyValue;
         }
 
-        branches.Add(new SchemaNode { Types = JsonTypes.Null });
+        branches.Add(NullValue);
         return new SchemaNode { AnyOf = branches.ToImmutable() };
     }
 
@@ -222,7 +239,7 @@ internal sealed class ContractSeeder
     private SchemaNode SeedElement(Type type)
     {
         SchemaNode node = Seed(type);
-        return Nullable.GetUnderlyingType(type) is null ? node : node.WithNull();
+        return Nullable.GetUnderlyingType(type) is null ? node : OrNull(node);
     }
 
     private SchemaNode Reference(JsonTypeInfo typeInfo)
@@ -296,7 +313,7 @@ internal sealed class ContractSeeder
                 // The serializer can't fill null into the object a getter returns, though IsSetNullable is true without a setter.
                 if (schema != AnyValue && !IsPopulated(property, typeInfo) && (property.IsSetNullable || Nullable.GetUnderlyingType(property.PropertyType) is not null))
                 {
-                    schema = schema.WithNull();
+                    schema = OrNull(schema);
                 }
             }
 
@@ -340,12 +357,18 @@ internal sealed class ContractSeeder
     {
         SchemaNode schema = Seed(valueType);
 
-        if (schema == AnyValue || valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
+        if (schema == AnyValue)
         {
             return schema;
         }
 
-        return AllowsNull(property, valueType) ? schema.WithNull() : schema;
+        // Optional<T> of a struct can't hold null, a union included, though the serializer writes an unset union as null.
+        if (valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
+        {
+            return IsUnion(schema) ? schema with { AnyOf = schema.AnyOf[..^1] } : schema;
+        }
+
+        return AllowsNull(property, valueType) ? OrNull(schema) : schema;
     }
 
     private static bool AllowsNull(JsonPropertyInfo property, Type valueType)

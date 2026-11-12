@@ -70,6 +70,12 @@ public union Figure(Disc, Group);
 
 public sealed record Drawing(Figure Figure);
 
+public union Wider(Scalar, bool);
+
+public sealed record WideHolder(Wider Wide);
+
+public sealed record Shapes(Pet? Maybe, [property: JsonConverter(typeof(OptionalJsonConverter<Pet>))] Optional<Pet> Later);
+
 public sealed class Unset
 {
     public Scalar Value { get; set; }
@@ -349,6 +355,25 @@ public sealed class Net11TypesTests
         Assert.True(schema.Validate(unset).IsSuccess);
         Assert.True(schema.SafeParse("""{"Value":null}""").IsSuccess);
         Assert.True(IsValid(schema.ToJsonSchema(new() { Direction = Zorg.Json.Emission.SchemaDirection.Output }), JsonSerializer.Serialize(unset, Plain)));
+    }
+
+    [Fact]
+    public void A_union_allows_null_once_and_an_optional_union_not_at_all()
+    {
+        JsonSerializerOptions options = Structure();
+        JsonObject properties = Schema.Object<Shapes>(options).ToJsonSchema()["properties"]!.AsObject();
+
+        // Pet? doesn't add a second null.
+        Assert.Equal(["object", "object", "null"], properties["maybe"]!["anyOf"]!.AsArray().Select(branch => branch!["type"]!.GetValue<string>()));
+
+        // A union case that is a union brings its own cases. The structural classifier refuses that shape, so this uses the default one.
+        JsonNode? wide = Schema.Object<WideHolder>(Plain).ToJsonSchema()["properties"]!["Wide"];
+        Assert.Equal(["string", "integer", "boolean", "null"], wide!["anyOf"]!.AsArray().Select(branch => branch!["type"]!.GetValue<string>()));
+
+        // Optional<Pet> can't hold null, so the schema doesn't offer it, as parsing refuses it.
+        Assert.DoesNotContain(properties["later"]!["anyOf"]!.AsArray(), branch => branch!["type"]?.GetValue<string>() == "null");
+        Assert.False(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":null}""").IsSuccess);
+        Assert.True(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":{"name":"Tom","lives":1}}""").IsSuccess);
     }
 
     [Fact]
