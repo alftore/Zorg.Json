@@ -43,11 +43,18 @@ A source generator in this package writes the schema from a type's validation at
 
 ```csharp
 [GenerateSchema(typeof(AppJson))]
-public sealed partial record Signup([property: MinLength(3)] string UserName, [property: Range(13, 120)] int Age);
+public sealed partial record Signup([property: StringLength(50, MinimumLength = 3)] string UserName, [property: Range(13, 120)] int Age);
 
 // AppJson also needs [JsonSerializable(typeof(Signup))].
 ParseResult<Signup> result = Signup.Schema.SafeParse(json);
 ```
+
+## Documentation
+
+- [Guide](https://github.com/alftore/Zorg.Json/blob/main/docs/guide.md): defining schemas, parsing, errors, typed schemas and the source generator
+- [Keyword and Zod reference](https://github.com/alftore/Zorg.Json/blob/main/docs/reference.md)
+- [ASP.NET Core](https://github.com/alftore/Zorg.Json/blob/main/docs/aspnetcore.md), [LLM structured output](https://github.com/alftore/Zorg.Json/blob/main/docs/llm.md) and [importing JSON Schema](https://github.com/alftore/Zorg.Json/blob/main/docs/import.md)
+- [Known limits](https://github.com/alftore/Zorg.Json/blob/main/docs/limits.md)
 
 ## How this is built
 
@@ -59,7 +66,7 @@ Zorg.Json is written with the help of AI agents, mainly Claude Code from Anthrop
 |---|---|
 | `Zorg.Json` | Schemas, validation, JSON Schema emission and import, sample data |
 | `Zorg.Json.AspNetCore` | Request validation with problem details, serving schemas, options validation |
-| `Zorg.Json.AspNetCore.OpenApi` | Schemas in the OpenAPI document |
+| `Zorg.Json.AspNetCore.OpenApi` | Schemas in the OpenAPI document: 3.0, 3.1, and 3.2 on ASP.NET Core 11 |
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
 | `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 

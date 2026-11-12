@@ -63,7 +63,7 @@ Fluent schemas such as `Z.String().Email()` always check. Imported draft-04, dra
 |---|---|
 | `Zorg.Json` | Schemas, validation, JSON Schema emission and import, sample data |
 | `Zorg.Json.AspNetCore` | Request validation with problem details, serving schemas, options validation |
-| `Zorg.Json.AspNetCore.OpenApi` | Schemas in the OpenAPI document |
+| `Zorg.Json.AspNetCore.OpenApi` | Schemas in the OpenAPI document: 3.0, 3.1, and 3.2 on ASP.NET Core 11 |
 | `Zorg.Json.Llm` | OpenAI, Anthropic and Gemini structured output profiles |
 | `Zorg.Json.Extensions.AI` | Microsoft.Extensions.AI tools that check their arguments, and typed structured responses |
 
