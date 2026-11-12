@@ -19,7 +19,12 @@ internal sealed record SmokeDog(string Name, bool Good);
 
 internal sealed record SmokeHome(SmokePet Pet, SmokeTag Tag, BFloat16 Brain, Decimal128 Price);
 
+// The source generator on .NET 11: a union property comes from the contract, and the attribute beside it is applied.
+[GenerateSchema(typeof(Net11SmokeJson))]
+internal sealed partial record SmokeAdoption([property: System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 2)] string Owner, SmokePet Pet);
+
 [JsonSerializable(typeof(SmokeHome))]
+[JsonSerializable(typeof(SmokeAdoption))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, NumberHandling = JsonNumberHandling.Strict)]
 internal sealed partial class Net11SmokeJson : JsonSerializerContext;
 
@@ -41,6 +46,11 @@ internal static class Net11Smoke
         yield return ("BFloat16 overflow", !home.SafeParse("""{"pet":{"name":"Tom","lives":3},"tag":"x","brain":1e39,"price":1}""").IsSuccess);
         yield return ("Decimal128", dog.IsSuccess && dog.Value.Price == Decimal128.Parse("19.99", System.Globalization.CultureInfo.InvariantCulture));
         yield return ("union validate", dog.IsSuccess && home.Validate(dog.Value).IsSuccess);
+
+        ParseResult<SmokeAdoption> adopted = SmokeAdoption.Schema.SafeParse("""{"owner":"Ann","pet":{"name":"Rex","good":true}}""");
+        yield return ("generated union", adopted.IsSuccess && adopted.Value.Pet.Value is SmokeDog);
+        yield return ("generated rule", !SmokeAdoption.Schema.SafeParse("""{"owner":"A","pet":{"name":"Rex","good":true}}""").IsSuccess);
+        yield return ("generated union refused", !SmokeAdoption.Schema.SafeParse("""{"owner":"Ann","pet":1}""").IsSuccess);
     }
 }
 #endif

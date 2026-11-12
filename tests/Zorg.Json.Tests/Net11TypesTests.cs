@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Xunit;
+using Zorg.Json.Sampling;
 
 namespace Zorg.Json.Tests;
 
@@ -374,6 +375,22 @@ public sealed class Net11TypesTests
         Assert.Single(properties["later"]!["anyOf"]!.AsArray(), branch => branch!["type"]?.GetValue<string>() == "null");
         Assert.False(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":null}""").IsSuccess);
         Assert.True(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":{"name":"Tom","lives":1}}""").IsSuccess);
+    }
+
+    [Fact]
+    public void A_sample_of_a_union_and_the_new_numbers_parses()
+    {
+        ObjectSchema<Litters> litters = Schema.Object<Litters>(Structural);
+        ObjectSchema<Measurements> measurements = Schema.Object<Measurements>(Plain);
+
+        foreach (ISchema schema in new ISchema[] { litters, measurements, Z.Number<BFloat16>(), Z.Number<Decimal128>() })
+        {
+            SampleResult sample = schema.GenerateSample();
+            Assert.True(sample.IsValid, sample.Value.GetRawText());
+        }
+
+        Assert.True(litters.SafeParse(litters.GenerateSample().Value).IsSuccess);
+        Assert.True(measurements.SafeParse(measurements.GenerateSample().Value).IsSuccess);
     }
 
     [Fact]

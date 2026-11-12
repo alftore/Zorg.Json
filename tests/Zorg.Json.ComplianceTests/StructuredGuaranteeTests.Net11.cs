@@ -8,6 +8,7 @@ using System.Text.Json.Serialization.Metadata;
 using Json.Schema;
 using Xunit;
 using Zorg.Json.Emission;
+using Zorg.Json.Llm;
 
 namespace Zorg.Json.ComplianceTests;
 
@@ -88,6 +89,44 @@ public sealed partial class StructuredGuaranteeTests
         });
 
         CheckUnion(Schema.Object<GuaranteeTagged>(options), options, documents);
+    }
+
+    /// <summary>
+    /// A model answers with every property present, as the closed, all-required profiles ask. What the serializer writes for a
+    /// parsed value is such an answer: it must fit the emitted schema, and ParseModelOutput must give the same value back.
+    /// </summary>
+    [Fact]
+    public void A_model_answer_with_unions_fits_each_profile_and_parses_back()
+    {
+        JsonSerializerOptions options = UnionOptions(structural: true);
+        ObjectSchema<GuaranteeHome> schema = Schema.Object<GuaranteeHome>(options);
+        int checkedAnswers = 0;
+
+        foreach (JsonSchemaProfile profile in new[] { LlmProfiles.OpenAIStrict, LlmProfiles.AnthropicStrict, LlmProfiles.GeminiJsonSchema })
+        {
+            EmitResult emitted = schema.Emit(new() { Target = profile });
+            JsonSchema model = FromText(emitted.Schema.DeepClone().AsObject());
+
+            foreach (string document in Homes())
+            {
+                ParseResult<GuaranteeHome> parsed = schema.SafeParse(document);
+
+                if (!parsed.IsSuccess)
+                {
+                    continue;
+                }
+
+                JsonElement answer = JsonSerializer.SerializeToElement(parsed.Value, options);
+                Assert.True(model.Evaluate(answer).IsValid, $"{profile.Name} refuses the answer {answer.GetRawText()}");
+
+                ParseResult<GuaranteeHome> back = schema.ParseModelOutput(emitted, answer);
+                Assert.True(back.IsSuccess, $"{profile.Name} can't parse back {answer.GetRawText()}");
+                Assert.Equal(answer.GetRawText(), JsonSerializer.Serialize(back.Value, options));
+                checkedAnswers++;
+            }
+        }
+
+        Assert.True(checkedAnswers > 0, "No answer was checked, so the test proves nothing");
     }
 
     private static void CheckUnion<T>(ObjectSchema<T> schema, JsonSerializerOptions options, IEnumerable<string> documents)
