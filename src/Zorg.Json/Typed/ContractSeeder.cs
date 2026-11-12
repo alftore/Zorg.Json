@@ -362,10 +362,11 @@ internal sealed class ContractSeeder
             return schema;
         }
 
-        // Optional<T> of a struct can't hold null, a union included, though the serializer writes an unset union as null.
+        // A union keeps its null: Optional<T> of a struct can't read it, but the serializer writes an unset union as null, and
+        // the output schema has to take that. The input schema is only looser for it.
         if (valueType.IsValueType && Nullable.GetUnderlyingType(valueType) is null)
         {
-            return IsUnion(schema) ? schema with { AnyOf = schema.AnyOf[..^1] } : schema;
+            return schema;
         }
 
         return AllowsNull(property, valueType) ? OrNull(schema) : schema;

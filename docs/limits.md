@@ -22,6 +22,11 @@ Where the emitted schema can't say exactly what parsing does, it says less and r
 - **`.DependentRequired("a", "b").Omit("b")` keeps `b`**, because the rule still names it.
 - **`RefineAsync` inside `Not`, `If`, `Contains`, `AnyOf` or `OneOf`** counts as passed there. Put it on the outer schema.
 
+## C# unions (.NET 11)
+
+- **The schema can promise more than the serializer reads.** A union is `anyOf` of its cases, but System.Text.Json's default classifier picks by token kind, so two object cases, a `string` case beside a number case under the web defaults, or a case that is itself a union, can fail with `deserialization_failed` though the schema accepts the value. The schema is only looser. Add `JsonUnionTypeStructuralClassifier`, or a classifier of your own, so the serializer can tell the cases apart.
+- **`Optional<T>` of a union offers `null`.** The serializer writes an unset union as `null`, so the output schema needs it, but `Optional<T>` of a struct can't read `null`, so parsing refuses it on input.
+
 ## Typed schemas and the source generator
 
 - Items of a collection aren't nullable in typed schemas, because the System.Text.Json contract doesn't say whether they are.

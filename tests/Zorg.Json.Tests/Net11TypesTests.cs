@@ -358,7 +358,7 @@ public sealed class Net11TypesTests
     }
 
     [Fact]
-    public void A_union_allows_null_once_and_an_optional_union_not_at_all()
+    public void A_union_allows_null_once()
     {
         JsonSerializerOptions options = Structure();
         JsonObject properties = Schema.Object<Shapes>(options).ToJsonSchema()["properties"]!.AsObject();
@@ -370,8 +370,8 @@ public sealed class Net11TypesTests
         JsonNode? wide = Schema.Object<WideHolder>(Plain).ToJsonSchema()["properties"]!["Wide"];
         Assert.Equal(["string", "integer", "boolean", "null"], wide!["anyOf"]!.AsArray().Select(branch => branch!["type"]!.GetValue<string>()));
 
-        // Optional<Pet> can't hold null, so the schema doesn't offer it, as parsing refuses it.
-        Assert.DoesNotContain(properties["later"]!["anyOf"]!.AsArray(), branch => branch!["type"]?.GetValue<string>() == "null");
+        // Optional<Pet> can't read null, but an Optional<Pet> holding an unset union is written as null, so the schema keeps it.
+        Assert.Single(properties["later"]!["anyOf"]!.AsArray(), branch => branch!["type"]?.GetValue<string>() == "null");
         Assert.False(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":null}""").IsSuccess);
         Assert.True(Schema.Object<Shapes>(options).SafeParse("""{"maybe":null,"later":{"name":"Tom","lives":1}}""").IsSuccess);
     }
