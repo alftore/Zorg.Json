@@ -20,7 +20,7 @@ Please include the affected version, a way to reproduce it, and the impact you e
 
 ## Verifying a package
 
-Each release has a build provenance attestation for the packages it built. To check one, download the `packages` artifact from the release's workflow run and run:
+Each release has a build provenance attestation for the packages it built. To check one, download the `.nupkg` from the assets of the GitHub Release and run:
 
 ```
 gh attestation verify Zorg.Json.<version>.nupkg --repo alftore/Zorg.Json
