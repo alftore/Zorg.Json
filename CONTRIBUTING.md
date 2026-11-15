@@ -68,46 +68,13 @@ Snapshot tests compare output with `tests/Zorg.Json.Tests/Snapshots/*.verified.*
 /// </example>
 ```
 
-## Repository settings (for the owner)
+## Repository settings
 
-GitHub can't read these from files, so the owner has to turn them on by hand.
+The `main` and tag rulesets are kept in `.github/rulesets/`. If you change one in the GitHub settings, export it back to that folder. Other settings live only in GitHub, and these must stay on:
 
-The rulesets below are in `.github/rulesets/`. They need a public repository or GitHub Pro. Apply them with:
-
-```bash
-gh api repos/alftore/Zorg.Json/rulesets --method POST --input .github/rulesets/main.json
-```
-
-```bash
-gh api repos/alftore/Zorg.Json/rulesets --method POST --input .github/rulesets/tags.json
-```
-
-**Branch protection for `main`** (Settings > Rules > Rulesets, or Branches):
-
-- Require a pull request before merging, with at least 1 approval, dismissing stale approvals, and approval of the most recent push. A sole maintainer can't approve their own pull request, so set this to 0 until there's a second maintainer.
-- Require status checks to pass, with the branch up to date. Required checks: `Build and test (windows-latest)`, `Build and test (ubuntu-latest)` and `AOT smoke publish`.
-- Require conversation resolution before merging.
-- Block force pushes and deletions.
-- Leave the bypass list empty, so the rules apply to administrators too.
-
-**Tags:** add a tag ruleset for `v*` that restricts creation, updates and deletions to maintainers.
-
-**The `nuget` environment** (Settings > Environments):
-
-- Add required reviewers. Turn on "Prevent self-review" once there's a second maintainer.
-- Limit deployments to selected tags, with the rule `v*`.
-- Turn off administrator bypass.
-- Add the secret `NUGET_USER`, holding the nuget.org profile name (not an email address).
-
-**nuget.org** (your username > Trusted Publishing): add a policy with the repository owner, repository `Zorg.Json`, workflow file `release.yml` and environment `nuget`.
-
-**Actions and security** (Settings > Actions, and Advanced Security):
-
-- Set the default `GITHUB_TOKEN` permission to read-only, and don't let Actions approve pull requests.
-- Require actions to be pinned to a full-length commit SHA. The lockfile satisfies this for the workflows it covers.
-- Turn on **Require lockfile** under Settings > Actions > Policies, so a workflow that isn't in `.github/workflows/actions.lock` doesn't run.
-- Turn on private vulnerability reporting, Dependabot alerts, secret scanning and push protection.
-- Use two-factor authentication on GitHub and nuget.org.
+- **`main`:** changes arrive only through pull requests with signed commits, passing required checks (`Build and test (windows-latest)`, `Build and test (ubuntu-latest)` and `AOT smoke publish`) and resolved conversations. Squash is the only merge method. To update a pull request branch, rebase locally with signing and force-push with lease. GitHub's rebase button strips the signatures.
+- **The `nuget` environment:** required reviewers, deployments only from `v*` tags, no administrator bypass, and the secret `NUGET_USER`. nuget.org trusts `release.yml` in that environment.
+- **Actions:** a read-only `GITHUB_TOKEN` by default, and **Require lockfile**, so a workflow that isn't in `.github/workflows/actions.lock` doesn't run.
 
 ## .NET versions
 
